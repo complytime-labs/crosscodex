@@ -49,6 +49,7 @@ type runtime struct {
 	shared *sharedResources
 
 	graphService    *graph.Service
+	graphServer     *graph.Server
 	workerService   *worker.Worker
 	pipelineService *pipeline.Service
 	pipelineServer  *pipeline.Server
@@ -105,6 +106,11 @@ func (rt *runtime) start(ctx context.Context) error {
 			return fmt.Errorf("start pipeline server: %w", err)
 		}
 	}
+	if rt.graphServer != nil {
+		if err := rt.graphServer.Start(); err != nil {
+			return fmt.Errorf("start graph server: %w", err)
+		}
+	}
 	if rt.healthServer != nil {
 		go func() {
 			if err := rt.healthServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -120,7 +126,7 @@ func (rt *runtime) start(ctx context.Context) error {
 // draining the others.
 //
 // Order matters: the inbound network listeners (health, gateway HTTP, pipeline
-// RPC) are drained first, then the background services those listeners hand
+// RPC, graph RPC) are drained first, then the background services those listeners hand
 // work to (pipeline, worker, graph). Each listener's Shutdown blocks until its
 // in-flight requests finish, so by the time pipelineService.Stop runs no new
 // RPC or gateway request can reach an already-torn-down service. Stopping the
@@ -141,6 +147,11 @@ func (rt *runtime) stop(ctx context.Context) error {
 	if rt.pipelineServer != nil {
 		if err := rt.pipelineServer.Shutdown(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("stop pipeline server: %w", err))
+		}
+	}
+	if rt.graphServer != nil {
+		if err := rt.graphServer.Shutdown(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("stop graph server: %w", err))
 		}
 	}
 	if rt.pipelineService != nil {
@@ -174,6 +185,10 @@ func bootstrap(ctx context.Context, cfg *config.Config, opts ...ResourceOption) 
 	switch cfg.Role {
 	case config.RoleGraph:
 		if err := attachGraph(cfg, shared, rt); err != nil {
+			rt.close()
+			return nil, err
+		}
+		if err := attachGraphListener(ctx, cfg, shared, rt); err != nil {
 			rt.close()
 			return nil, err
 		}
@@ -235,12 +250,15 @@ var errNoX509Mappings = errors.New("no client certificate can sign in: auth.x509
 	"and certificates no longer get admin implicitly. Add a mapping, e.g. for the certificates from deploy/certgen: " +
 	"auth.x509_mappings: [{match: {cn: client, organization: CrossCodex}, roles: [admin]}]")
 
-// errNoServiceIdentities refuses a pipeline role whose tls.service_identities
-// is empty: no client certificate could assert a tenant, so every request
-// would be denied.
-var errNoServiceIdentities = errors.New("pipeline role: no client certificate may assert a tenant: tls.service_identities is empty, " +
-	"so the pipeline would deny every request. List the gateway's client certificate subject, for example " +
-	"tls.service_identities: [{cn: client, organization: CrossCodex}]")
+// errNoServiceIdentities refuses a role serving RPCs (pipeline, graph) whose
+// tls.service_identities is empty: no client certificate could assert a
+// tenant, so every request would be denied. caller names the role whose
+// client certificate must be listed.
+func errNoServiceIdentities(role, caller string) error {
+	return fmt.Errorf("%s role: no client certificate may assert a tenant: tls.service_identities is empty, "+
+		"so the %s would deny every request. List the %s's client certificate subject, for example "+
+		"tls.service_identities: [{cn: client, organization: CrossCodex}]", role, role, caller)
+}
 
 // x509Match converts a configured certificate matcher to its authn form.
 func x509Match(m config.X509MatchConfig) authn.X509Match {
@@ -433,14 +451,10 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 	}
 	rt.retentionPurgePool = purgePool
 
-	cleaningSigner, err := newCleaningSigner(cfg)
+	cleaningEngine, err := newCleaningEngine(cfg, shared, rt.pipelineService.CurrentStageRecord)
 	if err != nil {
 		return err
 	}
-	tp, mp := otel.GetTracerProvider(), otel.GetMeterProvider()
-	cleaningStore := cleaning.NewPGFindingStore(dbpkg.NewTenantPool(shared.appPool), cleaning.WithFindingStoreTelemetry(tp, mp))
-	cleaningEngine := cleaning.NewEngine(cleaningStore, shared.graphDB_, &cfg.Cleaning,
-		rt.pipelineService.CurrentStageRecord, cleaningSigner, cleaning.WithEngineTelemetry(tp, mp))
 
 	server, err := gateway.NewServer(ctx, gateway.ServerConfig{
 		TenantStatus: gateway.NewPoolTenantStatus(shared.appPool),
@@ -455,6 +469,20 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 	}
 	rt.gatewayServer = server
 	return nil
+}
+
+// newCleaningEngine builds the edge-cleaning engine over the app pool and the
+// graph, signing with newCleaningSigner. current reads a stage's current
+// prompt and models: in-process for role all, from the pipeline role for role
+// graph.
+func newCleaningEngine(cfg *config.Config, shared *sharedResources, current cleaning.CurrentFunc) (*cleaning.Engine, error) {
+	signer, err := newCleaningSigner(cfg)
+	if err != nil {
+		return nil, err
+	}
+	tp, mp := otel.GetTracerProvider(), otel.GetMeterProvider()
+	store := cleaning.NewPGFindingStore(dbpkg.NewTenantPool(shared.appPool), cleaning.WithFindingStoreTelemetry(tp, mp))
+	return cleaning.NewEngine(store, shared.graphDB_, &cfg.Cleaning, current, signer, cleaning.WithEngineTelemetry(tp, mp)), nil
 }
 
 // newCleaningSigner builds the generator that signs edge-cleaning decisions.
@@ -659,6 +687,83 @@ func attachGraph(cfg *config.Config, shared *sharedResources, rt *runtime) error
 		graph.WithMaterializeConfig(cfg.NATS.Materialize),
 		graph.WithControlsReader(graph.NewPGControlsReader(tenantConn, graph.WithPGControlsReaderTelemetry(tp, mp))))
 	rt.healthServer = newHealthServer(cfg.Health.Addr, dbPingCheck(shared.appPool))
+	return nil
+}
+
+// attachGraphListener gives the graph role (not role all, which serves these
+// in process) a Connect RPC listener on graph.addr serving the gateway's
+// read-only graph, crosswalk and edge-cleaning RPCs. attachGraph must run
+// first. Every precondition is checked before any listener is built, and the
+// configuration ones before the database is touched.
+func attachGraphListener(ctx context.Context, cfg *config.Config, shared *sharedResources, rt *runtime) error {
+	if rt.graphService == nil {
+		return errors.New("graph role: graph service is not built; attachGraph must run before attachGraphListener")
+	}
+	if cfg.Graph.Addr == "" {
+		return errors.New("graph role: graph.addr must be set so the gateway can reach the graph listener")
+	}
+
+	// graph.Server requires mTLS (RequireAndVerifyClientCert) on every RPC
+	// and has no unauthenticated fallback. rpcserver.Listen only applies that
+	// client-auth setting when a *tls.Config is actually resolved, so if TLS
+	// is off (the default) the listener would silently serve plaintext,
+	// authenticated only by a self-asserted tenant header. Resolve the same
+	// "graph-server" target rpcserver.Listen uses and fail closed unless it
+	// produced a mutual-TLS config with a CA to verify client certs against
+	// (a nil ClientCAs means tls.mode is "server-only", which would otherwise
+	// fail every handshake at runtime rather than here).
+	resolvedTLS, err := tlsconfig.BuildTLSConfig(ctx, cfg.TLS, "graph-server")
+	if err != nil {
+		return fmt.Errorf("graph role: resolve graph-server TLS config: %w", err)
+	}
+	if resolvedTLS == nil || resolvedTLS.ClientCAs == nil {
+		return errors.New(`graph role: tls.mode (or tls.targets.graph-server.mode) must be "mutual" with a CA configured — graph.Server requires mTLS on every RPC and has no unauthenticated fallback`)
+	}
+
+	// Any certificate the CA signed could otherwise name any tenant and end
+	// user in request headers, so only the gateway's own client certificate
+	// may.
+	if len(cfg.TLS.ServiceIdentities) == 0 {
+		return errNoServiceIdentities("graph", "gateway")
+	}
+	serviceIdentities := make([]authn.X509Match, len(cfg.TLS.ServiceIdentities))
+	for i, m := range cfg.TLS.ServiceIdentities {
+		serviceIdentities[i] = x509Match(m)
+	}
+
+	if cfg.Tenants.DefaultTenant == "" {
+		return errors.New("graph role: tenants.default_tenant must be set")
+	}
+	// Edge cleaning judges verdicts against each stage's current prompt and
+	// models, which only the pipeline role knows.
+	if cfg.Pipeline.Endpoint == "" {
+		return errors.New("graph role: pipeline.endpoint must be set: edge cleaning reads each stage's current prompt and models from the pipeline role")
+	}
+	// Construction only resolves TLS material and never dials.
+	pipelineClient, err := gateway.NewPipelineClient(ctx, cfg.Pipeline.Endpoint, cfg.TLS)
+	if err != nil {
+		return fmt.Errorf("graph role: create pipeline client: %w", err)
+	}
+	if err := checkDefaultTenant(ctx, "graph", cfg, shared.appPool); err != nil {
+		return err
+	}
+
+	cleaningEngine, err := newCleaningEngine(cfg, shared, remoteStageRecord(pipelineClient))
+	if err != nil {
+		return err
+	}
+	server, err := graph.NewServer(ctx, graph.ServerConfig{
+		Addr:              cfg.Graph.Addr,
+		TLS:               cfg.TLS,
+		Service:           rt.graphService,
+		Cleaning:          intcleaning.NewService(cleaningEngine),
+		ServiceIdentities: serviceIdentities,
+		Logger:            slog.Default(),
+	})
+	if err != nil {
+		return fmt.Errorf("create graph server: %w", err)
+	}
+	rt.graphServer = server
 	return nil
 }
 
@@ -879,7 +984,7 @@ func attachPipeline(ctx context.Context, cfg *config.Config, shared *sharedResou
 	// Any certificate the CA signed could otherwise name any tenant in the
 	// x-tenant-id header, so only the gateway's own client certificate may.
 	if len(cfg.TLS.ServiceIdentities) == 0 {
-		return errNoServiceIdentities
+		return errNoServiceIdentities("pipeline", "gateway")
 	}
 	serviceIdentities := make([]authn.X509Match, len(cfg.TLS.ServiceIdentities))
 	for i, m := range cfg.TLS.ServiceIdentities {
@@ -938,13 +1043,17 @@ func newMappingsBackend(shared *sharedResources) *results.Service {
 // authn, pass-through ingestion and catalog import, with a PipelineBackend
 // that is a Connect client reaching a separately-deployed pipeline role over
 // the network. Catalog import persists controls and publishes them over NATS
-// for the graph role to project, so this role holds no graph credentials.
-// Fails closed if cfg.Pipeline.Endpoint isn't configured -- there is no
-// in-process pipeline.Service to fall back to once gateway and pipeline are
-// split into independent roles.
+// for the graph role to project, so this role holds no graph credentials:
+// graph, crosswalk and edge-cleaning RPCs go to the graph role's listener
+// through a Connect client. Fails closed if cfg.Pipeline.Endpoint or
+// cfg.Graph.Endpoint isn't configured -- there is no in-process
+// pipeline.Service or graph.Service to fall back to once the roles are split.
 func attachGateway(ctx context.Context, cfg *config.Config, shared *sharedResources, rt *runtime) error {
 	if cfg.Pipeline.Endpoint == "" {
 		return errors.New("gateway role: pipeline.endpoint must be set to reach a standalone pipeline role")
+	}
+	if cfg.Graph.Endpoint == "" {
+		return errors.New("gateway role: graph.endpoint must be set to reach a standalone graph role, which serves the graph, crosswalk and edge-cleaning RPCs")
 	}
 
 	// Built before buildIngestGateway's config checks, which need it as an
@@ -955,7 +1064,14 @@ func attachGateway(ctx context.Context, cfg *config.Config, shared *sharedResour
 		return fmt.Errorf("create pipeline backend: %w", err)
 	}
 
-	gatewaySvc, err := buildIngestGateway(ctx, config.RoleGateway, cfg, shared, pipelineBackend)
+	graphBackend, err := gateway.NewConnectGraphBackend(ctx, cfg.Graph.Endpoint, cfg.TLS)
+	if err != nil {
+		return fmt.Errorf("create graph backend: %w", err)
+	}
+
+	gatewaySvc, err := buildIngestGateway(ctx, config.RoleGateway, cfg, shared, pipelineBackend,
+		gateway.WithGraphBackend(graphBackend),
+		gateway.WithCrosswalkBackend(graphBackend))
 	if err != nil {
 		return err
 	}
@@ -965,6 +1081,7 @@ func attachGateway(ctx context.Context, cfg *config.Config, shared *sharedResour
 		Addr:         cfg.Server.Addr,
 		TLS:          cfg.TLS,
 		Service:      gatewaySvc,
+		Cleaning:     graphBackend.Cleaning(),
 	})
 	if err != nil {
 		return fmt.Errorf("create gateway server: %w", err)

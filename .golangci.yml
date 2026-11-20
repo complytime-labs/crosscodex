@@ -48,6 +48,8 @@ linters:
             # Shared analyzer helpers; analyzers must not import each other.
             - "github.com/complytime-labs/crosscodex/internal/analyzer$"
             - "github.com/complytime-labs/crosscodex/internal/version$"
+            # Shared RPC server infrastructure (listener, recovery, error references); not a service.
+            - "github.com/complytime-labs/crosscodex/internal/rpcserver$"
             - "github.com/complytime-labs/crosscodex/internal/testcerts$"
             - "github.com/complytime-labs/crosscodex/internal/testspecs$"
           deny:

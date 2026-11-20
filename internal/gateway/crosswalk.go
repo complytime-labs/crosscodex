@@ -49,7 +49,7 @@ func (s *Service) GetCrosswalk(ctx context.Context, req *connect.Request[pb.GetC
 	}
 
 	if s.crosswalk == nil {
-		return nil, connect.NewError(connect.CodeUnavailable, errors.New("crosswalk backend not configured"))
+		return nil, needsGraphRole("crosswalks")
 	}
 	if s.catalog == nil {
 		return nil, connect.NewError(connect.CodeUnavailable, errors.New("catalog backend not configured"))

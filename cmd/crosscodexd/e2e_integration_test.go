@@ -48,15 +48,18 @@ const e2eEmbeddingDim = 2000
 // job's graph stage completes only once a graph role confirms the job's graph
 // is written. A catalog seeded by SQL has no projected Control nodes, so its
 // edges are retried and then skipped; delivery is tuned so that finishes well
-// within a spec's wait.
-func startGraphRole(ctx context.Context, dsn, natsURL string) *runtime {
-	cfg := baseTestConfig(dsn)
-	cfg.Role = config.RoleGraph
+// within a spec's wait. Each configure func edits the config before
+// bootstrap.
+func startGraphRole(ctx context.Context, dsn, natsURL string, configure ...func(*config.Config)) *runtime {
+	cfg := testConfig(dsn)
 	cfg.NATS = config.NATSConfig{URL: natsURL, PublishAckTimeout: 10 * time.Second,
 		Materialize: config.NATSMaterializeConfig{
 			MaxDeliver: 2, AckWait: time.Minute, RedeliverDelay: 500 * time.Millisecond, BarrierPollInterval: 200 * time.Millisecond,
 		}}
 	cfg.Health.Addr = "127.0.0.1:0"
+	for _, fn := range configure {
+		fn(cfg)
+	}
 
 	rt, err := bootstrap(ctx, cfg)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "bootstrap graph role")

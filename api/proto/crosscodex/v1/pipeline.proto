@@ -32,6 +32,14 @@ service PipelineService {
 
   // Get job execution trace
   rpc GetJobTrace(GetJobTraceRequest) returns (GetJobTraceResponse);
+
+  // Get the record a stage would be stored with if it ran now: its prompt
+  // version as the tenant's prompt layers resolve it, and the revision of each
+  // model alias of its panel. The graph role's cleaning pass compares it with
+  // a stored stage record to find stale results. Service-to-service only: the
+  // gateway does not expose it. tenant_context.tenant_id must equal the
+  // tenant of the authenticated connection (PERMISSION_DENIED otherwise).
+  rpc GetCurrentStageRecord(GetCurrentStageRecordRequest) returns (GetCurrentStageRecordResponse);
 }
 
 enum JobType {
@@ -337,4 +345,21 @@ message TraceEvent {
   map<string, string> details = 4;
   string trace_id = 5;  // OpenTelemetry trace ID
   string span_id = 6;
+}
+
+message GetCurrentStageRecordRequest {
+  TenantContext tenant_context = 1;
+  // Analyzer stage name, e.g. "relationship".
+  string stage = 2;
+}
+
+message GetCurrentStageRecordResponse {
+  // False when the stage is not a registered analyzer or renders no prompt:
+  // there is no record to compare, and the other fields are empty.
+  bool found = 1;
+  string prompt_name = 2;
+  // Empty when the deployment pins no version for the prompt.
+  string prompt_version = 3;
+  // Model alias to its configured revision ("" when none is pinned).
+  map<string, string> models = 4;
 }

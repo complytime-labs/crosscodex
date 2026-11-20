@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -184,6 +185,76 @@ var _ = Describe("Stage record", func() {
 
 			Expect(err).To(MatchError(tenant.ErrInvalidTenant))
 			Expect(ok).To(BeFalse())
+			Expect(resolvedTenant).To(BeEmpty())
+		})
+	})
+
+	Describe("GetCurrentStageRecord", func() {
+		request := func(tc *pb.TenantContext, stage string) *connect.Request[pb.GetCurrentStageRecordRequest] {
+			return connect.NewRequest(&pb.GetCurrentStageRecordRequest{TenantContext: tc, Stage: stage})
+		}
+		own := &pb.TenantContext{TenantId: "test-tenant"}
+
+		It("returns the record CurrentStageRecord computes for a found stage", func() {
+			registerPanel("relationship", "relationship", "a", "b")
+			svc := service(pipeline.WithPromptRegistry(prompts), withRevisions(map[string]string{"b": "r2"}))
+
+			resp, err := svc.GetCurrentStageRecord(ctx, request(own, "relationship"))
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.GetFound()).To(BeTrue())
+			Expect(resp.Msg.GetPromptName()).To(Equal("relationship"))
+			Expect(resp.Msg.GetPromptVersion()).To(Equal("4"))
+			Expect(resp.Msg.GetModels()).To(Equal(map[string]string{"a": "", "b": "r2"}))
+			Expect(resolvedTenant).To(Equal("test-tenant"))
+		})
+
+		It("reports found=false for an unregistered stage", func() {
+			resp, err := service(pipeline.WithPromptRegistry(prompts)).GetCurrentStageRecord(ctx, request(own, "relationship"))
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.GetFound()).To(BeFalse())
+			Expect(resp.Msg.GetModels()).To(BeEmpty())
+		})
+
+		It("fails closed with CodeInternal for a prompted stage when no prompt registry is wired", func() {
+			registerPanel("relationship", "relationship", "a")
+
+			resp, err := service().GetCurrentStageRecord(ctx, request(own, "relationship"))
+
+			Expect(resp).To(BeNil())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
+			Expect(err.Error()).NotTo(ContainSubstring("WithPromptRegistry"))
+			Expect(err.Error()).NotTo(ContainSubstring("renders prompt"))
+			Expect(err.Error()).To(ContainSubstring("Check the pipeline role's logs"))
+		})
+
+		It("rejects a request without tenant_context as InvalidArgument", func() {
+			resp, err := service(pipeline.WithPromptRegistry(prompts)).GetCurrentStageRecord(ctx, request(nil, "relationship"))
+
+			Expect(resp).To(BeNil())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			Expect(err.Error()).To(ContainSubstring("missing tenant context"))
+		})
+
+		It("rejects a ctx without a tenant as InvalidArgument", func() {
+			resp, err := service(pipeline.WithPromptRegistry(prompts)).GetCurrentStageRecord(context.Background(), request(own, "relationship"))
+
+			Expect(resp).To(BeNil())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			Expect(err.Error()).To(ContainSubstring("missing tenant context"))
+		})
+
+		It("denies a tenant_context that differs from the ctx tenant without naming either tenant", func() {
+			registerPanel("relationship", "relationship", "a")
+
+			resp, err := service(pipeline.WithPromptRegistry(prompts)).GetCurrentStageRecord(ctx,
+				request(&pb.TenantContext{TenantId: "victim-tenant"}, "relationship"))
+
+			Expect(resp).To(BeNil())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodePermissionDenied))
+			Expect(err.Error()).NotTo(ContainSubstring("victim-tenant"))
+			Expect(err.Error()).NotTo(ContainSubstring("test-tenant"))
 			Expect(resolvedTenant).To(BeEmpty())
 		})
 	})

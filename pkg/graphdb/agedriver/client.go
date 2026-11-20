@@ -906,7 +906,9 @@ func parseQueryValue(raw string) graphdb.QueryValue {
 // ExecuteQuery runs a read-only openCypher query against the tenant's graph.
 // Parameters are substituted textually (including inside Cypher string
 // literals) for whole `$name` tokens matching [A-Za-z_][A-Za-z0-9_]*; numeric
-// tokens like $1 and non-ASCII names are left as-is.
+// tokens like $1 and non-ASCII names are left as-is. Each row holds one
+// value per item of the query's last top-level RETURN (see returnColumns);
+// RETURN * is refused with graphdb.ErrInvalidCypher.
 func (c *ageClient) ExecuteQuery(ctx context.Context, tenant, cypher string, params map[string]string) (_ []graphdb.QueryRow, err error) {
 	if cypher == "" {
 		return nil, fmt.Errorf("execute query: cypher is required")
@@ -921,6 +923,16 @@ func (c *ageClient) ExecuteQuery(ctx context.Context, tenant, cypher string, par
 	if strings.Contains(resolved, cypherDollarTag) {
 		return nil, fmt.Errorf("execute query: %w: the query contains %q, which would end the SQL dollar-quote wrapping it. Remove it from the query",
 			graphdb.ErrInvalidCypher, cypherDollarTag)
+	}
+	ncols, err := returnColumns(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("execute query: %w", err)
+	}
+	// AGE requires one AS column per RETURN item. The list is built from
+	// constants only, never from the caller's text.
+	colDefs := make([]string, ncols)
+	for i := range colDefs {
+		colDefs[i] = fmt.Sprintf("c%d agtype", i)
 	}
 	start := time.Now()
 	ctx, span := c.startSpan(ctx, "graphdb.ExecuteQuery", tenant)
@@ -940,7 +952,7 @@ func (c *ageClient) ExecuteQuery(ctx context.Context, tenant, cypher string, par
 	}
 
 	gn := graphName(tenant)
-	sqlQuery := cypherSQL(gn, resolved, "v agtype")
+	sqlQuery := cypherSQL(gn, resolved, strings.Join(colDefs, ", "))
 
 	rows, err := tx.QueryContext(ctx, sqlQuery)
 	if err != nil {

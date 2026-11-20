@@ -16,6 +16,10 @@ var EdgeToAGProperties = edgeToAGProperties
 var GraphName = graphName
 var ParseQueryValue = parseQueryValue
 var SubstituteParams = substituteParams
+var ReturnColumns = returnColumns
+
+const MaxReturnColumns = maxReturnColumns
+
 var ClassifyErr = classifyErr
 var CreateLabelEdges = createLabelEdges
 var CypherStringList = cypherStringList

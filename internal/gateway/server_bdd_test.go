@@ -411,9 +411,60 @@ var _ = Describe("Server EdgeCleaningService mount", func() {
 		Expect(err.Error()).To(ContainSubstring("status filter is unknown"))
 	})
 
-	It("does not serve EdgeCleaningService when no handler is configured", func() {
-		client := startCleaning(gateway.NewService(), nil)
-		_, err := client.ListFindings(context.Background(), connect.NewRequest(&pb.ListFindingsRequest{}))
-		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnimplemented))
-	})
+})
+
+var _ = Describe("Server without a graph role", func() {
+	const refusal = "needs the crosscodexd daemon (role all, or gateway with a graph role)"
+
+	// With no graph or crosswalk backend and no cleaning handler (the
+	// embedded daemon), each RPC family refuses with Unavailable and copy
+	// that says where it is served.
+	DescribeTable("refuses with Unavailable and names the daemon that serves the RPC",
+		func(family string, call func(svc *gateway.Service, cleaning crosscodexv1connect.EdgeCleaningServiceClient) error) {
+			svc := gateway.NewService()
+			srv, err := gateway.NewServer(context.Background(), gateway.ServerConfig{
+				Addr:         "127.0.0.1:0",
+				Service:      svc,
+				TenantStatus: &fakeTenantStatus{active: true},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(srv.Start()).To(Succeed())
+			DeferCleanup(func() { _ = srv.Shutdown(context.Background()) })
+			cleaning := crosscodexv1connect.NewEdgeCleaningServiceClient(http.DefaultClient, "http://"+srv.Addr())
+
+			err = call(svc, cleaning)
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnavailable))
+			Expect(err).To(MatchError(ContainSubstring(family + " " + refusal)))
+		},
+		Entry("QueryGraph", "graph queries", func(svc *gateway.Service, _ crosscodexv1connect.EdgeCleaningServiceClient) error {
+			_, err := svc.QueryGraph(adminCtx(), connect.NewRequest(&pb.QueryGraphRequest{Cypher: "RETURN 1"}))
+			return err
+		}),
+		Entry("FindSimilar", "graph queries", func(svc *gateway.Service, _ crosscodexv1connect.EdgeCleaningServiceClient) error {
+			_, err := svc.FindSimilar(adminCtx(), connect.NewRequest(&pb.FindSimilarRequest{ControlId: "ac-1"}))
+			return err
+		}),
+		Entry("GetCrosswalk", "crosswalks", func(svc *gateway.Service, _ crosscodexv1connect.EdgeCleaningServiceClient) error {
+			_, err := svc.GetCrosswalk(adminCtx(), connect.NewRequest(&pb.GetCrosswalkRequest{
+				Mode: &pb.GetCrosswalkRequest_Pair{Pair: &pb.CrosswalkPair{CatalogA: "cat-a", CatalogB: "cat-b"}},
+			}))
+			return err
+		}),
+		Entry("RunCleaning", "edge cleaning", func(_ *gateway.Service, c crosscodexv1connect.EdgeCleaningServiceClient) error {
+			_, err := c.RunCleaning(context.Background(), connect.NewRequest(&pb.RunCleaningRequest{}))
+			return err
+		}),
+		Entry("ListFindings", "edge cleaning", func(_ *gateway.Service, c crosscodexv1connect.EdgeCleaningServiceClient) error {
+			_, err := c.ListFindings(context.Background(), connect.NewRequest(&pb.ListFindingsRequest{}))
+			return err
+		}),
+		Entry("GetFinding", "edge cleaning", func(_ *gateway.Service, c crosscodexv1connect.EdgeCleaningServiceClient) error {
+			_, err := c.GetFinding(context.Background(), connect.NewRequest(&pb.GetFindingRequest{}))
+			return err
+		}),
+		Entry("DecideFinding", "edge cleaning", func(_ *gateway.Service, c crosscodexv1connect.EdgeCleaningServiceClient) error {
+			_, err := c.DecideFinding(context.Background(), connect.NewRequest(&pb.DecideFindingRequest{}))
+			return err
+		}),
+	)
 })

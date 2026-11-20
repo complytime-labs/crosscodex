@@ -705,6 +705,20 @@ var _ = Describe("GraphDB Integration", Ordered, func() {
 			Expect(rows[0].Values[0].NodeVal).NotTo(BeNil())
 			Expect(rows[0].Values[0].NodeVal.ID).To(Equal("o'brien"))
 		})
+
+		It("returns one value per RETURN item for a multi-item RETURN", func() {
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			Expect(client.CreateNode(ctx, tenantID, graphdb.Node{
+				ID: "m-1", Label: "Requirement", ValidFrom: now,
+			})).To(Succeed())
+
+			rows, err := client.ExecuteQuery(ctx, tenantID, "MATCH (n:Requirement) RETURN n.id AS id, count(n) AS c", nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rows).To(HaveLen(1))
+			Expect(rows[0].Values).To(HaveLen(2))
+			Expect(rows[0].Values[0].ScalarVal).To(Equal(`"m-1"`))
+			Expect(rows[0].Values[1].ScalarVal).To(Equal("1"))
+		})
 	})
 
 	// ===================================================================

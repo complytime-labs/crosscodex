@@ -173,8 +173,10 @@ type GraphDB interface {
 	// ErrReadOnlyViolation) and rejects a query containing its dollar-quote
 	// tag ($cypher$) with ErrInvalidCypher.
 	//
-	// Queries must RETURN a single expression; multi-column RETURN clauses
-	// produce a database error.
+	// Each QueryRow holds one QueryValue per item of the query's RETURN
+	// clause, in order. agedriver must know the column count before the query
+	// runs, so it rejects RETURN * with ErrInvalidCypher; name each returned
+	// value instead.
 	//
 	// The tenant parameter on every GraphDB method is the multi-cluster routing key.
 	// A TenantRouter implementing GraphDB can dispatch to per-tenant driver

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"net"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -552,6 +553,18 @@ func validateGraph(g *GraphConfig, tracker *sourceTracker) error {
 	if g.MaxSimilarityLimit < 1 || g.MaxSimilarityLimit > maxGraphMaxSimilarityLimit {
 		return fieldErrorf("graph.max_similarity_limit", "graph.max_similarity_limit %d%s must be in range [1, %d]; it bounds the results one SimilaritySearch request may ask for per catalog (default %d): %w",
 			g.MaxSimilarityLimit, formatSource(tracker, "graph.max_similarity_limit"), maxGraphMaxSimilarityLimit, DefaultGraphMaxSimilarityLimit, ErrInvalidConfig)
+	}
+	for _, f := range []struct{ key, value string }{
+		{"graph.addr", g.Addr},
+		{"graph.endpoint", g.Endpoint},
+	} {
+		if f.value == "" {
+			continue
+		}
+		if _, port, err := net.SplitHostPort(f.value); err != nil || port == "" {
+			return fieldErrorf(f.key, "%s %q%s is not host:port: set it to the graph role's listener, for example graph.internal:8083: %w",
+				f.key, f.value, formatSource(tracker, f.key), ErrInvalidConfig)
+		}
 	}
 	return nil
 }

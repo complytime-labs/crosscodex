@@ -1282,6 +1282,17 @@ type GraphConfig struct {
 	// SimilaritySearch (or FindSimilar) RPC may ask for; a larger limit is
 	// rejected with InvalidArgument. Range [1, 10000].
 	MaxSimilarityLimit int `yaml:"max_similarity_limit" json:"max_similarity_limit"`
+
+	// Addr is the bind address (host:port) for the standalone "graph" role's
+	// own mTLS Connect RPC listener. Empty by default -- only required when
+	// running --role graph. Global-only: GraphConfig has no tenant_overrides.
+	Addr string `yaml:"addr" json:"addr"`
+
+	// Endpoint is where the standalone "gateway" role's Connect client dials
+	// (host:port) to reach a separately-deployed graph role. Empty by default;
+	// role "gateway" always requires it (attachGateway refuses to start
+	// without it). Global-only: GraphConfig has no tenant_overrides.
+	Endpoint string `yaml:"endpoint" json:"endpoint"`
 }
 
 // SynthesisConfig configures the synthesis service.

@@ -168,12 +168,21 @@ func upsertCatalogTx(ctx context.Context, tx db.Transaction, catalog CatalogReco
 		catalog.ExtractorName,
 		catalog.ExtractorVersion,
 	).Scan(&upserted)
+	// A catalog ID owned by another tenant is refused two ways. On a
+	// connection RLS does not apply to (owner), the WHERE above skips the
+	// update and RETURNING yields no row. Under the restricted application
+	// role, PostgreSQL checks the UPDATE policy's USING expression against
+	// the conflicting row and raises 42501 instead. Both leave the data
+	// unchanged. Catalog IDs hash the content with the tenant, so this is a
+	// collision or a caller-built ID, never a re-import. The 42501 cause stays
+	// in the chain because a missing GRANT or an unset app.current_tenant
+	// raises 42501 here too.
+	const anotherTenant = "upsert catalog %s: the catalog ID belongs to another tenant; nothing was written. Catalog IDs are derived from content and tenant, so report this collision to the operator"
 	if errors.Is(err, sql.ErrNoRows) {
-		// The WHERE above skipped the update: the ID is another tenant's.
-		// Catalog IDs hash the content with the tenant, so this is a
-		// collision or a caller-built ID, never a re-import.
-		return fmt.Errorf("upsert catalog %s: the catalog ID belongs to another tenant; nothing was written. Catalog IDs are derived from content and tenant, so report this collision to the operator",
-			catalog.CatalogID)
+		return fmt.Errorf(anotherTenant, catalog.CatalogID)
+	}
+	if db.IsPgErrorCode(err, "42501") {
+		return fmt.Errorf(anotherTenant+": %w", catalog.CatalogID, err)
 	}
 	if err != nil {
 		return fmt.Errorf("upsert catalog %s: %w", catalog.CatalogID, err)

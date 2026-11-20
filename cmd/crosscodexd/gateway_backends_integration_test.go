@@ -28,11 +28,12 @@ func gatewayClient(ctx context.Context, rt *runtime) crosscodexv1connect.Gateway
 }
 
 // The standalone gateway role is not covered here. It gets its mappings
-// backend from the same buildIngestGateway as role all and attaches no graph
-// backend.
+// backend from the same buildIngestGateway as role all, and its graph,
+// crosswalk and cleaning backends from Connect clients to the graph role
+// (graph.endpoint, required by attachGateway).
 //
-// An unwired backend answers CodeUnavailable ("... backend not configured").
-// A wired one reaches its store, so an unknown job is CodeNotFound.
+// An unwired backend answers CodeUnavailable. A wired one reaches its store,
+// so an unknown job is CodeNotFound.
 var _ = Describe("gateway backend wiring", func() {
 	const unknownJob = "00000000-0000-0000-0000-000000000000"
 

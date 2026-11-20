@@ -261,7 +261,10 @@ func FuzzCheckKnownKeys(f *testing.F) {
 // any input yaml.v3 decodes, the resolved node must decode to the same value
 // and hold no alias, anchor or merge key. Inputs with a mapping key that is
 // not a plain string are skipped: resolution assumes string keys, as Config
-// decoding does (see mergedPairs).
+// decoding does (see mergedPairs). The one input yaml.v3 decodes that
+// resolution may refuse is a mapping where a key written through an alias
+// repeats another key, which yaml.v3 does not detect; aliasRepeatsKey checks
+// such a refusal independently.
 func FuzzResolveReferences(f *testing.F) {
 	f.Add("logging:\n  <<: {level: debug}\n  level: info\n")
 	f.Add("a: &a {x: 1}\nb: &b {x: 2, y: 3}\nc:\n  <<: [*a, *b]\n")
@@ -286,6 +289,9 @@ func FuzzResolveReferences(f *testing.F) {
 		}
 		resolved, err := config.ExportResolveReferences(raw, "fuzz.yaml")
 		if err != nil {
+			if errors.Is(err, config.ErrInvalidConfig) && aliasRepeatsKey(raw) {
+				return
+			}
 			t.Fatalf("yaml.v3 decodes %q, but resolving it failed: %v", content, err)
 		}
 		if hasReferences(resolved) {
@@ -302,6 +308,33 @@ func FuzzResolveReferences(f *testing.F) {
 			t.Fatalf("%q decodes to\n%s\nbut resolved to\n%s", content, wantYAML, gotYAML)
 		}
 	})
+}
+
+// aliasRepeatsKey reports whether a mapping below n has two non-merge keys
+// with the same text once alias keys are replaced by their anchors' scalars.
+func aliasRepeatsKey(n *yaml.Node) bool {
+	if n.Kind == yaml.MappingNode {
+		seen := map[string]bool{}
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k := n.Content[i]
+			if isMergeKeyNode(k) {
+				continue
+			}
+			for k.Kind == yaml.AliasNode {
+				k = k.Alias
+			}
+			if seen[k.Value] {
+				return true
+			}
+			seen[k.Value] = true
+		}
+	}
+	for _, c := range n.Content {
+		if aliasRepeatsKey(c) {
+			return true
+		}
+	}
+	return false
 }
 
 // stringKeysOnly reports whether every mapping key reachable from n is a

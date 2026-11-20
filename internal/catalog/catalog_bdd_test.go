@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/jackc/pgx/v5/pgconn"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -234,6 +235,29 @@ var _ = Describe("PGStore", func() {
 			Expect(err).To(MatchError(ContainSubstring("nothing was written")))
 			Expect(tx.Commits()).To(Equal(0))
 		})
+
+		DescribeTable("classifies an upsert failure by SQLSTATE",
+			func(state string, refusal bool) {
+				cause := &pgconn.PgError{Code: state}
+				tx := &dbtest.Tx{
+					QueryRowFunc: func(context.Context, string, ...any) db.Row { return dbtest.Row(cause) },
+				}
+				store := catalog.NewPGStore(&dbtest.Conn{Tx: tx})
+
+				err := store.UpsertCatalogWithTree(storeCtx, cat, nil, nil)
+				Expect(err).To(MatchError(cause))
+				if refusal {
+					// The restricted role's RLS raises 42501 instead of skipping the row.
+					Expect(err).To(MatchError(ContainSubstring("belongs to another tenant")))
+					Expect(err).To(MatchError(ContainSubstring("nothing was written")))
+				} else {
+					Expect(err).NotTo(MatchError(ContainSubstring("belongs to another tenant")))
+				}
+				Expect(tx.Commits()).To(Equal(0))
+			},
+			Entry("row-level security violation is refused as another tenant's ID", "42501", true),
+			Entry("unique violation is not reported as another tenant's ID", "23505", false),
+		)
 
 		It("refuses the batch without writing a control when its catalog is not the tenant's", func() {
 			tx := &dbtest.Tx{QueryRowFunc: ownership(dbtest.Row(sql.ErrNoRows))}

@@ -80,7 +80,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		pipelineCfg.TLS = testServerTLS()
 
 		workerCfg := splitRoleConfig(dsn, natsURL, tenantID, config.RoleWorker)
-		startGraphRole(ctx, dsn, natsURL)
+		graphRT := startGraphRole(ctx, dsn, natsURL)
 
 		// The pipeline and gateway roles refuse a default tenant migrate has
 		// not provisioned, so provision it before bootstrapping either.
@@ -108,6 +108,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		gwCfg.Role = config.RoleGateway
 		gwCfg.Server.Addr = "127.0.0.1:0"
 		gwCfg.Pipeline.Endpoint = pipelineAddr
+		gwCfg.Graph.Endpoint = graphRT.graphServer.Addr()
 		gwCfg.TLS = testClientTLS()
 		gwCfg.NATS = config.NATSConfig{URL: natsURL, PublishAckTimeout: 10 * time.Second}
 		gwCfg.Tenants.DefaultTenant = tenantID
@@ -241,6 +242,7 @@ var _ = Describe("crosscodexd role=pipeline as a standalone, network-addressable
 		gwCfg.Role = config.RoleGateway
 		gwCfg.Server.Addr = "127.0.0.1:0"
 		gwCfg.Pipeline.Endpoint = pipelineRT.pipelineServer.Addr()
+		gwCfg.Graph.Endpoint = graphRT.graphServer.Addr()
 		gwCfg.TLS = testClientTLS()
 		gwCfg.TLS.Targets = map[string]config.TLSOverride{
 			"gateway-server": {Cert: testTLSServerCertPath, Key: testTLSServerKeyPath},

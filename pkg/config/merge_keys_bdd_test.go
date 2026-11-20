@@ -105,6 +105,26 @@ var _ = Describe("YAML merge keys and aliases in a file layer", func() {
 		Entry("an anchor that contains itself", "a: &a [*a]\n", "contains itself"),
 	)
 
+	// yaml.v3 compares keys by node kind and text, so it misses a key
+	// written through an alias that names the same setting as another key.
+	DescribeTable("rejects two keys that name the same setting once aliases are expanded, naming the file and both lines",
+		func(content, wantMsg string) {
+			resolved, err := config.ExportResolveReferences(config.ExportMustParseYAML(content), "layer.yaml")
+			Expect(err).To(MatchError(ContainSubstring("layer.yaml")))
+			Expect(err).To(MatchError(ContainSubstring(wantMsg)))
+			Expect(err).To(MatchError(ContainSubstring("remove one of them")))
+			Expect(err).To(MatchError(config.ErrInvalidConfig))
+			Expect(resolved).To(BeNil())
+		},
+		Entry("an alias key after an explicit key", "a: &k level\nb:\n  level: info\n  *k : debug\n",
+			`line 4: mapping key "level" already defined at line 3`),
+		Entry("an alias key before an explicit key", "a: &k level\nb:\n  *k : debug\n  level: info\n",
+			`line 4: mapping key "level" already defined at line 3`),
+		Entry("aliases to two anchors with the same text", "x: &x level\ny: &y level\nb: {*x : 1, *y : 2}\n",
+			`line 3: mapping key "level" already defined at line 3`),
+		Entry("an alias key at the top level", "A: &k A\nB:\n*k:", `line 3: mapping key "A" already defined at line 1`),
+	)
+
 	Describe("when loading", func() {
 		It("applies a merged mapping over a default the section sets explicitly", func() {
 			_, cfg, err := loadConfigFile("logging:\n  <<: {level: debug, format: json}\n")
@@ -142,6 +162,13 @@ var _ = Describe("YAML merge keys and aliases in a file layer", func() {
 			cfg, err := config.NewLoader().Load(context.Background())
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cfg.Logging.Level).To(Equal("debug"))
+		})
+
+		It("refuses a key written through an alias that repeats another key in its section", func() {
+			path, cfg, err := loadConfigFile("x: &k level\nlogging:\n  level: info\n  *k : debug\n")
+			Expect(err).To(MatchError(ContainSubstring(path)))
+			Expect(err).To(MatchError(ContainSubstring(`mapping key "level" already defined`)))
+			Expect(cfg).To(BeNil())
 		})
 
 		It("decodes a tenant override set through an alias", func() {

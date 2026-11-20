@@ -15,15 +15,15 @@ This document covers how `crosscodexd` picks a service role at startup, what eac
 | Role                    | What it runs                                                                                                                                                | Notes                                                                                                                                                                                          |
 |-------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `all` (default)         | Graph service + LLM worker + gateway (HTTP server + in-process pipeline service)                                                                            | Everything in one process, no network hop between gateway and pipeline; see `attachGraph`, `attachWorker`, `buildPipelineService`, and `attachAllGateway` in `cmd/crosscodexd/bootstrap.go` |
-| `gateway`               | Gateway HTTP server (`internal/gateway.Server`). Serves catalog import itself (X.509 authn, ingestion, catalog service) and forwards jobs to a separately-deployed `pipeline` role over a Connect client | Requires `pipeline.endpoint`; enforces the fail-closed preconditions below; see [Catalog import in a split deployment](#catalog-import-in-a-split-deployment)                                                                                                                      |
+| `gateway`               | Gateway HTTP server (`internal/gateway.Server`). Serves catalog import itself (X.509 authn, ingestion, catalog service), forwards jobs to a separately-deployed `pipeline` role and graph, crosswalk and edge-cleaning RPCs to a `graph` role, each over a Connect client | Requires `pipeline.endpoint` and `graph.endpoint`; enforces the fail-closed preconditions below; see [Catalog import in a split deployment](#catalog-import-in-a-split-deployment)                                                                                                                      |
 | `pipeline`              | A production `pipeline.Service` behind its own Connect RPC listener (`internal/pipeline.Server`), dispatching analyzer work to workers over NATS            | Requires `pipeline.addr`; enforces the fail-closed preconditions below                                                                                                                         |
 | `worker`                | LLM worker (`internal/worker.Worker`) consuming tasks from the NATS queue group                                                                             | No Postgres connection is opened for this role — a worker replica scales horizontally without database credentials                                                                             |
-| `graph`                 | Graph-materialization service (`internal/graph.Service`), subscribing to NATS and writing to the AGE-backed graph database. Also projects Control nodes and PARENT_OF edges from catalog parsed events |                                                                                                                                                                                                |
+| `graph`                 | Graph-materialization service (`internal/graph.Service`), subscribing to NATS and writing to the AGE-backed graph database. Also projects Control nodes and PARENT_OF edges from catalog parsed events, and serves the gateway's read-only graph, crosswalk and edge-cleaning RPCs on `graph.addr` | Requires `graph.addr`; enforces the fail-closed preconditions in [Graph role listener](#graph-role-listener) |
 | `analysis`, `synthesis` | Alias for `pipeline`                                                                                                                                        | See [Aliases](#aliases-analysis-synthesis) below                                                                                                                                               |
 
 `config.ResolveRole` validates a requested role name against `config.CanonicalRoles` (`all`, `gateway`, `pipeline`, `worker`, `graph`) and the alias map, returning an error listing every accepted value if the input matches neither.
 
-Only `all` mounts `AdminService` and `EdgeCleaningService` on its gateway server (`attachAllGateway` sets `gateway.ServerConfig.Admin` and `.Cleaning`; `attachGateway` and the embedded daemon set neither), so a client calling them on the `gateway` role or the embedded daemon gets `Unimplemented`. `EdgeCleaningService` gets the same interceptors and `publicErrorInterceptor` as `AdminService`, because `internal/cleaning` returns raw store and graph errors. `attachAllGateway` also builds the cleaning signer from `attestation.private_key_path` and `attestation.public_key_path`, independent of `attestation.enabled`: with either path empty the engine runs without a signer and refuses apply and decide; with both set, keys that do not load stop startup. See [Edge Cleaning](cleaning.md).
+Only `all` mounts `AdminService` on its gateway server (`attachAllGateway` sets `gateway.ServerConfig.Admin`; `attachGateway` and the embedded daemon do not), so a client calling it on the `gateway` role or the embedded daemon gets `Unimplemented`. `EdgeCleaningService` is mounted by `all` (`attachAllGateway` sets `gateway.ServerConfig.Cleaning` to the in-process engine) and by `gateway` (`attachGateway` sets it to `graphBackend.Cleaning()`, which forwards to the graph role). The embedded daemon sets none, so `gateway.NewServer` mounts a stub that answers `Unavailable` with the fixed text `edge cleaning needs the crosscodexd daemon (role all, or gateway with a graph role)`. `EdgeCleaningService` gets the same interceptors and `publicErrorInterceptor` as `AdminService`, because `internal/cleaning` returns raw store and graph errors. The process that runs the engine (`attachAllGateway` for `all`, `attachGraphListener` for `graph`; both through `newCleaningEngine`) builds the cleaning signer from `attestation.private_key_path` and `attestation.public_key_path`, independent of `attestation.enabled`: with either path empty the engine runs without a signer and refuses apply and decide; with both set, keys that do not load stop startup. See [Edge Cleaning](cleaning.md).
 
 ### Aliases: `analysis`, `synthesis`
 
@@ -45,12 +45,12 @@ Split roles (`gateway`, `pipeline`, `worker`, `graph`, and the `analysis`/`synth
 
 ## Gateway backends by role
 
-`gateway.NewService` serves only the backends it is given; an RPC whose backend is absent returns `Unavailable`.
+`gateway.NewService` serves only the backends it is given; an RPC whose backend is absent returns `Unavailable`. For graph queries, crosswalks and edge cleaning the message is fixed: `<graph queries | crosswalks | edge cleaning> needs the crosscodexd daemon (role all, or gateway with a graph role)`.
 
-| Role | Mappings and candidates backend (`ListJobMappings`, `GetControlMappings`, `ListJobCandidates`) | Graph backend (`QueryGraph`, `FindSimilar`) |
+| Role | Mappings and candidates backend (`ListJobMappings`, `GetControlMappings`, `ListJobCandidates`) | Graph backend (`QueryGraph`, `FindSimilar`) and crosswalk backend (`GetCrosswalk`) |
 |------|------|------|
 | `all` | `results.Service` via `newMappingsBackend`, in `buildIngestGateway` | `rt.graphService`, which `attachGraph` builds first; `attachAllGateway` passes it to `buildIngestGateway` |
-| `gateway` | `results.Service` via `newMappingsBackend`, in `buildIngestGateway` | not attached |
+| `gateway` | `results.Service` via `newMappingsBackend`, in `buildIngestGateway` | `gateway.NewConnectGraphBackend`, a Connect client to the graph role at `graph.endpoint`, passed through `gateway.WithGraphBackend` and `gateway.WithCrosswalkBackend` |
 | embedded CLI daemon (`cmd/crosscodex/embedded.go`) | `results.Service` over its tenant connection | not attached |
 
 The feedback backend (`SubmitVote`, `GetReviewQueue`) is not implemented in any role; both RPCs return `Unavailable`.
@@ -94,6 +94,7 @@ Roles that open Postgres never migrate. Run `crosscodexd migrate` first (see [Da
 - **`pipeline`** additionally requires `pipeline.addr` (the bind address for its standalone Connect RPC listener) — `attachPipeline` fails closed if it's unset. It also requires mutual TLS: `attachPipeline` resolves the `pipeline-server` TLS target and fails closed unless it produces a `mutual`-mode config with a CA, because `pipeline.Server` enforces `RequireAndVerifyClientCert` on every RPC and `rpcserver.Listen` would otherwise fall back to plaintext when TLS is off.
 - **`gateway`** has the following requirements:
   - **Pipeline endpoint** — `pipeline.endpoint` (where its Connect client dials to reach a separately-deployed `pipeline` role) must be set. `attachGateway` fails closed if unset.
+  - **Graph endpoint** — `graph.endpoint` (`host:port` of a separately-deployed `graph` role's listener) must be set. `attachGateway` fails closed if unset, with an error that names the RPCs the graph role serves. `gateway.NewConnectGraphBackend` resolves the `graph-client` TLS target and, like the pipeline client, fails closed unless it presents a client certificate and carries a CA.
   - **Mutual TLS for client** — `gateway.NewConnectPipelineBackend` resolves the `pipeline-client` TLS target and fails closed unless it yields a config that both presents a client certificate and carries a CA to verify the pipeline's server certificate.
   - **Why mutual TLS is required** — This mirrors the `pipeline` server-side precondition. Because the pipeline listener enforces `RequireAndVerifyClientCert` and has no plaintext fallback, a client that couldn't present a certificate would only fail at the first RPC. Both halves of the split refuse to start without genuine mutual TLS rather than degrading to cleartext.
   - **Catalog import preconditions** — the gateway serves catalog import itself, so `buildIngestGateway` (shared with `all`) refuses to start unless:
@@ -101,7 +102,7 @@ Roles that open Postgres never migrate. Run `crosscodexd migrate` first (see [Da
     - `storage.objects.base_path` is set (`gateway role: storage.objects.base_path must be set`). Uploaded documents are stored here, on the gateway's own filesystem;
     - the `gateway-server` TLS target resolves to `mutual` mode with a CA (`gateway role: catalog import authenticates clients by X.509 certificate, so tls.mode (or tls.targets.gateway-server.mode) must be "mutual" with a CA configured`), because the listener otherwise never verifies a client certificate;
     - the default tenant exists (`gateway role: default tenant "<id>" does not exist. Run crosscodexd migrate ...`) and is not deleted (`gateway role: default tenant "<id>" is deleted. Restore it with crosscodexd admin tenant restore ...`).
-  - **Resources** — Postgres (`database.dsn`) and NATS. The gateway holds no graph or vector credentials.
+  - **Resources** — Postgres (`database.dsn`) and NATS. The gateway holds no graph or vector credentials; it reaches the graph through the graph role.
   - **No pipeline service preconditions** — it does not need the attestation keys from `buildPipelineService`; it constructs no `pipeline.Service`, only a network client to one.
 - **`all`** needs neither `pipeline.addr` nor `pipeline.endpoint` — it wires `pipeline.Service` directly into the gateway's `PipelineBackend` in-process, with no listener or client involved.
 
@@ -131,6 +132,44 @@ Trust is two checks. The TLS handshake admits only a certificate the `gateway-se
 The embedded CLI daemon (`cmd/crosscodex/embedded.go`) builds its registry the same way from one mapping: the exact common name and organization of the client certificate in its PKI directory, glob characters escaped, with role `admin`. The daemon's own server certificate and any other certificate its CA signs match nothing.
 
 Mappings are globs, so a broad one (`cn: "*"`) admits every certificate the CA signs. In a split deployment the inter-service CA also signs service identities such as `pipeline-client`; map exact subjects, and give `gateway-server` a dedicated client CA through `tls.targets.gateway-server.ca`, separate from the inter-service CA, so a service identity cannot reach the gateway at all.
+
+## Graph role listener
+
+Role `graph` runs a Connect RPC listener (`internal/graph.Server`, built by `attachGraphListener` in `cmd/crosscodexd/bootstrap.go` after `attachGraph`) so a `gateway` role can serve graph, crosswalk and edge-cleaning RPCs without graph credentials. Role `all` serves the same RPCs in process and runs no listener. The listener mounts:
+
+- `GraphService`, read-only: `Traverse`, `Query` and `SimilaritySearch`. Every other `GraphService` RPC returns `Unimplemented` with the fixed text `graph writes go through materialization; this listener serves the gateway's read RPCs only`, because only the NATS materializers write the graph.
+- `CrosswalkService.GetCrosswalk` (`crosscodex/v1/crosswalk.proto`). It is a separate service because `gateway.proto` declares the `Crosswalk*` messages and imports `graph.proto`, so `GraphService` cannot carry the RPC. The gateway resolves the request (the tenant's completed jobs and the catalogs it names) and the graph role only reads the graph.
+- `EdgeCleaningService`, backed by `pkg/cleaning.Engine` and `internal/cleaning.Service`, so the role checks and the tenant-match rule in [Edge Cleaning](cleaning.md#handler) apply unchanged.
+
+`attachGraphListener` refuses to start, naming the key to fix, unless all of these hold. The configuration checks run before the database is touched:
+
+- `graph.addr` is set (`host:port`; `pkg/config` rejects a value `net.SplitHostPort` cannot split, with a non-empty port).
+- The `graph-server` TLS target resolves to `mutual` mode with a CA (`graph role: tls.mode (or tls.targets.graph-server.mode) must be "mutual" with a CA configured ...`). `rpcserver.Listen` would otherwise serve plaintext when TLS is off.
+- `tls.service_identities` is non-empty (`errNoServiceIdentities("graph", "gateway")`): list only the gateway's outbound client certificate; the daemon cannot check how broad the list is.
+- `tenants.default_tenant` is set, and exists and is not deleted (`checkDefaultTenant`).
+- `pipeline.endpoint` is set. Edge cleaning compares each stored stage record with the one the stage would get now, and only the pipeline role knows each stage's current prompt and model revisions.
+
+The graph role asks for them with `PipelineService.GetCurrentStageRecord` (`pipeline.proto`; served by `internal/pipeline/stage_record_rpc.go`, called through `remoteStageRecord` in `cmd/crosscodexd/stage_record_client.go`). It is service-to-service only: the gateway does not expose it, and the request's `tenant_context.tenant_id` must equal the authenticated connection's tenant (`PermissionDenied` otherwise). The pipeline role must therefore list the graph role's client certificate in its own `tls.service_identities`. The dial uses `gateway.NewPipelineClient`, so TLS target `pipeline-client` must resolve to mutual TLS with a client certificate, key and CA (`mtlsHTTPClient` refuses otherwise). When the call fails, the graph role logs the cause and returns a fresh `Unavailable` error that names `pipeline.endpoint` (visible only to a caller dialing the graph listener directly; through the gateway `publicError` replaces it with an error reference, and the gateway log keeps the text) and never wraps the pipeline's error, so a pipeline-side `PermissionDenied` or `NotFound` does not reach the API caller as its own code (connect-go sends the first `connect.Error` in the chain).
+
+Health checks use the separate listener on `health.addr` (see [Health checks](#health-checks)), not this one.
+
+### Identity assertion between gateway and a split role
+
+The pipeline and graph listeners trust the gateway to have authenticated the end user. The gateway's Connect clients carry that identity in request headers, built by `pkg/tenant/connectutil`:
+
+| Header | Meaning |
+|--------|---------|
+| `x-tenant-id` | Tenant of the request (always sent) |
+| `x-user-id` | The end user's subject (`authn.Identity.Subject`) |
+| `x-user-roles` | The user's roles, comma-separated (`authn.Identity.Roles`) |
+
+`connectutil.UnaryServerInterceptor(identities)` honors the headers only from a client certificate matching one of `tls.service_identities` (see [Tenant propagation](#tenant-propagation-between-gateway-and-a-standalone-pipeline-role)). On top of that:
+
+- User and roles travel together or not at all. Both present: the interceptor puts an `authn.Identity` and the user into the context, so the receiving service's role checks (for cleaning: admin, reviewer) apply to the asserted user, not to the gateway's certificate. Neither present: tenant only. Exactly one, a repeated or empty `x-user-id`, a repeated `x-user-roles`, an empty role list, an empty list element or a role outside `authn.KnownRoles` is `InvalidArgument`.
+- The client side (`connectutil.UnaryClientInterceptor`) fails closed with `FailedPrecondition`, without sending the request, when the context has no tenant, has a user but no `authn.Identity`, has a user that differs from the identity's subject, or has an identity with an empty subject. Dropping the user instead would widen the per-user row scope (`pkg/db`) on the far side. A client certificate mapped by organization or organizational unit alone has no subject, so such a certificate fails gateway to pipeline and gateway to graph calls until it carries a CN.
+- Streaming RPCs are rejected (`Unimplemented`) on these services.
+
+A service identity can still assert any user and role it likes. The trust boundary is the certificate: list only the gateway's client certificate, and with `tenants.enabled: true` give the gateway a dedicated one.
 
 ## Job completion needs a graph role
 

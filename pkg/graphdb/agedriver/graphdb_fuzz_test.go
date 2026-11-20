@@ -244,3 +244,27 @@ func FuzzCreateLabelEdges(f *testing.F) {
 		}
 	})
 }
+
+// FuzzReturnColumns checks that counting result columns never panics and
+// that an accepted query is given at least one and at most PostgreSQL's
+// maximum number of columns. Refusals are not checked: they only make
+// ExecuteQuery fail before any SQL is sent.
+func FuzzReturnColumns(f *testing.F) {
+	f.Add("MATCH ()-[r]->() RETURN type(r) AS t, count(r) AS c")
+	f.Add("MATCH (n) RETURN *")
+	f.Add("")
+	f.Add("RETURN 'a, b")
+	f.Add("RETURN {a: [1, (2)], b: `x, y`} /* RETURN c, d */ // e, f")
+	f.Add("RETURN a)), b ORDER BY a, b")
+	f.Add("RETURN \"\\\"")
+
+	f.Fuzz(func(t *testing.T, cypher string) {
+		n, err := agedriver.ReturnColumns(cypher)
+		if err != nil {
+			return
+		}
+		if n < 1 || n > agedriver.MaxReturnColumns {
+			t.Fatalf("returnColumns(%q) = %d; want 1..%d", cypher, n, agedriver.MaxReturnColumns)
+		}
+	})
+}

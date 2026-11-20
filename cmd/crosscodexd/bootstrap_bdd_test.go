@@ -12,6 +12,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -464,7 +465,7 @@ var _ = Describe("attachPipeline service identities guard", func() {
 	It("refuses to start with no service identities, naming the setting and a subject to add", func() {
 		rt := &runtime{}
 		err := attachPipeline(context.Background(), pipelineConfig(nil), &sharedResources{}, rt)
-		Expect(err).To(MatchError(errNoServiceIdentities))
+		Expect(err).To(MatchError(errNoServiceIdentities("pipeline", "gateway")))
 		Expect(err).To(MatchError(ContainSubstring("tls.service_identities")))
 		Expect(err).To(MatchError(ContainSubstring("cn: client")))
 		Expect(rt.pipelineServer).To(BeNil(), "no listener may be built")
@@ -474,5 +475,73 @@ var _ = Describe("attachPipeline service identities guard", func() {
 		cfg := pipelineConfig([]config.X509MatchConfig{{CN: "client", Organization: "CrossCodex"}})
 		err := attachPipeline(context.Background(), cfg, &sharedResources{}, &runtime{})
 		Expect(err).To(MatchError(ContainSubstring("tenants.default_tenant must be set")))
+	})
+})
+
+// unusedAddr returns a loopback address nothing listens on: it binds a free
+// port and releases it, so a later dial fails unless something rebinds it.
+func unusedAddr() string {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	Expect(err).NotTo(HaveOccurred())
+	addr := l.Addr().String()
+	Expect(l.Close()).To(Succeed())
+	return addr
+}
+
+// The graph role's listener serves the gateway's graph, crosswalk and cleaning
+// RPCs, so it refuses to start on any missing safety precondition, before
+// binding a listener or touching the database (the zero sharedResources has
+// no pool).
+var _ = Describe("attachGraphListener preconditions", func() {
+	DescribeTable("refuses to start, naming the setting, and binds no listener",
+		func(mutate func(*config.Config), wantKey string) {
+			addr := unusedAddr()
+			cfg := &config.Config{}
+			cfg.Graph.Addr = addr
+			cfg.Pipeline.Endpoint = unusedAddr()
+			cfg.Tenants.DefaultTenant = "crosscodexd-test"
+			cfg.TLS = config.TLSConfig{
+				Mode:              "mutual",
+				CA:                testTLSWiringCAPath,
+				Cert:              testTLSWiringClientCertPath,
+				Key:               testTLSWiringClientKeyPath,
+				ServiceIdentities: []config.X509MatchConfig{{CN: "client", Organization: "CrossCodex"}},
+			}
+			mutate(cfg)
+			rt := &runtime{graphService: &graph.Service{}}
+
+			err := attachGraphListener(context.Background(), cfg, &sharedResources{}, rt)
+
+			Expect(err).To(MatchError(And(HavePrefix("graph role: "), ContainSubstring(wantKey))))
+			Expect(rt.graphServer).To(BeNil(), "no listener may be built")
+			_, dialErr := net.DialTimeout("tcp", addr, time.Second)
+			Expect(dialErr).To(HaveOccurred(), "nothing may listen on graph.addr")
+		},
+		Entry("no graph.addr", func(c *config.Config) { c.Graph.Addr = "" }, "graph.addr"),
+		Entry("server-only TLS", func(c *config.Config) { c.TLS.Mode = "server-only" }, `"mutual"`),
+		Entry("no tls.service_identities", func(c *config.Config) { c.TLS.ServiceIdentities = nil }, "tls.service_identities"),
+		Entry("no tenants.default_tenant", func(c *config.Config) { c.Tenants.DefaultTenant = "" }, "tenants.default_tenant"),
+		Entry("no pipeline.endpoint", func(c *config.Config) { c.Pipeline.Endpoint = "" }, "pipeline.endpoint"),
+	)
+
+	It("names the gateway's client certificate as the subject to list", func() {
+		err := errNoServiceIdentities("graph", "gateway")
+		Expect(err).To(MatchError(ContainSubstring("graph role: no client certificate may assert a tenant")))
+		Expect(err).To(MatchError(ContainSubstring("List the gateway's client certificate subject")))
+	})
+})
+
+// A standalone gateway serves graph, crosswalk and cleaning RPCs only through
+// a graph role, so it refuses to start without one to reach.
+var _ = Describe("attachGateway graph endpoint guard", func() {
+	It("refuses to start without graph.endpoint, naming it, and builds no server", func() {
+		cfg := &config.Config{}
+		cfg.Pipeline.Endpoint = unusedAddr()
+		rt := &runtime{}
+
+		err := attachGateway(context.Background(), cfg, &sharedResources{}, rt)
+
+		Expect(err).To(MatchError(ContainSubstring("graph.endpoint must be set")))
+		Expect(rt.gatewayServer).To(BeNil())
 	})
 })
