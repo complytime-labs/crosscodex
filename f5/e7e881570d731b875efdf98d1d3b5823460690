@@ -1,0 +1,21 @@
+cmd/crosscodexd/healthcheck.go
+  s_714e941abc6b42::t_60a018b032fbcf 60-61,78-81
+cmd/crosscodexd/healthcheck_run_bdd_test.go
+  s_714e941abc6b42::t_e528c376aecd45 126-147
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "f5e7e881570d731b875efdf98d1d3b5823460690",
+  "prompts": {},
+  "sessions": {
+    "s_714e941abc6b42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6aa18186-7d90-4c58-b51d-483b51e55303",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
