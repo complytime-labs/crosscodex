@@ -402,6 +402,89 @@ if [ "${seen_migrate}" -ne 1 ] || [ "${seen_crosscodexd}" -ne 1 ]; then
 fi
 echo "Key volumes hold only their own files; only migrate and crosscodexd mount the client key, only crosscodexd the attestation key."
 
+# server.pem must not be a client identity (issue #236): db, nats and the LLM
+# gateway can read server-key.pem, and nats accepts any CA-signed client cert.
+# Present each cert to nats as a TLS client from a sibling container that holds
+# what those services hold: the server volume and GID 10001 (compose.yaml
+# group_add). server.pem must get a TLS alert; client.pem, the positive control,
+# must get PONG, so the check cannot pass on a broken probe. nats sends a
+# plaintext INFO line before the TLS handshake, so `openssl s_client` cannot
+# speak it; python3 (from the apache/age base of crosscodex-db, the image the
+# volume checks above already use) can. Exit codes: 0 accepted, 3 refused by a
+# TLS alert from nats, anything else means nothing was proven.
+nats_probe='
+import socket, ssl, sys
+host, port, ca, cert, key = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
+def done(rc, msg):
+    print(msg)
+    sys.exit(rc)
+try:
+    ctx = ssl.create_default_context(cafile=ca)
+    ctx.load_cert_chain(cert, key)
+    raw = socket.create_connection((host, port), timeout=15)
+    info = raw.makefile("rb").readline()
+except Exception as e:
+    done(2, "setup failed: %r" % e)
+if not info.startswith(b"INFO "):
+    done(2, "no NATS INFO line from %s:%d: %r" % (host, port, info[:80]))
+buf = b""
+try:
+    tls = ctx.wrap_socket(raw, server_hostname=host)
+    tls.sendall(b"CONNECT {\"verbose\":false,\"pedantic\":false,\"tls_required\":true}\r\nPING\r\n")
+    while not any(l.startswith((b"PONG", b"-ERR")) for l in buf.split(b"\r\n")[:-1]):
+        chunk = tls.recv(4096)
+        if not chunk:
+            done(2, "connection closed without PONG, -ERR or a TLS alert: %r" % buf[:200])
+        buf += chunk
+except ssl.SSLError as e:
+    if "ALERT" in (e.reason or ""):
+        done(3, "refused by TLS alert %s" % e.reason)
+    done(2, "TLS error not sent by nats: %r" % e)
+except Exception as e:
+    done(2, "probe failed: %r" % e)
+if any(l.startswith(b"PONG") for l in buf.split(b"\r\n")):
+    done(0, "accepted (PONG)")
+done(2, "nats answered with an error, not a TLS refusal: %r" % buf[:200])
+'
+nats_cid="$("${engine}" ps --filter "${project_filter}" \
+	--filter "label=com.docker.compose.service=nats" --format '{{.ID}}' | head -n1)"
+if [ -z "${nats_cid}" ]; then
+	echo "FAIL: client identity: no running nats container in project ${COMPOSE_PROJECT_NAME} to probe." >&2
+	exit 1
+fi
+# shellcheck disable=SC2016 # $name is a Go template variable, not shell.
+if ! nats_network="$("${engine}" inspect --format '{{range $name, $net := .NetworkSettings.Networks}}{{$name}} {{end}}' "${nats_cid}")" ||
+	[ -z "${nats_network// /}" ]; then
+	echo "FAIL: client identity: cannot read the network of nats container ${nats_cid} (error above, if any)." >&2
+	exit 1
+fi
+read -r nats_network _ <<<"${nats_network}"
+# nats_presents <volume> <cert-base> sets probe_out (the probe's stdout; engine
+# errors go to stderr) and probe_rc.
+nats_presents() {
+	probe_out="$("${engine}" run --rm --network "${nats_network}" --group-add 10001 \
+		-v "$1:/v:ro,z" --entrypoint python3 "${image}" \
+		-I -c "${nats_probe}" nats 4222 /v/ca.pem "/v/$2.pem" "/v/$2-key.pem")" && probe_rc=0 || probe_rc=$?
+}
+nats_presents "${CROSSCODEX_CLIENT_CERTS_VOLUME}" client
+if [ "${probe_rc}" -ne 0 ]; then
+	echo "FAIL: client identity: nats did not accept client.pem (probe exit ${probe_rc}: ${probe_out}); the probe cannot prove server.pem is refused." >&2
+	exit 1
+fi
+nats_presents "${CROSSCODEX_CERTS_VOLUME}" server
+case "${probe_rc}" in
+3) ;;
+0)
+	echo "FAIL: client identity: nats accepted server.pem as a client cert; the deploy server cert must be serverAuth-only (deploy/certgen/gen.go) so db, nats and the LLM gateway cannot act as NATS clients." >&2
+	exit 1
+	;;
+*)
+	echo "FAIL: client identity: could not check whether nats refuses server.pem (probe exit ${probe_rc}: ${probe_out})." >&2
+	exit 1
+	;;
+esac
+echo "nats accepts client.pem and refuses server.pem as a client cert (${probe_out})."
+
 # Reach the daemon exactly as deploy:up's health check does: a host process
 # dialing the published gateway port over mTLS. In this rootless, nested-podman
 # environment a sibling `podman run` container cannot reach the daemon -- joining
