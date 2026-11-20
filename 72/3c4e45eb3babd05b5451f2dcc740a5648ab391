@@ -1,0 +1,25 @@
+cmd/crosscodexd/main_bdd_test.go
+  s_714e941abc6b42::t_b2ae12dfa0be74 181-207
+cmd/crosscodexd/main.go
+  s_714e941abc6b42::t_bdf9aa4888e68a 125-128
+pkg/config/role.go
+  s_714e941abc6b42::t_cd6feadabe5939 5,76-97
+pkg/config/role_bdd_test.go
+  s_714e941abc6b42::t_15be3bb868ef06 150-197
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "723c4e45eb3babd05b5451f2dcc740a5648ab391",
+  "prompts": {},
+  "sessions": {
+    "s_714e941abc6b42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6aa18186-7d90-4c58-b51d-483b51e55303",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
