@@ -61,7 +61,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
       POSTGRES_DB: crosscodex
     volumes:
-      - crosscodex-certs:/certs
+      - crosscodex-certs:/certs:ro
       - crosscodex-pgdata:/var/lib/postgresql/data
     command: >
       postgres
@@ -83,8 +83,12 @@ services:
     group_add: ["10001"]
     # Stays root (uid 0): existing jetstream volumes hold root-owned files, and
     # a non-root nats could not read them. With every capability dropped, root
-    # gets no DAC_OVERRIDE and can only touch files it owns or the mode bits
-    # allow, so it is no stronger than an ordinary user inside the container.
+    # cannot bypass file permissions, chown, or regain capabilities, but it
+    # still owns every root-owned file it can reach. In /certs that is every
+    # file (deploy:certs chowns them to 0:10001), including ca-key.pem and
+    # client-key.pem: nats can read them, as any GID 10001 member can, and
+    # only the read-only mount stops it rewriting them. It can write only
+    # /data and /tmp; the root filesystem is read-only.
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     mem_limit: ${CROSSCODEX_NATS_MEM_LIMIT:-512m}
@@ -92,7 +96,7 @@ services:
     read_only: true
     tmpfs: [/tmp]
     volumes:
-      - crosscodex-certs:/certs
+      - crosscodex-certs:/certs:ro
       - crosscodex-jetstream:/data
     command: >
       --tls
@@ -142,9 +146,8 @@ services:
     mem_limit: ${CROSSCODEX_DAEMON_MEM_LIMIT:-2g}
     pids_limit: 256
     read_only: true
-    # Backups (compose.backup.yaml) spool each object and the JetStream
-    # snapshot here (pkg/backup). tmpfs pages count against mem_limit, so the
-    # limit must also cover the largest object or stream snapshot.
+    # tmpfs pages count against mem_limit. compose.backup.yaml points TMPDIR
+    # at the backup volume, so backup spool files never land here.
     tmpfs: [/tmp]
     # No env_file: the daemon gets only what it reads, never POSTGRES_PASSWORD.
     environment:

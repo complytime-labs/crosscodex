@@ -14,6 +14,10 @@
 # Postgres runs archive_command with umask 0077, which would leave WAL
 # unreadable to crosscodexd, so archive_command sets umask 0027 (0640 files
 # in 0750 directories, group 10001 through the setgid bit).
+# /backup/tmp (65532, mode 0700) is crosscodexd's TMPDIR: backups spool each
+# object and the JetStream snapshot there (pkg/backup) instead of the /tmp
+# tmpfs, which would count against the daemon's memory limit. The local
+# destination's own files live under /backup/backup, so it never lists them.
 services:
   backup-init:
     image: crosscodex-db:${TAG:-latest}
@@ -35,7 +39,9 @@ services:
       - >-
         chown 65532:10001 /backup && chmod 2770 /backup &&
         mkdir -p /backup/postgres &&
-        chown 999:10001 /backup/postgres && chmod 2770 /backup/postgres
+        chown 999:10001 /backup/postgres && chmod 2770 /backup/postgres &&
+        mkdir -p /backup/tmp &&
+        chown 65532:10001 /backup/tmp && chmod 0700 /backup/tmp
     volumes:
       - crosscodex-backup:/backup
 
@@ -63,6 +69,8 @@ services:
         -c archive_timeout=60
 
   crosscodexd:
+    environment:
+      TMPDIR: /backup/tmp
     volumes:
       - crosscodex-backup:/backup
       - ./backup.config.yaml:/etc/crosscodex/conf.d/50-backup.yaml:ro

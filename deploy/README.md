@@ -171,7 +171,7 @@ Every compose service, in every compose file, runs with:
 - A memory limit (overridable, below) and a fixed pids limit.
 - A read-only root filesystem with a tmpfs at `/tmp` (and at `/run/postgresql`, the socket directory, for `db`), except `db-restore`, which keeps a writable root filesystem.
 
-`nats` still runs as root because existing JetStream volumes hold root-owned files. With no capabilities, root inside the container can only touch files it owns or that their mode bits allow.
+`nats` still runs as root because existing JetStream volumes hold root-owned files. Without capabilities, root cannot bypass file permissions, change ownership or regain privileges, but it still owns every root-owned file it can reach. Every file in the certs volume is owned by root (group 10001), so `nats` can read all of them, including `ca-key.pem` and `client-key.pem`, just as every service in group 10001 can. Every service mounts the certs volume read-only, so none can change the PKI; `nats` can write only its JetStream volume and `/tmp`.
 
 Set any of these in `deploy/.env` to change a memory limit (compose size syntax, e.g. `512m`, `4g`):
 
@@ -188,7 +188,7 @@ Set any of these in `deploy/.env` to change a memory limit (compose size syntax,
 | `CROSSCODEX_DB_RESTORE_MEM_LIMIT`   | `db-restore`                         | `1g`    |
 | `CROSSCODEX_OLLAMA_MEM_LIMIT`       | `ollama` (smoke test only)           | `4g`    |
 
-Files written to a tmpfs count against the service's memory limit. Backups spool each object and the JetStream snapshot through `crosscodexd`'s `/tmp`, so raise `CROSSCODEX_DAEMON_MEM_LIMIT` if your largest object or stream snapshot approaches it.
+Files written to a tmpfs count against the service's memory limit. Backups therefore do not use `crosscodexd`'s `/tmp`: `compose.backup.yaml` sets its `TMPDIR` to `/backup/tmp` on the backup volume, where each object and the JetStream snapshot are spooled on disk.
 
 Limits need a container engine that can apply cgroup limits: a rootless podman host needs cgroup v2 with the `memory` and `pids` controllers delegated to the user. `podman inspect` shows the configured value even where the engine cannot apply it; `cat /sys/fs/cgroup/memory.max` inside the container shows whether it is in force.
 
