@@ -1,0 +1,25 @@
+cmd/crosscodexd/health.go
+  s_714e941abc6b42::t_9caf95cf2b7c2c 6-7,10-14,18-22,24-26,31,43-44,46,55-100,102
+  s_714e941abc6b42::t_0a12887c6335c2 101,103-104
+cmd/crosscodexd/health_bdd_test.go
+  s_714e941abc6b42::t_fb74d11c9598ea 5,10,13-18,21-32,35,41,45-46,48-56,61-62,67-158
+  s_714e941abc6b42::t_4eb7c1492bc6e1 159-166
+cmd/crosscodexd/bootstrap.go
+  s_714e941abc6b42::t_1683316e3ae6eb 229-233,413-414,673,691,772-774,1020
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "03077f26d814fc69d4d761b2c58701014c57c57e",
+  "prompts": {},
+  "sessions": {
+    "s_714e941abc6b42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6aa18186-7d90-4c58-b51d-483b51e55303",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
