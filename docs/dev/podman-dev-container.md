@@ -25,8 +25,18 @@ to detect it, and the fix. The user-facing smoke instructions are in
   reason. Neither marks a container healthy, so a service gated on
   `service_healthy` stays blocked.
 - **Fix:** run the healthcheck yourself in a second shell while the stack comes
-  up, for example
-  `while sleep 5; do for c in $(podman ps -q); do podman healthcheck run "$c" >/dev/null 2>&1; done; done`.
+  up. The loop must use the same `TMPDIR` and `STORAGE_DRIVER` as the smoke
+  stack (see section 2): podman's runroot follows `TMPDIR`, so a loop with a
+  different value cannot see the containers and every `podman healthcheck run`
+  fails silently. `test/deploy/podman_env.sh` sets both and needs `ROOT_DIR`
+  (the repository root) in the environment:
+
+  ```bash
+  ROOT_DIR="$(git rev-parse --show-toplevel)"; export ROOT_DIR
+  source "${ROOT_DIR}/test/deploy/podman_env.sh"
+  while sleep 5; do for c in $(podman ps -q); do podman healthcheck run "$c" >/dev/null 2>&1; done; done
+  ```
+
   Stop the loop when the stack is up. This is a workaround for the environment,
   not part of the tasks.
 
