@@ -426,6 +426,9 @@ tasks:
       LLM_GATEWAY: "{{.LLM_GATEWAY}}"
       PRAXIS_MODELS_ENDPOINT: '{{.PRAXIS_MODELS_ENDPOINT | default "false"}}'
       SMOKE_PRAXIS_PORT: "{{.SMOKE_PRAXIS_PORT}}"
+      # Seconds smoke_up.sh waits for the analysis job (it validates the
+      # value). Raise it for CPU-only inference: SMOKE_JOB_TIMEOUT=600.
+      SMOKE_JOB_TIMEOUT: '{{.SMOKE_JOB_TIMEOUT | default "120"}}'
       # Offline LLM provider identity. Exported so smoke_up.sh renders the
       # gateway config and (for a remote host) probes/pulls against the same
       # values. Defaults resolve to the local baked-model Ollama container;

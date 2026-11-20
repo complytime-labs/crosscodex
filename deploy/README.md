@@ -269,6 +269,8 @@ Running inside a container with no systemd (an agent or CI sandbox)? See [Runnin
 
 **Offline by default — no API key required.** Unlike `deploy:up` (which routes the gateway to real OpenAI), the smoke test backs the stack with a local Ollama provider so it runs self-contained. It builds a baked-model image (`llama3.2:1b` + `granite-embedding:30m`, reused from the integration stack), renders a smoke-only gateway config that points the `default`/`embed` aliases at Ollama, and layers an offline overlay onto `compose.yaml` plus the gateway fragment (`deploy/compose.offline.yaml` for LiteLLM, `deploy/compose.offline-praxis.yaml` for Praxis). Production `deploy/compose.yaml` is untouched and stays OpenAI-backed. Your `deploy/.env` still needs `CROSSCODEX_LLM_DEFAULT_MODEL=default` and `CROSSCODEX_LLM_EMBEDDING_MODEL=embed`, but `OPENAI_API_KEY` / `CROSSCODEX_LLM_API_KEY` may be any non-empty placeholder (Ollama ignores them). Without deploy/.env, deploy:smoke stops before building or starting anything and prints the copy instruction.
 
+The smoke test waits up to `SMOKE_JOB_TIMEOUT` seconds (default `120`) for the analysis job to finish, which suits a GPU or remote model. CPU-only inference on the baked model takes several minutes, so raise it there, for example `task deploy:smoke SMOKE_JOB_TIMEOUT=600`. A value that is not a whole number of seconds from 1 to 999999 is rejected before anything starts.
+
 To point the smoke test at an existing Ollama instead of the baked container, pass `OLLAMA_HOST` (and optionally the model names):
 
 ```bash

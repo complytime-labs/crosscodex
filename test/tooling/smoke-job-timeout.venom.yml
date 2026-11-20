@@ -1,0 +1,62 @@
+name: smoke_up.sh validates SMOKE_JOB_TIMEOUT before bringing anything up
+
+vars:
+  root: "."
+
+testcases:
+  - name: A duration with a unit is rejected before the stack starts, naming the variable
+    steps:
+      - type: exec
+        script: |
+          env -u OPENAI_COMPAT_HOST OLLAMA_HOST=http://localhost:11434 SMOKE_JOB_TIMEOUT=2m \
+            bash {{.root}}/test/tooling/lib/smoke-up-allow-shared.sh {{.root}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "SMOKE_JOB_TIMEOUT=2m is not a whole number of seconds"
+          - result.systemout ShouldContainSubstring "e.g. SMOKE_JOB_TIMEOUT=600"
+          - result.systemout ShouldContainSubstring "smoke_up exit=1"
+          - result.systemout ShouldNotContainSubstring ALLOW_SHARED_PANEL_MODELS=
+
+  - name: Zero is rejected
+    steps:
+      - type: exec
+        script: |
+          env -u OPENAI_COMPAT_HOST OLLAMA_HOST=http://localhost:11434 SMOKE_JOB_TIMEOUT=0 \
+            bash {{.root}}/test/tooling/lib/smoke-up-allow-shared.sh {{.root}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "SMOKE_JOB_TIMEOUT=0 is not a whole number of seconds"
+          - result.systemout ShouldContainSubstring "smoke_up exit=1"
+
+  - name: A negative value is rejected
+    steps:
+      - type: exec
+        script: |
+          env -u OPENAI_COMPAT_HOST OLLAMA_HOST=http://localhost:11434 SMOKE_JOB_TIMEOUT=-5 \
+            bash {{.root}}/test/tooling/lib/smoke-up-allow-shared.sh {{.root}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "SMOKE_JOB_TIMEOUT=-5 is not a whole number of seconds"
+          - result.systemout ShouldContainSubstring "smoke_up exit=1"
+
+  - name: A valid override passes validation and reaches the stack bring-up
+    steps:
+      - type: exec
+        script: |
+          env -u OPENAI_COMPAT_HOST OLLAMA_HOST=http://localhost:11434 SMOKE_JOB_TIMEOUT=600 \
+            bash {{.root}}/test/tooling/lib/smoke-up-allow-shared.sh {{.root}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldNotContainSubstring "is not a whole number of seconds"
+          - result.systemout ShouldContainSubstring "smoke_up exit=3"
+
+  - name: Unset uses the 120s default and reaches the stack bring-up
+    steps:
+      - type: exec
+        script: |
+          env -u OPENAI_COMPAT_HOST -u SMOKE_JOB_TIMEOUT OLLAMA_HOST=http://localhost:11434 \
+            bash {{.root}}/test/tooling/lib/smoke-up-allow-shared.sh {{.root}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldNotContainSubstring "is not a whole number of seconds"
+          - result.systemout ShouldContainSubstring "smoke_up exit=3"

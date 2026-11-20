@@ -59,6 +59,15 @@ litellm | praxis) ;;
 esac
 export LLM_GATEWAY PRAXIS_MODELS_ENDPOINT
 
+# Seconds to wait for the analysis job to finish. 120 suits a GPU or remote
+# model; CPU-only inference on the baked Ollama model needs more (several
+# minutes). Checked here, before bring-up, so a typo fails in seconds.
+: "${SMOKE_JOB_TIMEOUT:=120}"
+if ! [[ "${SMOKE_JOB_TIMEOUT}" =~ ^[1-9][0-9]{0,5}$ ]]; then
+	echo "ERROR: SMOKE_JOB_TIMEOUT=${SMOKE_JOB_TIMEOUT} is not a whole number of seconds from 1 to 999999. Set it to how long the analysis job may take, e.g. SMOKE_JOB_TIMEOUT=600 for CPU-only inference (default 120)." >&2
+	exit 1
+fi
+
 # Offline LLM provider: back the smoke stack with a local model server instead
 # of a real OpenAI key. Two kinds are supported:
 #   - Ollama (default): OLLAMA_HOST, OLLAMA_CHAT_MODEL, OLLAMA_EMBED_MODEL. With
@@ -281,15 +290,6 @@ if [ "${hardening_failures}" -gt 0 ]; then
 fi
 echo "Hardening checks passed for ${#smoke_containers[@]} running container(s)."
 
-# Reach the daemon exactly as deploy:up's health check does: a host process
-# dialing the published gateway port over mTLS. In this rootless, nested-podman
-# environment a sibling `podman run` container cannot reach the daemon -- joining
-# its netns (--pod / --network container:) does not confer reachability, and
-# rootless port publishing binds the port only in the host netns, not inside a
-# --network host container. deploy:up's /healthz loop proves the
-# host->published-port path works, so the smoke CLI uses the same reach.
-#
-# Build the CLI on the host. The deploy tasks already require a Go toolchain
 # The CA private key must stay on the host: every service that mounts the certs
 # volume could read it and mint client certificates the whole stack trusts.
 # Checked through db, which mounts the volume and has a shell.
@@ -309,6 +309,15 @@ if "${engine}" exec "${db_cid}" test -e /certs/ca-key.pem; then
 fi
 echo "Certs volume holds no CA private key."
 
+# Reach the daemon exactly as deploy:up's health check does: a host process
+# dialing the published gateway port over mTLS. In this rootless, nested-podman
+# environment a sibling `podman run` container cannot reach the daemon -- joining
+# its netns (--pod / --network container:) does not confer reachability, and
+# rootless port publishing binds the port only in the host netns, not inside a
+# --network host container. deploy:up's /healthz loop proves the
+# host->published-port path works, so the smoke CLI uses the same reach.
+#
+# Build the CLI on the host. The deploy tasks already require a Go toolchain
 # (deploy:certs runs `go run` for the PKI generator), so this adds no new
 # dependency. CGO_ENABLED=0 mirrors the release binary.
 CLI_BIN="${OUT_DIR}/crosscodex"
@@ -446,10 +455,12 @@ fi
 
 # Poll the job to a terminal state: pass on COMPLETED, fail FAST on FAILED
 # (printing the daemon's error so a broken LLM path is diagnosed here, not left
-# to a misleading title-timeout). 60 x 2s = 120s, ample for a 3-control catalog's
-# embedding + candidate pass on a freshly started stack.
-echo "Waiting for analysis job ${JOB_ID} to reach a terminal state ..."
-for i in $(seq 1 60); do
+# to a misleading title-timeout). One attempt every 2s for SMOKE_JOB_TIMEOUT
+# seconds; the default 120s is ample for a 3-control catalog's embedding +
+# candidate pass on a GPU or remote model.
+attempts=$(((SMOKE_JOB_TIMEOUT + 1) / 2))
+echo "Waiting up to ${SMOKE_JOB_TIMEOUT}s for analysis job ${JOB_ID} to reach a terminal state ..."
+for i in $(seq 1 "${attempts}"); do
 	# Tolerate a transient CLI error mid-poll: an empty/garbled read yields no
 	# Status line, so it is treated as not-ready and retried; the timeout below
 	# governs give-up, and the last captured output is dumped for triage.
@@ -483,10 +494,10 @@ for i in $(seq 1 60); do
 		exit 1
 		;;
 	esac
-	# Progress so a slow job does not look hung (attempt N/60, ~2s apart).
-	echo "  job ${status:-not-ready} (attempt ${i}/60); retrying in 2s ..."
+	# Progress so a slow job does not look hung (attempt N/attempts, ~2s apart).
+	echo "  job ${status:-not-ready} (attempt ${i}/${attempts}); retrying in 2s ..."
 	sleep 2
 done
-echo "Analysis job ${JOB_ID} did not reach a terminal state within 120s; last status:" >&2
+echo "Analysis job ${JOB_ID} did not reach a terminal state within ${SMOKE_JOB_TIMEOUT}s (raise SMOKE_JOB_TIMEOUT for slow inference); last status:" >&2
 cat "${OUT_DIR}/job.log" >&2
 exit 1
