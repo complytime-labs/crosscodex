@@ -1,0 +1,19 @@
+internal/testcerts/testcerts.go
+  s_714e941abc6b42::t_fb08158f01fbbd 211-215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "2011454a9e481a04bd854cd9af6a60564bcba52e",
+  "prompts": {},
+  "sessions": {
+    "s_714e941abc6b42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6aa18186-7d90-4c58-b51d-483b51e55303",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
