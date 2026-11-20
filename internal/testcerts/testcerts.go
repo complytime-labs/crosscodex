@@ -194,11 +194,6 @@ func verifyDir(dir string, opts VerifyOptions) error {
 	if _, err := verifyLeaf(dir, "client.pem", "client-key.pem", pool, x509.ExtKeyUsageClientAuth, now, opts.MinRemaining); err != nil {
 		return err
 	}
-	if opts.ServerAuthOnly {
-		if err := checkServerAuthOnly(serverCert); err != nil {
-			return err
-		}
-	}
 
 	required := slices.Clone(opts.DNSNames)
 	for _, ip := range opts.IPs {
@@ -212,6 +207,11 @@ func verifyDir(dir string, opts VerifyOptions) error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("server.pem does not cover required SANs: %s", strings.Join(missing, ", "))
+	}
+	if opts.ServerAuthOnly {
+		if err := checkServerAuthOnly(serverCert); err != nil {
+			return err
+		}
 	}
 
 	if opts.RequireFingerprint {
