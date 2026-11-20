@@ -3,6 +3,8 @@ logging:
   level: info
   format: json
 # health.addr is inert in the `all` role (gateway serves /healthz on server.addr).
+# Split roles (graph, pipeline, worker) serve plain-HTTP /healthz there; give
+# each role on one host its own address or the second one refuses to start.
 health:
   addr: ":9091"
 server:

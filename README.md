@@ -16,6 +16,13 @@ CrossCodex is in early development. All foundational, domain, and service packag
 
 ## Upgrading
 
+Health checks follow each role's dependencies (#226):
+
+- **`/healthz` now fails when NATS (or, for `graph` and `all`, the graph database) is down.** Each role checks only what it uses: `worker` NATS; `pipeline` database and NATS; `graph` database, NATS and graph database; `gateway` database and NATS; `all` database, NATS and graph database. The LLM is not checked. A role that used to report healthy while it had lost NATS now reports 503 and is restarted by its orchestrator.
+- **Split roles on one host need distinct `health.addr` values.** Every split role defaults to `:9091`. A role whose `health.addr` is taken used to start without a health endpoint; it now refuses to start and names `health.addr`. Set `health.addr` (`CROSSCODEX_HEALTH_ADDR`) per role, or run each role in its own container.
+- **`crosscodexd healthcheck` probes the role's own endpoint.** For `graph`, `pipeline` and `worker` it now probes `http://127.0.0.1:<health.addr port>/healthz` instead of the gateway's HTTPS `server.addr`. It reads the role from `--role`, else `role` / `CROSSCODEX_ROLE`, so a container that starts the daemon with `--role worker` must run `crosscodexd --role worker healthcheck` (or set `CROSSCODEX_ROLE`).
+- **The dedicated `/healthz` body names the failing dependency, not the error.** It is `{"status":"unhealthy","error":"nats unreachable"}`; the underlying error is logged.
+
 Client certificates get roles only from `auth.x509_mappings` (#232):
 
 - **Every client certificate needs a mapping; none is admin implicitly.** Roles `all` and `gateway` (and the embedded CLI daemon) used to grant `admin` to any certificate the CA signed. Now a certificate gets the roles of the first `auth.x509_mappings` entry it matches and is refused if it matches none, and the daemon refuses to start while `auth.x509_mappings` is empty. For the certificates `task deploy:certs` generates (deploy/certgen), add `auth.x509_mappings: [{match: {cn: client, organization: CrossCodex}, roles: [admin]}]`; the shipped `deploy/config.yaml` already has it. Roles must be `admin` or `reviewer`, and every match needs at least one field. The embedded CLI daemon grants `admin` only to its own client certificate, matched by its exact common name and organization.
