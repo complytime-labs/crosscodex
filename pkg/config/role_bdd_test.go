@@ -147,3 +147,51 @@ var _ = Describe("RequireSharedNATS", func() {
 		Entry("a split role with a URL", config.RoleWorker, "nats://nats:4222"),
 	)
 })
+
+var _ = Describe("RequireHealthAddr", func() {
+	It("accepts the default health.addr for every split role", func() {
+		cfg, err := config.NewLoader().Load(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		for _, role := range []string{config.RoleGraph, config.RolePipeline, config.RoleWorker} {
+			Expect(config.RequireHealthAddr(role, cfg.Health.Addr)).To(Succeed(), role)
+		}
+	})
+
+	DescribeTable("accepts a host:port override from CROSSCODEX_HEALTH_ADDR",
+		func(addr string) {
+			GinkgoT().Setenv("CROSSCODEX_HEALTH_ADDR", addr)
+			cfg, err := config.NewLoader().Load(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Health.Addr).To(Equal(addr))
+			Expect(config.RequireHealthAddr(config.RoleWorker, cfg.Health.Addr)).To(Succeed())
+		},
+		Entry("port only", ":9192"),
+		Entry("IPv4 host", "127.0.0.1:9192"),
+		Entry("IPv6 host", "[::]:9192"),
+		Entry("DNS name", "worker.internal:9192"),
+	)
+
+	DescribeTable("rejects a split role whose health.addr is not host:port",
+		func(role, addr string) {
+			err := config.RequireHealthAddr(role, addr)
+			Expect(err).To(MatchError(config.ErrInvalidConfig))
+			Expect(err.Error()).To(ContainSubstring(`role "` + role + `" needs health.addr`))
+			Expect(err.Error()).To(ContainSubstring("CROSSCODEX_HEALTH_ADDR"))
+			Expect(err.Error()).To(ContainSubstring(":9091"))
+		},
+		Entry("graph, empty", config.RoleGraph, ""),
+		Entry("pipeline, empty", config.RolePipeline, ""),
+		Entry("worker, empty", config.RoleWorker, ""),
+		Entry("worker, port without a colon", config.RoleWorker, "9091"),
+		Entry("worker, host without a port", config.RoleWorker, "worker.internal:"),
+		Entry("worker, bare host", config.RoleWorker, "worker.internal"),
+	)
+
+	DescribeTable("ignores health.addr for the roles that serve /healthz on server.addr",
+		func(role string) {
+			Expect(config.RequireHealthAddr(role, "")).To(Succeed())
+		},
+		Entry("all", config.RoleAll),
+		Entry("gateway", config.RoleGateway),
+	)
+})

@@ -178,6 +178,33 @@ var _ = Describe("run without a shared NATS server", func() {
 	})
 })
 
+// A split role's health listener must bind a probe-able host:port; an empty
+// health.addr would bind an ephemeral port no healthcheck can find.
+var _ = Describe("run with an empty health.addr", func() {
+	BeforeEach(func() {
+		DeferCleanup(testspecs.IsolateTelemetryGlobals())
+		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+		GinkgoT().Setenv("CROSSCODEX_DATABASE_DSN", "postgres://u:p@127.0.0.1:1/x?sslmode=disable")
+		GinkgoT().Setenv("CROSSCODEX_NATS_URL", "nats://127.0.0.1:1")
+		GinkgoT().Setenv("CROSSCODEX_ROLE", config.RoleAll)
+		GinkgoT().Setenv("CROSSCODEX_HEALTH_ADDR", "")
+	})
+
+	DescribeTable("refuses a split role from --role before bootstrapping any resource",
+		func(roleFlag string) {
+			code, stderr := captureStderr(func() int { return run(roleFlag) })
+
+			Expect(code).To(Equal(1))
+			Expect(stderr).To(ContainSubstring(`role "` + roleFlag + `" needs health.addr`))
+			Expect(stderr).NotTo(ContainSubstring("bootstrap:"),
+				"the health.addr check must stop the daemon before it opens any resource")
+		},
+		Entry("--role graph", config.RoleGraph),
+		Entry("--role pipeline", config.RolePipeline),
+		Entry("--role worker", config.RoleWorker),
+	)
+})
+
 // captureStream swaps *stream (os.Stdout or os.Stderr) for a temp file for
 // the duration of fn and returns fn's result plus everything written to it.
 func captureStream(stream **os.File, fn func() int) (int, string) {
