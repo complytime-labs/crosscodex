@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/complytime-labs/crosscodex/internal/gateway"
@@ -101,6 +103,11 @@ func roleHealthChecks(role string, pool dbpkg.Pool, bus natsbus.Client, graphDB 
 	case config.RoleAll:
 		return []gateway.DependencyCheck{nats, graph}
 	default:
-		return nil
+		// Fail closed: an unrecognised role must not get a liveness-only
+		// /healthz that reports healthy without checking anything.
+		return []gateway.DependencyCheck{{Name: "role", Check: func(context.Context) error {
+			return fmt.Errorf("unknown role %q: role must be one of %s",
+				role, strings.Join(config.CanonicalRoles, ", "))
+		}}}
 	}
 }

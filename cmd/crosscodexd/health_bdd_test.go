@@ -113,6 +113,17 @@ var _ = Describe("roleHealthChecks", func() {
 		Entry("all: NATS and graph database beside the gateway's database check", config.RoleAll, []string{"nats", "graph_database"}),
 	)
 
+	It("fails closed for an unknown role with a check that always errors", func() {
+		checks := roleChecks("bogus", "")
+		Expect(checks).To(HaveLen(1))
+		Expect(checks[0].Name).To(Equal("role"))
+		err := checks[0].Check(context.Background())
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring(`"bogus"`))
+		Expect(err.Error()).To(ContainSubstring("must be one of all, gateway, pipeline, worker, graph"))
+		Expect(serveHealthz(checks...).Code).To(Equal(http.StatusServiceUnavailable))
+	})
+
 	DescribeTable("a split role's /healthz returns 503 naming the dependency that is down",
 		func(role, down string) {
 			rec := serveHealthz(roleChecks(role, down)...)

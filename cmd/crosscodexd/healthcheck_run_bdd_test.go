@@ -139,8 +139,12 @@ var _ = Describe("runHealthcheck", func() {
 		Expect(runHealthcheck(config.RoleWorker)).To(Equal(0))
 	})
 
-	It("returns 1 for an unknown --role", func() {
-		writeConfig("role: all\n")
+	It("returns 1 for an unknown --role, even with a healthy gateway on server.addr", func() {
+		srv := startHealthServer(http.StatusOK)
+		defer srv.Close()
+		writeConfig(fmt.Sprintf("role: all\nserver:\n  addr: \":%d\"\n%s", portOf(srv), tlsBlock()))
+		// Without the flag the probe succeeds, so the 1 below comes from --role.
+		Expect(runHealthcheck("")).To(Equal(0))
 		Expect(runHealthcheck("not-a-role")).To(Equal(1))
 	})
 
