@@ -1,0 +1,37 @@
+.taskfiles/deploy.yml
+  s_714e941abc6b42::t_aa75d231cf4d92 466-468
+deploy/README.md
+  s_714e941abc6b42::t_2fecc1f2e7865e 236-237
+docs/dev/podman-dev-container.md
+  s_714e941abc6b42::t_bd57ebd63142ac 1-86
+docs/dev/retention.md
+  s_714e941abc6b42::t_36d932a001f9dd 214-215
+test/deploy/podman_env.sh
+  s_714e941abc6b42::t_afaff127331111 1-18
+test/deploy/smoke_up.sh
+  s_714e941abc6b42::t_5626d1f96f538e 30-32
+test/tooling/lib/smoke-down-env.sh
+  s_714e941abc6b42::t_6583920cd7be28 1-34
+test/tooling/lib/smoke-up-allow-shared.sh
+  s_714e941abc6b42::t_a98eb6a71a5f19 10-11
+test/tooling/openai-compat-provider.venom.yml
+  s_714e941abc6b42::t_607e83a6ad8eb1 62,76,93
+test/tooling/smoke-down-env.venom.yml
+  s_714e941abc6b42::t_45bbfa6eb82a15 1-41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d3c5dea291dcc5c286027ce07509e994c92fb3e7",
+  "prompts": {},
+  "sessions": {
+    "s_714e941abc6b42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6aa18186-7d90-4c58-b51d-483b51e55303",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
