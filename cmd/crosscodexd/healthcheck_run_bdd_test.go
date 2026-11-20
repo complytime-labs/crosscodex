@@ -123,6 +123,28 @@ var _ = Describe("runHealthcheck", func() {
 		Entry("worker unhealthy", config.RoleWorker, http.StatusServiceUnavailable, 1),
 	)
 
+	DescribeTable("fails a split role's invalid health.addr with the daemon's actionable message before probing",
+		func(role, addr string) {
+			writeConfig(fmt.Sprintf("role: %s\nhealth:\n  addr: %q\n", role, addr))
+			code, stderr := captureStderr(func() int { return runHealthcheck("") })
+			Expect(code).To(Equal(1))
+			Expect(stderr).To(ContainSubstring("needs health.addr"))
+			Expect(stderr).To(ContainSubstring("CROSSCODEX_HEALTH_ADDR"))
+		},
+		Entry("graph with empty addr", config.RoleGraph, ""),
+		Entry("pipeline with empty addr", config.RolePipeline, ""),
+		Entry("worker with empty addr", config.RoleWorker, ""),
+		Entry("worker with host but no port", config.RoleWorker, "localhost"),
+		Entry("graph with bare port number", config.RoleGraph, "9091"),
+	)
+
+	It("validates health.addr against the --role flag, not the configured role", func() {
+		writeConfig("role: all\nhealth:\n  addr: \"\"\n")
+		code, stderr := captureStderr(func() int { return runHealthcheck(config.RoleWorker) })
+		Expect(code).To(Equal(1))
+		Expect(stderr).To(ContainSubstring("needs health.addr"))
+	})
+
 	It("returns 1 for a split role whose health listener is down, even with a healthy gateway on server.addr", func() {
 		gw := startHealthServer(http.StatusOK)
 		defer gw.Close()

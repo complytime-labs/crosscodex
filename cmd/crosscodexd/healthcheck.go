@@ -57,7 +57,8 @@ func probeHealthURL(ctx context.Context, target string, tlsCfg *tls.Config) erro
 }
 
 // runHealthcheck loads config, resolves the role (roleFlag, the --role flag,
-// overrides the configured role exactly as it does for the daemon), builds
+// overrides the configured role exactly as it does for the daemon), rejects a
+// split role's invalid health.addr with the daemon's own message, builds
 // the probe URL and, for the gateway's HTTPS listener, the TLS trust, and
 // returns a process exit code (0 healthy, 1 unhealthy or misconfigured).
 func runHealthcheck(roleFlag string) int {
@@ -72,6 +73,10 @@ func runHealthcheck(roleFlag string) int {
 	role, err := config.ResolveRole(effectiveRole(roleFlag, cfg.Role))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "healthcheck: --role: %v\n", err)
+		return 1
+	}
+	if err := config.RequireHealthAddr(role, cfg.Health.Addr); err != nil {
+		fmt.Fprintf(os.Stderr, "healthcheck: %v\n", err)
 		return 1
 	}
 	target := healthcheckURL(role, cfg.Server.Addr, cfg.Health.Addr)
