@@ -463,5 +463,7 @@ tasks:
       COMPOSE_OVERLAY: '{{.ROOT_DIR}}/deploy/{{if eq .LLM_GATEWAY "praxis"}}compose.offline-praxis.yaml{{else}}compose.offline.yaml{{end}}'
       SMOKE_PRAXIS_PORT: "{{.SMOKE_PRAXIS_PORT}}"
     cmds:
-      - task deploy:down VOLUMES=1
+      # Source the same podman env smoke_up.sh uses (TMPDIR/STORAGE_DRIVER in a
+      # container) so teardown acts on the runtime view that created the stack.
+      - export ROOT_DIR="{{.ROOT_DIR}}" && . {{.ROOT_DIR}}/test/deploy/podman_env.sh && task deploy:down VOLUMES=1
       - rm -rf {{.SMOKE_CERTS_DIR}}

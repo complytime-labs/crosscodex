@@ -27,14 +27,9 @@ OUT_DIR="${ROOT_DIR}/.test-output/deploy-smoke"
 FIXTURE="${ROOT_DIR}/cmd/crosscodexd/testdata/oscal/e2e-minimal-catalog.json"
 mkdir -p "${OUT_DIR}"
 
-# Podman overlay workaround: point buildah temp to a workspace subdir to avoid
-# "mounting an overlay over build context directory" errors. Applies only inside
-# a container (docker or podman); see in-container.sh for the markers checked.
-if bash "${ROOT_DIR}/scripts/in-container.sh"; then
-	export TMPDIR="${TMPDIR:-${ROOT_DIR}/.test-output/buildtmp}"
-	export STORAGE_DRIVER="${STORAGE_DRIVER:-vfs}"
-	mkdir -p "${TMPDIR}"
-fi
+# Shared with deploy:smoke:down so both act on the same podman runtime view.
+# shellcheck source=test/deploy/podman_env.sh
+source "${ROOT_DIR}/test/deploy/podman_env.sh"
 
 # Isolate this stack from any production stack sharing the same host. The values
 # come from the environment (set by the deploy:smoke:* tasks); the defaults keep

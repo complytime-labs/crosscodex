@@ -59,6 +59,7 @@ testcases:
         script: |
           d=$(mktemp -d)
           trap 'rm -rf "$d"' EXIT
+          mkdir -p "$d/test/deploy" && cp {{.root}}/test/deploy/podman_env.sh "$d/test/deploy/"
           ROOT_DIR="$d" OPENAI_COMPAT_HOST=http://localhost:18080 OLLAMA_HOST=http://localhost:11435 \
             bash {{.root}}/test/deploy/smoke_up.sh
         assertions:
@@ -72,6 +73,7 @@ testcases:
         script: |
           d=$(mktemp -d)
           trap 'rm -rf "$d"' EXIT
+          mkdir -p "$d/test/deploy" && cp {{.root}}/test/deploy/podman_env.sh "$d/test/deploy/"
           mkdir -p "$d/scripts" && cp {{.root}}/scripts/check-openai-compat-models.sh "$d/scripts/"
           port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
           ROOT_DIR="$d" OPENAI_COMPAT_HOST="127.0.0.1:${port}" OLLAMA_HOST=http://localhost:11434 \
@@ -88,6 +90,7 @@ testcases:
         script: |
           d=$(mktemp -d)
           trap 'rm -rf "$d"' EXIT
+          mkdir -p "$d/test/deploy" && cp {{.root}}/test/deploy/podman_env.sh "$d/test/deploy/"
           ROOT_DIR="$d" OPENAI_COMPAT_HOST=http://localhost:18080 LLM_GATEWAY=praxis \
             bash {{.root}}/test/deploy/smoke_up.sh
         assertions:

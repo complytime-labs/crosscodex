@@ -1,0 +1,41 @@
+name: deploy:smoke:down runs the container engine with the same TMPDIR/STORAGE_DRIVER as smoke_up.sh
+
+vars:
+  root: "."
+
+testcases:
+  - name: In a container the engine sees the smoke_up.sh defaults
+    steps:
+      - type: exec
+        script: |
+          env -u TMPDIR -u STORAGE_DRIVER bash {{.root}}/test/tooling/lib/smoke-down-env.sh {{.root}} yes
+        assertions:
+          - result.systemout ShouldContainSubstring task_exit=0
+          - result.systemout ShouldContainSubstring engine=podman-compose
+          - result.systemout ShouldContainSubstring STORAGE_DRIVER=vfs
+          - result.systemout ShouldContainSubstring /.test-output/buildtmp
+          - result.systemout ShouldNotContainSubstring TMPDIR=<unset>
+
+  - name: In a container, pre-set TMPDIR and STORAGE_DRIVER are preserved
+    steps:
+      - type: exec
+        script: |
+          custom=$(mktemp -d)
+          trap 'rm -rf "$custom"' EXIT
+          TMPDIR="$custom/preset-tmp" STORAGE_DRIVER=overlay bash {{.root}}/test/tooling/lib/smoke-down-env.sh {{.root}} yes
+        assertions:
+          - result.systemout ShouldContainSubstring task_exit=0
+          - result.systemout ShouldContainSubstring /preset-tmp
+          - result.systemout ShouldContainSubstring STORAGE_DRIVER=overlay
+          - result.systemout ShouldNotContainSubstring buildtmp
+
+  - name: Outside a container neither variable is injected
+    steps:
+      - type: exec
+        script: |
+          env -u TMPDIR -u STORAGE_DRIVER bash {{.root}}/test/tooling/lib/smoke-down-env.sh {{.root}} no
+        assertions:
+          - result.systemout ShouldContainSubstring task_exit=0
+          - result.systemout ShouldContainSubstring engine=podman-compose
+          - result.systemout ShouldContainSubstring TMPDIR=<unset>
+          - result.systemout ShouldContainSubstring STORAGE_DRIVER=<unset>
