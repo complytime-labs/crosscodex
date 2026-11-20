@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 
@@ -163,4 +165,38 @@ var _ = Describe("roleHealthChecks", func() {
 		Entry("gateway", config.RoleGateway),
 		Entry("all", config.RoleAll),
 	)
+})
+
+var _ = Describe("runtime.start health listener", func() {
+	It("fails start with an actionable error when health.addr is already taken", func() {
+		taken, err := net.Listen("tcp", "127.0.0.1:0")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(taken.Close)
+		addr := taken.Addr().String()
+		rt := &runtime{healthServer: newHealthServer(addr)}
+
+		err = rt.start(context.Background())
+
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("health.addr " + addr))
+		Expect(err.Error()).To(ContainSubstring("give each role on one host a distinct health.addr"))
+		var opErr *net.OpError
+		Expect(errors.As(err, &opErr)).To(BeTrue(), "the bind error is wrapped")
+	})
+
+	It("serves /healthz once start returns", func() {
+		free, err := net.Listen("tcp", "127.0.0.1:0")
+		Expect(err).NotTo(HaveOccurred())
+		addr := free.Addr().String()
+		Expect(free.Close()).To(Succeed())
+		rt := &runtime{healthServer: newHealthServer(addr)}
+
+		Expect(rt.start(context.Background())).To(Succeed())
+		DeferCleanup(func() { _ = rt.stop(context.Background()) })
+
+		resp, err := http.Get(fmt.Sprintf("http://%s/healthz", addr))
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(resp.Body.Close)
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
+	})
 })

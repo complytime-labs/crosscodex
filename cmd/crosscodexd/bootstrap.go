@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"net"
 	"net/http"
 	"slices"
 
@@ -112,8 +113,16 @@ func (rt *runtime) start(ctx context.Context) error {
 		}
 	}
 	if rt.healthServer != nil {
+		// Bind here, not in the goroutine, so a taken port fails startup
+		// instead of leaving a role running with no health endpoint.
+		ln, err := net.Listen("tcp", rt.healthServer.Addr)
+		if err != nil {
+			return fmt.Errorf("start health listener on health.addr %s: %w. "+
+				"Split roles all default to :9091; if another role on this host already listens there, "+
+				"give each role on one host a distinct health.addr (CROSSCODEX_HEALTH_ADDR)", rt.healthServer.Addr, err)
+		}
 		go func() {
-			if err := rt.healthServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if err := rt.healthServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				fmt.Printf("health server error: %v\n", err)
 			}
 		}()
