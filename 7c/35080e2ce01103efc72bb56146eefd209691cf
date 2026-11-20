@@ -1,0 +1,30 @@
+pkg/natsbus/natsbustest/natsbustest_bdd_test.go
+  s_714e941abc6b42::t_cb067cd10ddc4c 716-732
+pkg/natsbus/client.go
+  s_714e941abc6b42::t_c7902edc6f9800 496-503
+pkg/natsbus/interface.go
+  s_714e941abc6b42::t_3b902fdd485e6b 109-115
+pkg/natsbus/natsbustest/natsbustest_property_test.go
+  s_714e941abc6b42::t_76b4c361f7e788 39-54
+pkg/natsbus/connected_bdd_test.go
+  s_714e941abc6b42::t_5a5cc7ff9da06b 1-28
+pkg/natsbus/natsbustest/fake.go
+  s_714e941abc6b42::t_54682dcb415a4a 429-436
+  s_714e941abc6b42::t_1bfde3f9764819 108-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "7c35080e2ce01103efc72bb56146eefd209691cf",
+  "prompts": {},
+  "sessions": {
+    "s_714e941abc6b42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6aa18186-7d90-4c58-b51d-483b51e55303",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
