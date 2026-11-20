@@ -1,0 +1,37 @@
+.taskfiles/deploy.yml
+  s_714e941abc6b42::t_d3212e7118237f 225-229,244-247,254
+deploy/README.md
+  s_714e941abc6b42::t_a05558c30e4212 68,174,228
+deploy/compose.gateway-praxis.yaml
+  s_714e941abc6b42::t_632bdc8ea5448a 28-29
+deploy/compose.yaml
+  s_714e941abc6b42::t_6986bd2d026cae 88-92
+scripts/check-praxis-compose.sh
+  s_714e941abc6b42::t_7b0f91f09db793 20
+test/deploy/smoke_up.sh
+  s_c9e083bc296ddc::t_28ee93073e458c 293-311
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d3d73c4aa31bf261e2231d333732e2b1f766beb7",
+  "prompts": {},
+  "sessions": {
+    "s_714e941abc6b42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6aa18186-7d90-4c58-b51d-483b51e55303",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_c9e083bc296ddc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a6f91cc4df2b7ceeb",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
