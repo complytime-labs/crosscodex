@@ -713,6 +713,23 @@ var _ = Describe("Fake", func() {
 		})
 	})
 
+	Describe("Connected", func() {
+		It("reports a zero-value fake as connected", func() {
+			Expect(fake.Connected()).To(BeTrue())
+		})
+
+		It("reports not connected while Disconnected is set, and leaves other methods working", func() {
+			fake.Disconnected = true
+			Expect(fake.Connected()).To(BeFalse())
+			Expect(fake.Publish(ctx, "s", nil)).To(Succeed())
+		})
+
+		It("reports not connected after Close", func() {
+			Expect(fake.Close()).To(Succeed())
+			Expect(fake.Connected()).To(BeFalse())
+		})
+	})
+
 	Describe("Close", func() {
 		BeforeEach(func() {
 			fake.CreateStreamFunc = func(context.Context, natsbus.StreamConfig) error { return nil }

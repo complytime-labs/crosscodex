@@ -493,6 +493,14 @@ func (c *client) AuditStreamRetention(ctx context.Context) (map[string]time.Dura
 	return out, nil
 }
 
+// Connected reports whether the connection is up; nats.Conn.IsConnected is
+// false while reconnecting and once the connection is closed.
+func (c *client) Connected() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.closed && c.conn.IsConnected()
+}
+
 // Close drains the connection, stops the embedded server if applicable,
 // and releases all resources. Safe to call multiple times.
 func (c *client) Close() error {

@@ -105,6 +105,9 @@ type Fake struct {
 	// AuditStreamRetentionFunc decides what AuditStreamRetention returns;
 	// unset is ErrUnscripted.
 	AuditStreamRetentionFunc func(ctx context.Context) (map[string]time.Duration, error)
+	// Disconnected makes Connected report false, simulating a client that lost
+	// its server and is reconnecting. It affects no other method.
+	Disconnected bool
 
 	mu        sync.Mutex
 	closed    bool
@@ -421,6 +424,14 @@ func (f *Fake) AuditStreamRetention(ctx context.Context) (map[string]time.Durati
 		return nil, unscripted("AuditStreamRetention")
 	}
 	return f.AuditStreamRetentionFunc(ctx)
+}
+
+// Connected reports false while Disconnected is set or after Close, and true
+// otherwise.
+func (f *Fake) Connected() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.Disconnected && !f.closed
 }
 
 // Close marks the fake closed and returns nil. Like the real client, it is

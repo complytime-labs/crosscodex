@@ -36,6 +36,22 @@ func joinTokens(tokens []string) string {
 }
 
 var _ = Describe("Property Specifications", Ordered, func() {
+	It("Connected is true exactly when the fake is neither Disconnected nor closed", func() {
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			disconnected := rapid.Bool().Draw(t, "disconnected")
+			closed := rapid.Bool().Draw(t, "closed")
+			fake := &natsbustest.Fake{Disconnected: disconnected}
+			if closed {
+				if err := fake.Close(); err != nil {
+					t.Fatalf("Close: %v", err)
+				}
+			}
+			if got, want := fake.Connected(), !disconnected && !closed; got != want {
+				t.Fatalf("Connected() = %v with Disconnected=%v closed=%v, want %v", got, disconnected, closed, want)
+			}
+		})
+	})
+
 	It("Published preserves order and content across both publish methods", func() {
 		rapid.Check(GinkgoT(), func(t *rapid.T) {
 			ctx, err := tenant.WithTenant(context.Background(), "tenant-a")
