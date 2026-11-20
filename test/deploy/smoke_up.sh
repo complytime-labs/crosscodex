@@ -361,14 +361,28 @@ for svc in "${key_services[@]}"; do
 done
 # Mounts of every container in the project, exited ones included, so the
 # one-shot migrate is checked too.
-mapfile -t all_containers < <("${engine}" ps -a --filter "${project_filter}" --format '{{.ID}}')
+# Capture the list first: a failing ps inside a process substitution would not
+# trip set -e and would leave the loop silently empty.
+if ! container_ids="$("${engine}" ps -a --filter "${project_filter}" --format '{{.ID}}')"; then
+	echo "FAIL: certs volume: '${engine} ps -a' failed for project ${COMPOSE_PROJECT_NAME} (error above)." >&2
+	exit 1
+fi
+mapfile -t all_containers <<<"${container_ids}"
+seen_migrate=0
+seen_crosscodexd=0
 for cid in "${all_containers[@]}"; do
+	[ -n "${cid}" ] || continue
 	if ! mounts="$("${engine}" inspect --format \
 		'{{index .Config.Labels "com.docker.compose.service"}}{{range .Mounts}} {{.Name}}{{end}}' "${cid}")"; then
 		echo "FAIL: certs volume: '${engine} inspect ${cid}' failed (error above)." >&2
 		exit 1
 	fi
 	read -r svc names <<<"${mounts}"
+	case "${svc}" in
+	migrate) seen_migrate=1 ;;
+	crosscodexd) seen_crosscodexd=1 ;;
+	*) ;;
+	esac
 	for name in ${names}; do
 		if [ "${name}" = "${CROSSCODEX_CLIENT_CERTS_VOLUME}" ] && [ "${svc}" != migrate ] && [ "${svc}" != crosscodexd ]; then
 			echo "FAIL: certs volume: service ${svc} mounts ${CROSSCODEX_CLIENT_CERTS_VOLUME}; only migrate and crosscodexd may hold the client key." >&2
@@ -380,6 +394,12 @@ for cid in "${all_containers[@]}"; do
 		fi
 	done
 done
+# The expected services must have been inspected, so the check cannot pass
+# on an empty or partial container list.
+if [ "${seen_migrate}" -ne 1 ] || [ "${seen_crosscodexd}" -ne 1 ]; then
+	echo "FAIL: certs volume: mount check did not see both migrate (seen=${seen_migrate}) and crosscodexd (seen=${seen_crosscodexd}) in project ${COMPOSE_PROJECT_NAME}; cannot prove which services mount the client and attestation key volumes." >&2
+	exit 1
+fi
 echo "Key volumes hold only their own files; only migrate and crosscodexd mount the client key, only crosscodexd the attestation key."
 
 # Reach the daemon exactly as deploy:up's health check does: a host process
