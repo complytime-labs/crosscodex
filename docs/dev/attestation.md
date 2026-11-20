@@ -117,8 +117,8 @@ The `AttestationConfig` in `pkg/config` controls attestation behavior:
 ```yaml
 attestation:
   enabled: true                    # Attest pipeline jobs (default true)
-  private_key_path: /certs/attestation-key.pem   # SEC1 "EC PRIVATE KEY" PEM
-  public_key_path: /certs/attestation-pub.pem    # PKIX "PUBLIC KEY" PEM of the same key
+  private_key_path: /attestation/attestation-key.pem   # SEC1 "EC PRIVATE KEY" PEM
+  public_key_path: /attestation/attestation-pub.pem    # PKIX "PUBLIC KEY" PEM of the same key
   expiry_duration: 8760h           # Layout expiry (default: 1 year)
   include_byproducts: true         # Add span_id, timestamp, hostname to links
   storage_retries: 3               # Retries of a failed attestation write, [0, 10]; global-only
@@ -359,7 +359,7 @@ An auditor verifying a compliance determination would:
 ## Security Considerations
 
 - Attestation signing keys must be protected. Use `pkg/tlsconfig/pki` (or `task deploy:certs`) for key generation in development and a proper key management system (HSM, Vault) in production. The `EphemeralKeyProvider` is for tests only.
-- In the compose deployment the keypair is in the `crosscodex-attestation-keys` volume, which only `crosscodexd` mounts (at `/attestation`, the paths in `deploy/config.yaml`). `migrate` mounts only `crosscodex-client-certs` (client certificate and key), and `db`, `nats` and the LLM gateway mount only `crosscodex-certs` (server certificate and key). `.taskfiles/deploy.yml` (`certs:load:volume`) loads the volumes, `test/deploy/smoke_up.sh` checks the separation on a live stack, and `test/tooling/certs-load-upgrade.venom.yml` checks that an upgrade strips keys an older release left in the wrong volume.
+- In the compose deployment the keypair is in the `crosscodex-attestation-keys` volume, which only `crosscodexd` mounts (at `/attestation`, the paths in `deploy/config.yaml`). `migrate` mounts only `crosscodex-client-certs` (client certificate and key), and `db`, `nats` and the LLM gateway mount only `crosscodex-certs` (server certificate and key; the certificate is issued for server authentication only, so it is not a client identity either). `.taskfiles/deploy.yml` (`certs:load:volume`) loads the volumes, `test/deploy/smoke_up.sh` checks the separation on a live stack (including that `nats` refuses `server.pem` as a client certificate), and `test/tooling/certs-load-upgrade.venom.yml` checks that an upgrade strips keys an older release left in the wrong volume.
 - Rotating the key pair invalidates the stored synthesis and graph links of jobs still running: on resume they no longer verify and the job fails. Rotate between jobs, and keep old public keys to verify old bundles.
 - When `WithFIPSMode(true)` is set, only ECDSA P-256/384/521 keys are accepted. This is enforced at signing time, not just configuration time.
 - The attestation chain depends on the integrity of the OTel trace ID. If trace context is dropped or spoofed, the link between the attestation and the operational record is broken. TLS transport encryption and provenance header validation (enforced by `pkg/natsbus`) mitigate this.

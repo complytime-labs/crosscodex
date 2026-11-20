@@ -194,7 +194,7 @@ tasks:
         -f {{.ROOT_DIR}}/deploy/db/Containerfile {{.ROOT_DIR}}/deploy/db
 
   certs:
-    desc: Generate the deploy TLS PKI and load it into the crosscodex-certs and crosscodex-client-certs volumes
+    desc: Generate the deploy TLS PKI and load it into the crosscodex-certs, crosscodex-client-certs and crosscodex-attestation-keys volumes
     cmds:
       - task: certs:generate
       - task: certs:load
