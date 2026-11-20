@@ -359,6 +359,7 @@ An auditor verifying a compliance determination would:
 ## Security Considerations
 
 - Attestation signing keys must be protected. Use `pkg/tlsconfig/pki` (or `task deploy:certs`) for key generation in development and a proper key management system (HSM, Vault) in production. The `EphemeralKeyProvider` is for tests only.
+- In the compose deployment the signing key is in the `crosscodex-client-certs` volume, which only `migrate` and `crosscodexd` mount (at `/certs`); `db`, `nats` and the LLM gateway mount `crosscodex-certs`, which holds only the server certificate and key. `.taskfiles/deploy.yml` (`certs:load:volume`) loads the volumes and `test/deploy/smoke_up.sh` checks the separation.
 - Rotating the key pair invalidates the stored synthesis and graph links of jobs still running: on resume they no longer verify and the job fails. Rotate between jobs, and keep old public keys to verify old bundles.
 - When `WithFIPSMode(true)` is set, only ECDSA P-256/384/521 keys are accepted. This is enforced at signing time, not just configuration time.
 - The attestation chain depends on the integrity of the OTel trace ID. If trace context is dropped or spoofed, the link between the attestation and the operational record is broken. TLS transport encryption and provenance header validation (enforced by `pkg/natsbus`) mitigate this.

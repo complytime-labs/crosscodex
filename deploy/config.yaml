@@ -36,9 +36,11 @@ tls:
     # the daemon's CLIENT identity for its outbound mTLS to db/nats/llm; without
     # this override the listener would serve client.pem (ClientAuth-only, SAN
     # DNS:client), which every client rejects during verification.
+    # compose.yaml mounts the server cert volume at /server-certs; /certs holds
+    # the client identity.
     gateway-server:
-      cert: /certs/server.pem
-      key: /certs/server-key.pem
+      cert: /server-certs/server.pem
+      key: /server-certs/server-key.pem
     llm:
       mode: mutual
       ca: /certs/ca.pem
@@ -54,7 +56,8 @@ storage:
     backend: local
     base_path: /var/lib/crosscodex/objects
 # in-toto attestation signing keypair (ECDSA P-256), provisioned into the
-# shared cert volume by `task deploy:certs` alongside the TLS PKI. Required by
+# client cert volume (mounted only by migrate and crosscodexd) by
+# `task deploy:certs` alongside the TLS PKI. Required by
 # the pipeline, which role `all` builds in-process; `enabled` and
 # `expiry_duration` inherit the config defaults.
 attestation:

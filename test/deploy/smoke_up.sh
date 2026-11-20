@@ -10,12 +10,13 @@
 # Isolation (so the smoke stack can run alongside a real production stack):
 #   * COMPOSE_PROJECT_NAME    — separate project → own pod/containers/network
 #                               and own (auto-namespaced) data volumes.
-#   * CROSSCODEX_CERTS_VOLUME — own PKI volume, generated fresh.
+#   * CROSSCODEX_CERTS_VOLUME — own server PKI volume, generated fresh.
+#   * CROSSCODEX_CLIENT_CERTS_VOLUME — own client/attestation key volume.
 #   * CROSSCODEX_GATEWAY_PORT — own published host port (production keeps 50051).
 #   * CERTS_DIR               — throwaway host dir for the smoke PKI.
 #   * SMOKE_PRAXIS_PORT       — host-loopback port for Praxis's mTLS listener
 #                               (LLM_GATEWAY=praxis only).
-# All five are consumed by deploy/compose.yaml plus the LLM gateway fragment
+# All six are consumed by deploy/compose.yaml plus the LLM gateway fragment
 # (compose.gateway-<LLM_GATEWAY>.yaml) and by the deploy:* tasks; the
 # defaults reproduce the production stack, so only the smoke test overrides them.
 # The `deploy:smoke:*` tasks export these from the SMOKE_* taskfile vars; the
@@ -38,10 +39,11 @@ source "${ROOT_DIR}/test/deploy/podman_env.sh"
 # same PKI dir in a separate task invocation.
 : "${COMPOSE_PROJECT_NAME:=crosscodex-smoke}"
 : "${CROSSCODEX_CERTS_VOLUME:=crosscodex-smoke-certs}"
+: "${CROSSCODEX_CLIENT_CERTS_VOLUME:=crosscodex-smoke-client-certs}"
 : "${CROSSCODEX_GATEWAY_PORT:=50151}"
 : "${CERTS_DIR:=${OUT_DIR}/certs}"
 : "${SMOKE_PRAXIS_PORT:=54443}"
-export COMPOSE_PROJECT_NAME CROSSCODEX_CERTS_VOLUME CROSSCODEX_GATEWAY_PORT CERTS_DIR SMOKE_PRAXIS_PORT
+export COMPOSE_PROJECT_NAME CROSSCODEX_CERTS_VOLUME CROSSCODEX_CLIENT_CERTS_VOLUME CROSSCODEX_GATEWAY_PORT CERTS_DIR SMOKE_PRAXIS_PORT
 
 # LLM gateway under test (litellm default, or praxis). Exported so the child
 # `task deploy:up` loads the matching compose.gateway-<gw>.yaml fragment: the
@@ -290,9 +292,10 @@ if [ "${hardening_failures}" -gt 0 ]; then
 fi
 echo "Hardening checks passed for ${#smoke_containers[@]} running container(s)."
 
-# The CA private key must stay on the host: every service that mounts the certs
-# volume could read it and mint client certificates the whole stack trusts.
-# Checked through db, which mounts the volume and has a shell.
+# Key separation (issue #236). The server volume (db, nats, the LLM gateway)
+# must hold no CA key, client key or attestation key; the client volume must
+# hold no CA key and be mounted only by migrate and crosscodexd. The server
+# volume is checked through db, which mounts it at /certs and has a shell.
 db_cid="$("${engine}" ps --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
 	--filter "label=com.docker.compose.service=db" --format '{{.ID}}' | head -n1)"
 if [ -z "${db_cid}" ]; then
@@ -303,11 +306,64 @@ if ! "${engine}" exec "${db_cid}" test -r /certs/ca.pem; then
 	echo "FAIL: certs volume: cannot read /certs/ca.pem in db (error above, if any)." >&2
 	exit 1
 fi
-if "${engine}" exec "${db_cid}" test -e /certs/ca-key.pem; then
-	echo "FAIL: certs volume ${CROSSCODEX_CERTS_VOLUME} holds ca-key.pem; the certs:load task in .taskfiles/deploy.yml must not copy the CA key into it." >&2
+for key in ca-key.pem client-key.pem attestation-key.pem; do
+	if "${engine}" exec "${db_cid}" test -e "/certs/${key}"; then
+		echo "FAIL: certs volume ${CROSSCODEX_CERTS_VOLUME} holds ${key}; the certs:load task in .taskfiles/deploy.yml must load only the server files into it." >&2
+		exit 1
+	fi
+done
+# test(1) exits 1 for an unreadable or absent file; any other status (no
+# test binary, exec failure) means nothing was checked, so it fails too.
+key_services=(db nats litellm-tls)
+if [ "${LLM_GATEWAY}" = "praxis" ]; then
+	key_services=(db nats praxis)
+fi
+for svc in "${key_services[@]}"; do
+	cid="$("${engine}" ps --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+		--filter "label=com.docker.compose.service=${svc}" --format '{{.ID}}' | head -n1)"
+	if [ -z "${cid}" ]; then
+		echo "FAIL: certs volume: no running ${svc} container in project ${COMPOSE_PROJECT_NAME} to check key access in." >&2
+		exit 1
+	fi
+	for key in client-key.pem attestation-key.pem; do
+		rc=0
+		"${engine}" exec "${cid}" test -r "/certs/${key}" || rc=$?
+		case "${rc}" in
+		0)
+			echo "FAIL: certs volume: ${svc} can read /certs/${key}; only migrate and crosscodexd may mount ${CROSSCODEX_CLIENT_CERTS_VOLUME}." >&2
+			exit 1
+			;;
+		1) ;;
+		*)
+			echo "FAIL: certs volume: could not check /certs/${key} in ${svc} ('test -r' exited ${rc}; error above, if any)." >&2
+			exit 1
+			;;
+		esac
+	done
+done
+for cid in "${smoke_containers[@]}"; do
+	if ! mounts="$("${engine}" inspect --format \
+		'{{index .Config.Labels "com.docker.compose.service"}}{{range .Mounts}} {{.Name}}{{end}}' "${cid}")"; then
+		echo "FAIL: certs volume: '${engine} inspect ${cid}' failed (error above)." >&2
+		exit 1
+	fi
+	read -r svc names <<<"${mounts}"
+	case "${svc}" in
+	migrate | crosscodexd) continue ;;
+	esac
+	for name in ${names}; do
+		if [ "${name}" = "${CROSSCODEX_CLIENT_CERTS_VOLUME}" ]; then
+			echo "FAIL: certs volume: service ${svc} mounts ${CROSSCODEX_CLIENT_CERTS_VOLUME}; only migrate and crosscodexd may hold the client and attestation keys." >&2
+			exit 1
+		fi
+	done
+done
+if ! "${engine}" run --rm -v "${CROSSCODEX_CLIENT_CERTS_VOLUME}:/certs:ro,z" --entrypoint test \
+	"crosscodex-db:${TAG:-latest}" ! -e /certs/ca-key.pem; then
+	echo "FAIL: certs volume ${CROSSCODEX_CLIENT_CERTS_VOLUME} holds ca-key.pem (or could not be checked; error above, if any); the certs:load task in .taskfiles/deploy.yml must not copy the CA key into it." >&2
 	exit 1
 fi
-echo "Certs volume holds no CA private key."
+echo "Certs volumes hold no CA key; db, nats and the LLM gateway cannot read the client or attestation key."
 
 # Reach the daemon exactly as deploy:up's health check does: a host process
 # dialing the published gateway port over mTLS. In this rootless, nested-podman

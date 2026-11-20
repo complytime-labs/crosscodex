@@ -1,8 +1,16 @@
 # Single-host production stack for CrossCodex (role: all) over full mTLS.
 # Populate the cert volume first: task deploy:certs
 #
-# Cert keys in the shared crosscodex-certs volume are owned root:10001, mode
-# 0640 (group-read only). Every service that mounts the volume joins GID 10001
+# TLS material lives in two volumes, so a service gets only the keys it uses:
+#   crosscodex-certs         ca.pem, server.pem, server-key.pem. Mounted at
+#                            /certs by db, nats and the LLM gateway, and at
+#                            /server-certs by crosscodexd (its HTTPS listener).
+#   crosscodex-client-certs  ca.pem, client.pem, client-key.pem (the daemon's
+#                            identity to db, nats and the gateway) and
+#                            attestation-key.pem / attestation-pub.pem. Mounted
+#                            at /certs by migrate and crosscodexd only.
+# The CA private key is in neither. Keys are owned root:10001, mode 0640
+# (group-read only). Every service that mounts a cert volume joins GID 10001
 # via group_add so it can read the keys despite running as a different user
 # (postgres, nats=root, stunnel=nobody, praxis=praxis, crosscodexd=nonroot).
 # This GID MUST match CERT_GID in .taskfiles/deploy.yml (the deploy:certs task).
@@ -85,11 +93,11 @@ services:
     # a non-root nats could not read them. With every capability dropped, root
     # cannot bypass file permissions, chown, or regain capabilities, but it
     # still owns every root-owned file it can reach. In /certs that is every
-    # file (deploy:certs chowns them to 0:10001), including client-key.pem:
+    # file (deploy:certs chowns them to 0:10001), including server-key.pem:
     # nats can read them, as any GID 10001 member can, and only the read-only
-    # mount stops it rewriting them. The CA key (ca-key.pem) is never copied
-    # into the volume. It can write only /data and /tmp; the root filesystem
-    # is read-only.
+    # mount stops it rewriting them. /certs is the server volume, so the CA
+    # key, the daemon's client key and the attestation key are not there. It
+    # can write only /data and /tmp; the root filesystem is read-only.
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     mem_limit: ${CROSSCODEX_NATS_MEM_LIMIT:-512m}
@@ -132,7 +140,8 @@ services:
       <<: *role-dsns
       CROSSCODEX_DATABASE_MIGRATION_DSN: postgres://crosscodex:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@db:5432/crosscodex?sslmode=verify-full&sslrootcert=/certs/ca.pem&sslcert=/certs/client.pem&sslkey=/certs/client-key.pem
     volumes:
-      - crosscodex-certs:/certs:ro
+      # Client identity for the DSNs above; the server volume is not mounted.
+      - crosscodex-client-certs:/certs:ro
       - ./config.yaml:/etc/crosscodex/config.yaml:ro
     depends_on:
       db:
@@ -165,7 +174,11 @@ services:
       # The in-container port stays 50051.
       - "${CROSSCODEX_GATEWAY_PORT:-50051}:50051"
     volumes:
-      - crosscodex-certs:/certs:ro
+      # Client identity and attestation keys at /certs; the server cert for
+      # the gateway listener (tls.targets.gateway-server in config.yaml) at
+      # /server-certs.
+      - crosscodex-client-certs:/certs:ro
+      - crosscodex-certs:/server-certs:ro
       - ./config.yaml:/etc/crosscodex/config.yaml:ro
       - crosscodex-objects:/var/lib/crosscodex/objects
     depends_on:
@@ -195,3 +208,7 @@ volumes:
     # Overridable so an isolated stack (e.g. the ephemeral smoke stack) mounts
     # its own PKI volume instead of the production one.
     name: ${CROSSCODEX_CERTS_VOLUME:-crosscodex-certs}
+  crosscodex-client-certs:
+    external: true
+    # Overridable for the same reason as crosscodex-certs.
+    name: ${CROSSCODEX_CLIENT_CERTS_VOLUME:-crosscodex-client-certs}
