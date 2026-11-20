@@ -76,7 +76,8 @@ func WithIPs(ips ...net.IP) Option {
 }
 
 // WithExtKeyUsage sets the extended key usage on leaf certificates.
-// Default: [ServerAuth, ClientAuth].
+// Default: [ServerAuth, ClientAuth]. GenerateDevPKI applies it to the server
+// certificate only.
 func WithExtKeyUsage(usages ...x509.ExtKeyUsage) Option {
 	return func(o *options) { o.extKeyUsage = usages }
 }

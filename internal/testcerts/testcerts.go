@@ -139,6 +139,12 @@ type VerifyOptions struct {
 	MinRemaining time.Duration
 	// RequireFingerprint requires .fingerprint to exist and match the PEM files.
 	RequireFingerprint bool
+	// ServerAuthOnly requires server.pem to permit server authentication only.
+	// A server cert that also permits clientAuth (directly, through
+	// anyExtendedKeyUsage, or by listing no extended key usage) lets every
+	// service holding server-key.pem connect to the others as a CA-trusted
+	// client.
+	ServerAuthOnly bool
 	// VerifyExtra checks caller-owned files in the directory (e.g. the deploy
 	// attestation keypair). Nil skips it.
 	VerifyExtra func(dir string) error
@@ -188,6 +194,11 @@ func verifyDir(dir string, opts VerifyOptions) error {
 	if _, err := verifyLeaf(dir, "client.pem", "client-key.pem", pool, x509.ExtKeyUsageClientAuth, now, opts.MinRemaining); err != nil {
 		return err
 	}
+	if opts.ServerAuthOnly {
+		if err := checkServerAuthOnly(serverCert); err != nil {
+			return err
+		}
+	}
 
 	required := slices.Clone(opts.DNSNames)
 	for _, ip := range opts.IPs {
@@ -231,6 +242,24 @@ func verifyDir(dir string, opts VerifyOptions) error {
 // verifyLeaf checks the leaf certificate dir/name is within its validity
 // window, chains to pool with the given extended key usage, and matches the
 // private key in dir/keyName. Returns the parsed certificate.
+// checkServerAuthOnly fails when cert can also be used for client
+// authentication, naming the extended key usage that permits it.
+func checkServerAuthOnly(cert *x509.Certificate) error {
+	const msg = "server.pem permits client authentication (%s), so any service holding server-key.pem can connect to the others as a client; it must be serverAuth-only"
+	if len(cert.ExtKeyUsage) == 0 && len(cert.UnknownExtKeyUsage) == 0 {
+		return fmt.Errorf(msg, "no extended key usage, which permits every use")
+	}
+	for _, usage := range cert.ExtKeyUsage {
+		switch usage {
+		case x509.ExtKeyUsageClientAuth:
+			return fmt.Errorf(msg, "extended key usage clientAuth")
+		case x509.ExtKeyUsageAny:
+			return fmt.Errorf(msg, "extended key usage any")
+		}
+	}
+	return nil
+}
+
 func verifyLeaf(dir, name, keyName string, pool *x509.CertPool, usage x509.ExtKeyUsage, now time.Time, minRemaining time.Duration) (*x509.Certificate, error) {
 	leafCert, err := readCert(dir, name)
 	if err != nil {
