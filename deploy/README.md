@@ -61,7 +61,7 @@ The server certificate's Subject Alternative Names (SANs) cover the DNS names `l
 
 A regeneration mints a new CA, so the whole set changes:
 - **New client certificates.** `client.pem` and `client-key.pem` are reissued under the new CA, and the old pair is rejected. Point the CLI at the new files (`--tls-cert`/`--tls-key`, or `crosscodex config set tls.cert` and `tls.key`), and replace any copies of the old ones.
-- **New attestation keypair.** Attestations signed with the old key do not verify against the new `attestation-pub.pem`. Keep a copy of the old `deploy/certs/attestation-pub.pem` before regenerating if you need to verify attestations signed earlier.
+- **New attestation keypair.** Attestations signed with the old key do not verify against the new `attestation-pub.pem`. Regeneration is automatic (`task deploy:up` runs it), so before upgrading, and before running `task deploy:up` after an upgrade, back up `deploy/certs/` (at least `attestation-pub.pem`) if you need to verify attestations signed earlier.
 
 A SAN missing after an upgrade triggers this: a release that adds a compose service name to `dnsNames` makes the existing set fail verification, and `task deploy:up` (which depends on `certs`) regenerates it.
 

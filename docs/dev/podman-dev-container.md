@@ -63,8 +63,15 @@ to detect it, and the fix. The user-facing smoke instructions are in
   is unreachable (`podman exec <container> curl -m 5 <model-server-url>` times
   out) while the same URL works from the dev container itself; `pgrep -a aardvark-dns`
   shows a recently started process.
-- **Fix:** stop the stack's containers (`podman stop $(podman ps -q)` or
-  `task deploy:down` for the smoke project), kill `aardvark-dns`
+- **Fix:** stop only the smoke stack's containers, selected by their compose
+  project label:
+  `podman stop $(podman ps -q --filter label=com.docker.compose.project=crosscodex-smoke)`.
+  `crosscodex-smoke` is the default smoke project (`SMOKE_PROJECT` overrides
+  it); `podman ps --format '{{.Label "com.docker.compose.project"}} {{.Names}}'`
+  lists the project of every running container. Do not use a bare
+  `podman stop $(podman ps -q)` (it stops every container, including other
+  stacks) or `task deploy:down` (without the smoke variables it targets the
+  production project). Then kill `aardvark-dns`
   (`pkill aardvark-dns`), remove its state directory (rootless default
   `$XDG_RUNTIME_DIR/containers/networks/aardvark-dns`; confirm the path on your
   host, it was not present where this page was written because `aardvark-dns`
