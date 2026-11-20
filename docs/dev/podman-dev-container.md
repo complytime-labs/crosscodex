@@ -84,3 +84,20 @@ to detect it, and the fix. The user-facing smoke instructions are in
   (seconds, global only; 0 uses `llm.timeout`; defined in `pkg/config/types.go`,
   documented in `deploy/README.md` and the top-level `README.md`), or keep the
   model resident on the server.
+
+## 5. Memory and pids limits are configured but not enforced
+
+- **Symptom:** the smoke stack's hardening check passes, yet a container uses
+  more memory than its `mem_limit`.
+- **Cause:** in a nested container podman runs with the `cgroupfs` manager
+  and no delegated cgroup of its own, so each container stays in the dev
+  container's cgroup: `--memory` and `--pids-limit` are recorded in the
+  container config but no cgroup applies them.
+- **Detect:** `podman inspect <container> --format '{{.HostConfig.Memory}}'`
+  shows the limit, while `podman exec <container> cat /sys/fs/cgroup/memory.max`
+  prints `max` (and `pids.max` the outer container's value).
+- **What the repo does:** `test/deploy/smoke_up.sh` checks the configured
+  limits through `inspect`, which is what compose controls; capabilities and
+  no-new-privileges it reads from the kernel (`/proc/<pid>/status`), so those
+  are proven here. Prove enforcement of the limits on a host with cgroup v2
+  and delegated `memory` and `pids` controllers.

@@ -18,6 +18,18 @@ services:
   backup-init:
     image: crosscodex-db:${TAG:-latest}
     user: "0:0"
+    # Measured with the command below on a fresh and on an existing volume:
+    # CHOWN for chown; FOWNER to chmod directories it no longer owns;
+    # DAC_OVERRIDE to mkdir and look up inside /backup once it is 2770
+    # 65532:10001; FSETID or the kernel silently drops the setgid bit (2770
+    # becomes 770) because root is not in group 10001.
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, FSETID]
+    security_opt: [no-new-privileges:true]
+    mem_limit: ${CROSSCODEX_BACKUP_INIT_MEM_LIMIT:-64m}
+    pids_limit: 32
+    read_only: true
+    tmpfs: [/tmp]
     entrypoint: ["sh", "-c"]
     command:
       - >-
@@ -60,6 +72,10 @@ services:
     image: crosscodex-db:${TAG:-latest}
     user: postgres
     group_add: ["10001"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: ${CROSSCODEX_DB_RESTORE_MEM_LIMIT:-1g}
+    pids_limit: 128
     env_file: [backup.env]
     entrypoint: ["crosscodex-db-restore"]
     volumes:

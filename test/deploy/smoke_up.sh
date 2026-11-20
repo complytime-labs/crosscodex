@@ -200,6 +200,87 @@ bash "${ROOT_DIR}/scripts/generate-llm-gateway-config.sh" all \
 
 task deploy:up
 
+# Hardening baseline (issue #236): every running container of this project must
+# have dropped all capabilities except its service's allowlist, run with
+# no-new-privileges, and carry memory and pids limits; read-only services must
+# have a read-only root filesystem. Capabilities and no-new-privileges are read
+# from the kernel (/proc/<pid>/status of the container's PID 1), not from the
+# engine's config: CapBnd is the bounding set cap_drop empties, and it is the
+# meaningful check for non-root services, whose effective set is empty anyway.
+# A service missing from the table fails, so a new service needs a decision.
+# Values: "<read-only rootfs: ro|rw> <comma-separated allowed caps or ->".
+declare -A hardening=(
+	[db]="ro -" [nats]="ro -" [migrate]="ro -" [crosscodexd]="ro -"
+	[litellm]="ro -" ["litellm-tls"]="ro -" [praxis]="ro -" [ollama]="ro -"
+	["backup-init"]="ro CHOWN,DAC_OVERRIDE,FOWNER,FSETID" ["db-restore"]="rw -"
+)
+# Bit numbers from linux/capability.h for the caps the table may allow.
+declare -A cap_bit=([CHOWN]=0 [DAC_OVERRIDE]=1 [DAC_READ_SEARCH]=2 [FOWNER]=3 [FSETID]=4)
+engine="${CONTAINER_ENGINE:-podman}"
+hardening_failures=0
+hardening_fail() {
+	echo "FAIL: hardening: service $1: $2" >&2
+	hardening_failures=$((hardening_failures + 1))
+}
+mapfile -t smoke_containers < <("${engine}" ps --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" --format '{{.ID}}')
+if [ "${#smoke_containers[@]}" -eq 0 ]; then
+	echo "FAIL: hardening: no running containers found for project ${COMPOSE_PROJECT_NAME}." >&2
+	exit 1
+fi
+for cid in "${smoke_containers[@]}"; do
+	if ! info="$("${engine}" inspect --format \
+		'{{index .Config.Labels "com.docker.compose.service"}} {{.State.Pid}} {{json .HostConfig.Memory}} {{json .HostConfig.PidsLimit}} {{json .HostConfig.ReadonlyRootfs}}' "${cid}")"; then
+		echo "FAIL: hardening: '${engine} inspect ${cid}' failed (error above)." >&2
+		exit 1
+	fi
+	read -r svc pid mem pids ro <<<"${info}"
+	if [ -z "${svc}" ]; then
+		hardening_fail "container ${cid}" "has no com.docker.compose.service label"
+		continue
+	fi
+	if [ -z "${hardening[${svc}]+set}" ]; then
+		hardening_fail "${svc}" "no expected hardening in test/deploy/smoke_up.sh; add the service to the hardening table"
+		continue
+	fi
+	read -r want_ro want_caps <<<"${hardening[${svc}]}"
+	allowed=0
+	if [ "${want_caps}" != "-" ]; then
+		IFS=, read -r -a names <<<"${want_caps}"
+		for name in "${names[@]}"; do
+			if [ -z "${cap_bit[${name}]+set}" ]; then
+				echo "FAIL: hardening table allows ${name} for ${svc}, which cap_bit does not map; add its bit number." >&2
+				exit 1
+			fi
+			allowed=$((allowed | (1 << cap_bit[${name}])))
+		done
+	fi
+	status_file="/proc/${pid}/status"
+	if ! cap_bnd="$(sed -n 's/^CapBnd:[[:space:]]*//p' "${status_file}")" || [ -z "${cap_bnd}" ]; then
+		hardening_fail "${svc}" "cannot read CapBnd from ${status_file} (container PID ${pid})"
+	elif ((0x${cap_bnd} & ~allowed)); then
+		hardening_fail "${svc}" "capabilities beyond its allowlist: bounding set 0x${cap_bnd}, allowed $(printf '0x%x' "${allowed}") (${want_caps}); add cap_drop: [ALL] and cap_add only the allowed caps"
+	fi
+	if [ "$(sed -n 's/^NoNewPrivs:[[:space:]]*//p' "${status_file}")" != "1" ]; then
+		hardening_fail "${svc}" "no-new-privileges not set; add security_opt: [no-new-privileges:true]"
+	fi
+	if ! [ "${mem}" -gt 0 ] 2>/dev/null; then
+		hardening_fail "${svc}" "no memory limit (HostConfig.Memory=${mem}); add mem_limit"
+	fi
+	# podman gives every container a pids limit of 2048 by default, so only a
+	# lower value shows that compose set one.
+	if ! [ "${pids}" -gt 0 ] 2>/dev/null || [ "${pids}" -ge 2048 ]; then
+		hardening_fail "${svc}" "no pids limit below the engine default 2048 (HostConfig.PidsLimit=${pids}); add pids_limit"
+	fi
+	if [ "${want_ro}" = "ro" ] && [ "${ro}" != "true" ]; then
+		hardening_fail "${svc}" "root filesystem is writable; add read_only: true and a tmpfs for each path it writes"
+	fi
+done
+if [ "${hardening_failures}" -gt 0 ]; then
+	echo "FAIL: ${hardening_failures} hardening check(s) failed for project ${COMPOSE_PROJECT_NAME}." >&2
+	exit 1
+fi
+echo "Hardening checks passed for ${#smoke_containers[@]} running container(s)."
+
 # Reach the daemon exactly as deploy:up's health check does: a host process
 # dialing the published gateway port over mTLS. In this rootless, nested-podman
 # environment a sibling `podman run` container cannot reach the daemon -- joining

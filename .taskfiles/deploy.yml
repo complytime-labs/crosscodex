@@ -223,8 +223,15 @@ tasks:
       # PostgreSQL accepts a root-owned 0640 key, and each service is added to
       # CERT_GID via group_add in compose.yaml so it can read the key group.
       # Reuse the db image (has a shell) as the copy helper.
+      # Caps (issue #236), measured with this command: CHOWN for the chown to
+      # group CERT_GID. DAC_READ_SEARCH because certgen writes its keys 0600
+      # (and its dir 0700) as the operator: under rootless podman that uid is
+      # container root, but under a rootful engine run by a non-root operator
+      # it is a foreign uid that root without the cap cannot read.
       - |
         {{.CONTAINER_ENGINE}} run --rm --user root \
+          --cap-drop ALL --cap-add CHOWN --cap-add DAC_READ_SEARCH \
+          --security-opt no-new-privileges:true \
           -v {{.CERTS_VOLUME}}:/certs \
           -v {{.CERTS_DIR}}:/src:ro,z \
           --entrypoint sh \

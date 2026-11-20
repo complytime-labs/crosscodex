@@ -19,6 +19,17 @@
 # password in that role's DSN below. Only `db` and `migrate` ever receive
 # POSTGRES_PASSWORD. The db's pg_hba.conf requires a scram-sha-256 password
 # and a valid client cert for every TCP login.
+#
+# Hardening baseline (issue #236), on every service in every compose file:
+# cap_drop ALL (each cap_add names the cap it needs and why),
+# no-new-privileges, a memory limit overridable from .env
+# (CROSSCODEX_*_MEM_LIMIT; README.md "Container hardening and resource
+# limits") and a fixed pids limit. Every service except db-restore also runs
+# with a read-only root filesystem plus a tmpfs for each path it writes at
+# runtime. /tmp is declared even where nothing needs it: podman mounts one on
+# read-only containers by itself, docker does not, so declaring it keeps both
+# engines identical. test/deploy/smoke_up.sh asserts these settings on the
+# smoke stack.
 
 # Restricted-role DSNs shared by `migrate` (which sets the passwords) and
 # `crosscodexd` (which logs in with them). The tenant_admin and backup_user
@@ -34,6 +45,17 @@ services:
     image: crosscodex-db:${TAG:-latest}
     restart: unless-stopped
     group_add: ["10001"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: ${CROSSCODEX_DB_MEM_LIMIT:-2g}
+    # One process per connection plus background workers.
+    pids_limit: 256
+    read_only: true
+    # /run/postgresql (the image's /var/run/postgresql; /var/run is a symlink
+    # to /run) holds the socket and its lock file. The entrypoint's chmod of it
+    # fails on the tmpfs and is ignored (`|| :`); the dir stays world-writable
+    # with the sticky bit, which is all postgres needs.
+    tmpfs: [/tmp, /run/postgresql]
     environment:
       POSTGRES_USER: crosscodex
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
@@ -59,6 +81,16 @@ services:
     image: docker.io/nats:2.11.17-alpine
     restart: unless-stopped
     group_add: ["10001"]
+    # Stays root (uid 0): existing jetstream volumes hold root-owned files, and
+    # a non-root nats could not read them. With every capability dropped, root
+    # gets no DAC_OVERRIDE and can only touch files it owns or the mode bits
+    # allow, so it is no stronger than an ordinary user inside the container.
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: ${CROSSCODEX_NATS_MEM_LIMIT:-512m}
+    pids_limit: 256
+    read_only: true
+    tmpfs: [/tmp]
     volumes:
       - crosscodex-certs:/certs
       - crosscodex-jetstream:/data
@@ -84,6 +116,12 @@ services:
     image: crosscodexd:${TAG:-latest}
     restart: "no"
     group_add: ["10001"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: ${CROSSCODEX_MIGRATE_MEM_LIMIT:-256m}
+    pids_limit: 128
+    read_only: true
+    tmpfs: [/tmp]
     command: ["migrate"]
     environment:
       <<: *role-dsns
@@ -99,6 +137,15 @@ services:
     image: crosscodexd:${TAG:-latest}
     restart: unless-stopped
     group_add: ["10001"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: ${CROSSCODEX_DAEMON_MEM_LIMIT:-2g}
+    pids_limit: 256
+    read_only: true
+    # Backups (compose.backup.yaml) spool each object and the JetStream
+    # snapshot here (pkg/backup). tmpfs pages count against mem_limit, so the
+    # limit must also cover the largest object or stream snapshot.
+    tmpfs: [/tmp]
     # No env_file: the daemon gets only what it reads, never POSTGRES_PASSWORD.
     environment:
       <<: *role-dsns

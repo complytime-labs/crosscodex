@@ -65,7 +65,7 @@ A regeneration mints a new CA, so the whole set changes:
 
 A SAN missing after an upgrade triggers this: a release that adds a compose service name to `dnsNames` makes the existing set fail verification, and `task deploy:up` (which depends on `certs`) regenerates it.
 
-Certificates are copied into the `crosscodex-certs` docker/podman volume with shared-group ownership (GID 10001) so every service can read the keys despite running as different users (postgres, nats=root, stunnel=nobody, crosscodexd=nonroot).
+Certificates are copied into the `crosscodex-certs` docker/podman volume with shared-group ownership (GID 10001) so every service can read the keys despite running as different users (postgres, nats=root with every capability dropped, stunnel=nobody, praxis=praxis, crosscodexd=nonroot; see [Container hardening and resource limits](#container-hardening-and-resource-limits)).
 
 ## Bring up the stack
 
@@ -161,6 +161,38 @@ The production stack runs all inter-service communication over mutual TLS:
 - **CrossCodex gateway**: Serves mTLS at `:50051`, published as `localhost:50051` on the host
 
 All services share the same PKI (loaded from the `crosscodex-certs` volume).
+
+## Container hardening and resource limits
+
+Every compose service, in every compose file, runs with:
+
+- `cap_drop: [ALL]`. Only `backup-init` (backups, `compose.backup.yaml`) adds capabilities back: `CHOWN`, `DAC_OVERRIDE`, `FOWNER` and `FSETID`, the minimum its one-time `chown`/`chmod` of the backup volume needs (without `FSETID` the kernel silently drops the setgid bit on `/backup`). The `certs` task's copy container keeps only `CHOWN` and `DAC_READ_SEARCH`.
+- `security_opt: [no-new-privileges:true]`.
+- A memory limit (overridable, below) and a fixed pids limit.
+- A read-only root filesystem with a tmpfs at `/tmp` (and at `/run/postgresql`, the socket directory, for `db`), except `db-restore`, which keeps a writable root filesystem.
+
+`nats` still runs as root because existing JetStream volumes hold root-owned files. With no capabilities, root inside the container can only touch files it owns or that their mode bits allow.
+
+Set any of these in `deploy/.env` to change a memory limit (compose size syntax, e.g. `512m`, `4g`):
+
+| Variable                            | Service                              | Default |
+|-------------------------------------|--------------------------------------|---------|
+| `CROSSCODEX_DB_MEM_LIMIT`           | `db`                                 | `2g`    |
+| `CROSSCODEX_NATS_MEM_LIMIT`         | `nats`                               | `512m`  |
+| `CROSSCODEX_MIGRATE_MEM_LIMIT`      | `migrate`                            | `256m`  |
+| `CROSSCODEX_DAEMON_MEM_LIMIT`       | `crosscodexd`                        | `2g`    |
+| `CROSSCODEX_LITELLM_MEM_LIMIT`      | `litellm`                            | `2g`    |
+| `CROSSCODEX_LITELLM_TLS_MEM_LIMIT`  | `litellm-tls`                        | `64m`   |
+| `CROSSCODEX_PRAXIS_MEM_LIMIT`       | `praxis`                             | `512m`  |
+| `CROSSCODEX_BACKUP_INIT_MEM_LIMIT`  | `backup-init`                        | `64m`   |
+| `CROSSCODEX_DB_RESTORE_MEM_LIMIT`   | `db-restore`                         | `1g`    |
+| `CROSSCODEX_OLLAMA_MEM_LIMIT`       | `ollama` (smoke test only)           | `4g`    |
+
+Files written to a tmpfs count against the service's memory limit. Backups spool each object and the JetStream snapshot through `crosscodexd`'s `/tmp`, so raise `CROSSCODEX_DAEMON_MEM_LIMIT` if your largest object or stream snapshot approaches it.
+
+Limits need a container engine that can apply cgroup limits: a rootless podman host needs cgroup v2 with the `memory` and `pids` controllers delegated to the user. `podman inspect` shows the configured value even where the engine cannot apply it; `cat /sys/fs/cgroup/memory.max` inside the container shows whether it is in force.
+
+`task deploy:smoke` checks this baseline on every running container of the smoke stack and fails naming the service and the missing setting.
 
 ## LLM gateway (`LLM_GATEWAY`)
 

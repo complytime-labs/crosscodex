@@ -10,6 +10,13 @@ services:
     # Runs as praxis (uid 100); joins the cert GID to read server-key.pem
     # (0640), the only key it needs.
     group_add: ["10001"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: ${CROSSCODEX_PRAXIS_MEM_LIMIT:-512m}
+    # Tokio worker threads (one per CPU) plus its blocking pool.
+    pids_limit: 256
+    read_only: true
+    tmpfs: [/tmp]
     # Only the provider key; .env also holds database passwords, which this
     # third-party image must not receive. An empty value passes startup (only
     # an unset variable is rejected), so Praxis would send an empty bearer and
