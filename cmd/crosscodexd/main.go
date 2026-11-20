@@ -29,7 +29,8 @@ Flags:
                 Defaults to "all".
 
 Available Commands:
-  healthcheck Probe the gateway /healthz endpoint (exit 0 = healthy)
+  healthcheck Probe this role's /healthz (exit 0 = healthy): HTTP on health.addr for graph,
+              pipeline and worker; HTTPS on server.addr for gateway and all
   admin       On-host admin operations (retention scan, reconcile artifacts, adjudicate artifacts, backup run|list|verify|restore; see 'crosscodexd admin')
   migrate     Apply schema migrations, set restricted role passwords and provision the default tenant, as database.migration_dsn (run before starting the daemon)
   version     Print version information
@@ -70,7 +71,7 @@ func main() {
 	if flags.NArg() > 0 {
 		switch flags.Arg(0) {
 		case "healthcheck":
-			os.Exit(runHealthcheck())
+			os.Exit(runHealthcheck(*role))
 		case "admin":
 			os.Exit(runAdmin(flags.Args()[1:]))
 		case "migrate":
