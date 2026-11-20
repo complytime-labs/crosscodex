@@ -1,0 +1,40 @@
+pkg/tlsconfig/pki/types.go
+  s_714e941abc6b42::t_9a28f371f188e2 79-80
+pkg/tlsconfig/pki/pki_bdd_test.go
+  s_714e941abc6b42::t_2054116e6f9def 244-257
+internal/testcerts/ensure_bdd_test.go
+  s_714e941abc6b42::t_371f71c8eaaa13 128,133,297-318
+  s_714e941abc6b42::t_47abcafafe4d23 125-127
+  s_714e941abc6b42::t_66034d71d596d4 129-132
+  s_d712e918a4865a::t_d33fb6d0116064 4,110-120,122-124,136-142
+deploy/certgen/gen.go
+  s_714e941abc6b42::t_ae93f90c17f5c6 4-7,21-23,27,51-56,94
+internal/testcerts/testcerts.go
+  s_714e941abc6b42::t_46d722dc32cd6a 142-147,197-201,245-262
+pkg/tlsconfig/pki/pki.go
+  s_714e941abc6b42::t_27411bd57374f5 155-156,176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d9bb4277b00c8a782ac79659dd6bc45f5d3cd0fa",
+  "prompts": {},
+  "sessions": {
+    "s_714e941abc6b42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6aa18186-7d90-4c58-b51d-483b51e55303",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_d712e918a4865a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a82a459b5bf350cc2",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
