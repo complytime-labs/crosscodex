@@ -239,9 +239,6 @@ func verifyDir(dir string, opts VerifyOptions) error {
 	return nil
 }
 
-// verifyLeaf checks the leaf certificate dir/name is within its validity
-// window, chains to pool with the given extended key usage, and matches the
-// private key in dir/keyName. Returns the parsed certificate.
 // checkServerAuthOnly fails when cert can also be used for client
 // authentication, naming the extended key usage that permits it.
 func checkServerAuthOnly(cert *x509.Certificate) error {
@@ -260,6 +257,9 @@ func checkServerAuthOnly(cert *x509.Certificate) error {
 	return nil
 }
 
+// verifyLeaf checks the leaf certificate dir/name is within its validity
+// window, chains to pool with the given extended key usage, and matches the
+// private key in dir/keyName. Returns the parsed certificate.
 func verifyLeaf(dir, name, keyName string, pool *x509.CertPool, usage x509.ExtKeyUsage, now time.Time, minRemaining time.Duration) (*x509.Certificate, error) {
 	leafCert, err := readCert(dir, name)
 	if err != nil {
