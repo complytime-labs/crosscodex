@@ -22,16 +22,18 @@ import (
 func healthCheckHandler(checks ...gateway.DependencyCheck) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for _, c := range checks {
-			if err := c.Check(r.Context()); err != nil {
-				slog.WarnContext(r.Context(), "healthz: dependency check failed", "dependency", c.Name, "error", err)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusServiceUnavailable)
-				_ = json.NewEncoder(w).Encode(map[string]string{
-					"status": "unhealthy",
-					"error":  c.Name + " unreachable",
-				})
-				return
+			err := c.Check(r.Context())
+			if err == nil {
+				continue
 			}
+			slog.WarnContext(r.Context(), "healthz: dependency check failed", "dependency", c.Name, "error", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"status": "unhealthy",
+				"error":  c.Name + " unreachable",
+			})
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
