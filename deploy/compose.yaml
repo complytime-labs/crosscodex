@@ -1,15 +1,17 @@
 # Single-host production stack for CrossCodex (role: all) over full mTLS.
 # Populate the cert volume first: task deploy:certs
 #
-# TLS material lives in two volumes, so a service gets only the keys it uses:
-#   crosscodex-certs         ca.pem, server.pem, server-key.pem. Mounted at
-#                            /certs by db, nats and the LLM gateway, and at
-#                            /server-certs by crosscodexd (its HTTPS listener).
-#   crosscodex-client-certs  ca.pem, client.pem, client-key.pem (the daemon's
-#                            identity to db, nats and the gateway) and
-#                            attestation-key.pem / attestation-pub.pem. Mounted
-#                            at /certs by migrate and crosscodexd only.
-# The CA private key is in neither. Keys are owned root:10001, mode 0640
+# Keys live in three volumes, so a service gets only the keys it uses:
+#   crosscodex-certs             ca.pem, server.pem, server-key.pem. Mounted at
+#                                /certs by db, nats and the LLM gateway, and at
+#                                /server-certs by crosscodexd (HTTPS listener).
+#   crosscodex-client-certs      ca.pem, client.pem, client-key.pem (the
+#                                daemon's identity to db, nats and the
+#                                gateway). Mounted at /certs by migrate and
+#                                crosscodexd only.
+#   crosscodex-attestation-keys  attestation-key.pem, attestation-pub.pem.
+#                                Mounted at /attestation by crosscodexd only.
+# The CA private key is in none of them. Keys are owned root:10001, mode 0640
 # (group-read only). Every service that mounts a cert volume joins GID 10001
 # via group_add so it can read the keys despite running as a different user
 # (postgres, nats=root, stunnel=nobody, praxis=praxis, crosscodexd=nonroot).
@@ -140,7 +142,7 @@ services:
       <<: *role-dsns
       CROSSCODEX_DATABASE_MIGRATION_DSN: postgres://crosscodex:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@db:5432/crosscodex?sslmode=verify-full&sslrootcert=/certs/ca.pem&sslcert=/certs/client.pem&sslkey=/certs/client-key.pem
     volumes:
-      # Client identity for the DSNs above; the server volume is not mounted.
+      # Client identity for the DSNs above; no server or attestation key.
       - crosscodex-client-certs:/certs:ro
       - ./config.yaml:/etc/crosscodex/config.yaml:ro
     depends_on:
@@ -174,11 +176,12 @@ services:
       # The in-container port stays 50051.
       - "${CROSSCODEX_GATEWAY_PORT:-50051}:50051"
     volumes:
-      # Client identity and attestation keys at /certs; the server cert for
-      # the gateway listener (tls.targets.gateway-server in config.yaml) at
-      # /server-certs.
+      # Client identity at /certs; the server cert for the gateway listener
+      # (tls.targets.gateway-server in config.yaml) at /server-certs; the
+      # attestation keypair (attestation.* in config.yaml) at /attestation.
       - crosscodex-client-certs:/certs:ro
       - crosscodex-certs:/server-certs:ro
+      - crosscodex-attestation-keys:/attestation:ro
       - ./config.yaml:/etc/crosscodex/config.yaml:ro
       - crosscodex-objects:/var/lib/crosscodex/objects
     depends_on:
@@ -212,3 +215,7 @@ volumes:
     external: true
     # Overridable for the same reason as crosscodex-certs.
     name: ${CROSSCODEX_CLIENT_CERTS_VOLUME:-crosscodex-client-certs}
+  crosscodex-attestation-keys:
+    external: true
+    # Overridable for the same reason as crosscodex-certs.
+    name: ${CROSSCODEX_ATTESTATION_KEYS_VOLUME:-crosscodex-attestation-keys}

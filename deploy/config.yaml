@@ -55,14 +55,14 @@ storage:
   objects:
     backend: local
     base_path: /var/lib/crosscodex/objects
-# in-toto attestation signing keypair (ECDSA P-256), provisioned into the
-# client cert volume (mounted only by migrate and crosscodexd) by
-# `task deploy:certs` alongside the TLS PKI. Required by
+# in-toto attestation signing keypair (ECDSA P-256), provisioned by
+# `task deploy:certs` into the crosscodex-attestation-keys volume, which only
+# crosscodexd mounts (at /attestation). Required by
 # the pipeline, which role `all` builds in-process; `enabled` and
 # `expiry_duration` inherit the config defaults.
 attestation:
-  private_key_path: /certs/attestation-key.pem
-  public_key_path: /certs/attestation-pub.pem
+  private_key_path: /attestation/attestation-key.pem
+  public_key_path: /attestation/attestation-pub.pem
 tenants:
   enabled: false
   default_tenant: default

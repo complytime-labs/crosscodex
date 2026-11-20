@@ -76,16 +76,18 @@ vars:
   DEPLOY_PRAXIS_MODELS_ENDPOINT: '{{.PRAXIS_MODELS_ENDPOINT | default .PRAXIS_MODELS_ENDPOINT_DOTENV | default "false"}}'
   COMPOSE_FILES: '-f {{.ROOT_DIR}}/deploy/compose.yaml -f {{.ROOT_DIR}}/deploy/compose.gateway-{{.DEPLOY_LLM_GATEWAY}}.yaml{{if and (eq .DEPLOY_LLM_GATEWAY "praxis") (eq .DEPLOY_PRAXIS_MODELS_ENDPOINT "true")}} -f {{.ROOT_DIR}}/deploy/compose.gateway-praxis-models.yaml{{end}}'
   # Deploy identity knobs. Override via environment for an isolated stack (the
-  # ephemeral smoke stack sets all four plus COMPOSE_PROJECT_NAME); the
-  # defaults reproduce the production stack. The two volumes and GATEWAY_PORT are
+  # ephemeral smoke stack sets all five plus COMPOSE_PROJECT_NAME); the
+  # defaults reproduce the production stack. The three volumes and GATEWAY_PORT are
   # also read by compose.yaml's ${...} interpolation, so exporting them keeps
   # the task side and the compose side in agreement.
   CERTS_DIR: '{{.CERTS_DIR | default (printf "%s/deploy/certs" .ROOT_DIR)}}'
   CERTS_VOLUME: '{{.CROSSCODEX_CERTS_VOLUME | default "crosscodex-certs"}}'
-  # Second cert volume (issue #236): the daemon's client identity and the
-  # attestation keypair, mounted only by migrate and crosscodexd. CERTS_VOLUME
-  # keeps only the server material that db, nats and the LLM gateway need.
+  # Key volumes split by consumer (issue #236): CERTS_VOLUME keeps only the
+  # server material db, nats and the LLM gateway need; CLIENT_CERTS_VOLUME the
+  # daemon's client identity (migrate and crosscodexd); ATTESTATION_KEYS_VOLUME
+  # the attestation signing keypair (crosscodexd only).
   CLIENT_CERTS_VOLUME: '{{.CROSSCODEX_CLIENT_CERTS_VOLUME | default "crosscodex-client-certs"}}'
+  ATTESTATION_KEYS_VOLUME: '{{.CROSSCODEX_ATTESTATION_KEYS_VOLUME | default "crosscodex-attestation-keys"}}'
   GATEWAY_PORT: '{{.CROSSCODEX_GATEWAY_PORT | default "50051"}}'
   # Isolation identity for the ephemeral smoke stack. Single source of truth
   # shared by smoke:up and smoke:down so both act on the same project, volumes,
@@ -102,6 +104,7 @@ vars:
   SMOKE_LLM_GATEWAY: '{{.LLM_GATEWAY | default "litellm"}}'
   SMOKE_CERTS_VOLUME: '{{.SMOKE_CERTS_VOLUME | default "crosscodex-smoke-certs"}}'
   SMOKE_CLIENT_CERTS_VOLUME: '{{.SMOKE_CLIENT_CERTS_VOLUME | default "crosscodex-smoke-client-certs"}}'
+  SMOKE_ATTESTATION_KEYS_VOLUME: '{{.SMOKE_ATTESTATION_KEYS_VOLUME | default "crosscodex-smoke-attestation-keys"}}'
   # Host-loopback port compose.offline-praxis.yaml publishes praxis's mTLS
   # listener on, for smoke_up.sh's direct gateway probes (LLM_GATEWAY=praxis).
   SMOKE_PRAXIS_PORT: '{{.SMOKE_PRAXIS_PORT | default "54443"}}'
@@ -212,18 +215,19 @@ tasks:
 
   certs:load:
     internal: true
-    desc: Load the host TLS PKI into the server and client certs volumes
+    desc: Load the host TLS PKI and attestation keypair into the server, client and attestation key volumes
     # Depends on the db image (used as the copy helper) and the host certs.
     deps: [build, certs:generate]
     cmds:
-      # Two volumes so a service can read only the keys it uses (issue #236).
-      # CERTS_VOLUME (db, nats, litellm-tls, praxis, and crosscodexd at
+      # Three volumes so a service can read only the keys it uses (issue
+      # #236). CERTS_VOLUME (db, nats, litellm-tls, praxis, and crosscodexd at
       # /server-certs) gets the server identity. CLIENT_CERTS_VOLUME (migrate
       # and crosscodexd at /certs) gets the daemon's client identity, which db
-      # and nats trust, and the attestation signing key. ca-key.pem goes into
-      # neither: no service signs certificates, and any reader could mint
-      # client certificates the whole stack trusts. Each list is sorted in C
-      # order because the status check compares it with `ls`.
+      # and nats trust. ATTESTATION_KEYS_VOLUME (crosscodexd at /attestation)
+      # gets the attestation signing keypair. ca-key.pem goes into none: no
+      # service signs certificates, and any reader could mint client
+      # certificates the whole stack trusts. Each list is sorted in C order
+      # because the status check compares it with `ls`.
       - task: certs:load:volume
         vars:
           VOLUME: "{{.CERTS_VOLUME}}"
@@ -231,7 +235,11 @@ tasks:
       - task: certs:load:volume
         vars:
           VOLUME: "{{.CLIENT_CERTS_VOLUME}}"
-          FILES: attestation-key.pem attestation-pub.pem ca.pem client-key.pem client.pem
+          FILES: ca.pem client-key.pem client.pem
+      - task: certs:load:volume
+        vars:
+          VOLUME: "{{.ATTESTATION_KEYS_VOLUME}}"
+          FILES: attestation-key.pem attestation-pub.pem
 
   certs:load:volume:
     internal: true
@@ -251,8 +259,10 @@ tasks:
       # PostgreSQL accepts a root-owned 0640 key, and each service is added to
       # CERT_GID via group_add in compose.yaml so it can read the key group.
       # Emptying first removes whatever an older release loaded and FILES does
-      # not list (ca-key.pem, and in the server volume the client and
-      # attestation keys); the status check forces that reload. .fingerprint
+      # not list (ca-key.pem, the client and attestation keys an older
+      # release put in the server volume, the attestation keys an older
+      # release put in the client volume); the status check forces that
+      # reload. .fingerprint
       # is removed first and copied last, so it marks a complete load.
       # Reuse the db image (has a shell) as the copy helper.
       # Caps (issue #236), measured with this command: CHOWN for the chown to
@@ -272,7 +282,7 @@ tasks:
     # Re-load whenever the volume is absent, its fingerprint no longer matches
     # the host PKI, or it holds anything besides FILES and .fingerprint (for
     # example the client or CA key an older release loaded into CERTS_VOLUME).
-    # `deploy:down VOLUMES=1` explicitly removes both volumes (an external
+    # `deploy:down VOLUMES=1` explicitly removes all three volumes (an external
     # volume survives compose's own `down --volumes`), so after a teardown
     # the read below returns nothing, the check fails, and the volume is
     # repopulated on the next `up`.
@@ -315,6 +325,7 @@ tasks:
     env:
       CROSSCODEX_CERTS_VOLUME: "{{.CERTS_VOLUME}}"
       CROSSCODEX_CLIENT_CERTS_VOLUME: "{{.CLIENT_CERTS_VOLUME}}"
+      CROSSCODEX_ATTESTATION_KEYS_VOLUME: "{{.ATTESTATION_KEYS_VOLUME}}"
       CROSSCODEX_GATEWAY_PORT: "{{.GATEWAY_PORT}}"
     preconditions:
       - sh: "test -f {{.ROOT_DIR}}/deploy/.env"
@@ -374,6 +385,7 @@ tasks:
     env:
       CROSSCODEX_CERTS_VOLUME: "{{.CERTS_VOLUME}}"
       CROSSCODEX_CLIENT_CERTS_VOLUME: "{{.CLIENT_CERTS_VOLUME}}"
+      CROSSCODEX_ATTESTATION_KEYS_VOLUME: "{{.ATTESTATION_KEYS_VOLUME}}"
       CROSSCODEX_GATEWAY_PORT: "{{.GATEWAY_PORT}}"
     preconditions:
       - sh: "test -f {{.ROOT_DIR}}/deploy/.env"
@@ -389,10 +401,10 @@ tasks:
       # such as the backup sidecars or a stack run from another deploy/ dir.
       - '{{.COMPOSE_CMD}} -f {{.ROOT_DIR}}/deploy/compose.yaml -f {{.ROOT_DIR}}/deploy/compose.gateway-litellm.yaml -f {{.ROOT_DIR}}/deploy/compose.gateway-praxis.yaml -f {{.ROOT_DIR}}/deploy/compose.gateway-praxis-models.yaml {{if .COMPOSE_OVERLAY}}-f {{.COMPOSE_OVERLAY}}{{end}} down {{if eq .VOLUMES "1"}}--volumes{{end}}'
       # compose's own `down --volumes` does NOT remove `external` volumes, so
-      # both cert volumes must be dropped explicitly. This keeps VOLUMES=1 a true
+      # the three key volumes must be dropped explicitly. This keeps VOLUMES=1 a true
       # full teardown and guarantees the next `up` reloads a freshly generated
       # PKI rather than stale certs (mirrors test:integration's cert teardown).
-      - '{{if eq .VOLUMES "1"}}{{.CONTAINER_ENGINE}} volume rm -f {{.CERTS_VOLUME}} {{.CLIENT_CERTS_VOLUME}}{{else}}true{{end}}'
+      - '{{if eq .VOLUMES "1"}}{{.CONTAINER_ENGINE}} volume rm -f {{.CERTS_VOLUME}} {{.CLIENT_CERTS_VOLUME}} {{.ATTESTATION_KEYS_VOLUME}}{{else}}true{{end}}'
 
   logs:
     desc: Tail stack logs
@@ -442,12 +454,13 @@ tasks:
     # Export the smoke isolation identity so the script's child `task deploy:up`
     # and compose.yaml resolve the smoke project, cert volumes, gateway port, and
     # PKI dir (go-task reads env vars as vars; CROSSCODEX_* feed the CERTS_VOLUME
-    # / CLIENT_CERTS_VOLUME / GATEWAY_PORT vars, CERTS_DIR is read directly, COMPOSE_PROJECT_NAME is
+    # / CLIENT_CERTS_VOLUME / ATTESTATION_KEYS_VOLUME / GATEWAY_PORT vars, CERTS_DIR is read directly, COMPOSE_PROJECT_NAME is
     # inherited by the compose subprocess).
     env:
       COMPOSE_PROJECT_NAME: "{{.SMOKE_PROJECT}}"
       CROSSCODEX_CERTS_VOLUME: "{{.SMOKE_CERTS_VOLUME}}"
       CROSSCODEX_CLIENT_CERTS_VOLUME: "{{.SMOKE_CLIENT_CERTS_VOLUME}}"
+      CROSSCODEX_ATTESTATION_KEYS_VOLUME: "{{.SMOKE_ATTESTATION_KEYS_VOLUME}}"
       CROSSCODEX_GATEWAY_PORT: "{{.SMOKE_GATEWAY_PORT}}"
       CERTS_DIR: "{{.SMOKE_CERTS_DIR}}"
       # Gateway under test; smoke_up.sh exports it to its child deploy:up,
@@ -504,6 +517,7 @@ tasks:
       COMPOSE_PROJECT_NAME: "{{.SMOKE_PROJECT}}"
       CROSSCODEX_CERTS_VOLUME: "{{.SMOKE_CERTS_VOLUME}}"
       CROSSCODEX_CLIENT_CERTS_VOLUME: "{{.SMOKE_CLIENT_CERTS_VOLUME}}"
+      CROSSCODEX_ATTESTATION_KEYS_VOLUME: "{{.SMOKE_ATTESTATION_KEYS_VOLUME}}"
       CROSSCODEX_GATEWAY_PORT: "{{.SMOKE_GATEWAY_PORT}}"
       CERTS_DIR: "{{.SMOKE_CERTS_DIR}}"
       # Load the gateway's offline overlay so `deploy:down` also removes the
@@ -513,5 +527,9 @@ tasks:
     cmds:
       # Source the same podman env smoke_up.sh uses (TMPDIR/STORAGE_DRIVER in a
       # container) so teardown acts on the runtime view that created the stack.
-      - export ROOT_DIR="{{.ROOT_DIR}}" && . {{.ROOT_DIR}}/test/deploy/podman_env.sh && task deploy:down VOLUMES=1
+      # The smoke test never loads compose.backup.yaml, but a maintainer who
+      # layers it on the smoke stack by hand leaves its backup
+      # volume, which deploy:down does not know; `volume rm -f` ignores a
+      # missing volume.
+      - export ROOT_DIR="{{.ROOT_DIR}}" && . {{.ROOT_DIR}}/test/deploy/podman_env.sh && task deploy:down VOLUMES=1 && {{.CONTAINER_ENGINE}} volume rm -f {{.SMOKE_PROJECT}}_crosscodex-backup
       - rm -rf {{.SMOKE_CERTS_DIR}}

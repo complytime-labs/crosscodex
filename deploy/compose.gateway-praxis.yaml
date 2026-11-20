@@ -26,7 +26,7 @@ services:
     volumes:
       # Praxis is a third-party image, so it gets exactly these three files.
       # crosscodex-certs holds only these today (the client and attestation
-      # keys are in crosscodex-client-certs, which Praxis never mounts);
+      # keys are in their own volumes, which Praxis never mounts);
       # subpath keeps Praxis pinned to them if the volume ever gains a file.
       - type: volume
         source: crosscodex-certs
