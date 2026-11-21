@@ -1,0 +1,24 @@
+README.md
+  s_8dad1ed5ebd844::t_18810788d5b3b5 94-96,342
+cmd/crosscodex/catalog_import_bdd_test.go
+  s_8dad1ed5ebd844::t_138c57a7c4276c 256,266-267,342-353,369-371
+cmd/crosscodex/catalog.go
+  s_8dad1ed5ebd844::t_18810788d5b3b5 51-52,183-187
+  s_8dad1ed5ebd844::t_113005bd88c60d 150
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "6fdc04402e1b86f011dd16e65f65cc00bbdd5bd4",
+  "prompts": {},
+  "sessions": {
+    "s_8dad1ed5ebd844": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04da376b-50a2-402d-ab80-36096cc27a2d",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
