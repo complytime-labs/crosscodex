@@ -1,0 +1,19 @@
+internal/pipeline/pipeline_e2e_integration_test.go
+  s_8dad1ed5ebd844::t_47c6b314132b02 792-825
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "1e5842d93575b8ec2ac36b318319abcd3f9deb9b",
+  "prompts": {},
+  "sessions": {
+    "s_8dad1ed5ebd844": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04da376b-50a2-402d-ab80-36096cc27a2d",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
