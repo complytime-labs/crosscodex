@@ -1,0 +1,62 @@
+internal/catalog/catalog_bdd_test.go
+  s_8dad1ed5ebd844::t_38607a1763d68f 79-81
+  s_8dad1ed5ebd844::t_dc17df7dbba368 647
+  s_8dad1ed5ebd844::t_e6ceb43cf3a346 640-646,648-663,665-669
+  s_8dad1ed5ebd844::t_423518c78d5500 89,192-194,603,664,733,760
+internal/gateway/document.go
+  s_8dad1ed5ebd844::t_5b8a5eb58c3c0d 129
+api/proto/crosscodex/v1/catalog.proto
+  s_8dad1ed5ebd844::t_3adb2e9a370c4b 91-95
+internal/catalog/catalog_parsed_event_bdd_test.go
+  s_8dad1ed5ebd844::t_6b7a54d5f5c026 104-105
+internal/catalog/retire.go
+  s_8dad1ed5ebd844::t_ae787454e745fd 109-115
+  s_8dad1ed5ebd844::t_206748babee31d 272-276
+internal/catalog/service.go
+  s_8dad1ed5ebd844::t_5e1c69579254ae 364
+  s_8dad1ed5ebd844::t_f3d3cbf1b9bcf5 540,543-544
+  s_8dad1ed5ebd844::t_c97aa28783af38 542
+  s_8dad1ed5ebd844::t_5545041d702436 428,517,524-525,534,537,541,553,555,560,564,569,572
+internal/catalog/versioning.go
+  s_8dad1ed5ebd844::t_e14695fe4f65f8 16-18,20-22
+README.md
+  s_694d533b8f36da::t_740de438042d72 350,358
+docs/dev/retention.md
+  s_694d533b8f36da::t_e6d29f7c628074 200-203,207-209
+internal/catalog/catalog_integration_bdd_test.go
+  s_694d533b8f36da::t_ea3dc2770c7262 1952,1956,1958-1959,1963-1967,1971-1973,1975
+internal/catalog/export_test.go
+  s_694d533b8f36da::t_21f566a755e08c 38
+internal/catalog/retire_bdd_test.go
+  s_694d533b8f36da::t_9ac5775c6966a5 143,145-152,190-202,246,249-264
+internal/catalog/rpc_errors_bdd_test.go
+  s_694d533b8f36da::t_e96c8696cf00fd 51
+internal/catalog/store.go
+  s_694d533b8f36da::t_30e49c71901a91 50-54,736-754,759,772,777,780-781,784,792,796-800,805-806,810,812,819
+internal/gateway/document_attestation_bdd_test.go
+  s_694d533b8f36da::t_a2b377b5fff6be 132-148,150-159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "df41d60f94bf87bf367c256e4635a06807b4af86",
+  "prompts": {},
+  "sessions": {
+    "s_694d533b8f36da": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a3bbda4871c1c56c9",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_8dad1ed5ebd844": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04da376b-50a2-402d-ab80-36096cc27a2d",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
