@@ -1,0 +1,89 @@
+cmd/crosscodex/catalog.go
+  s_8dad1ed5ebd844::t_febe34d4d00495 17
+  s_694d533b8f36da::t_6870438c744372 373,428,619
+internal/gateway/crosswalk_bdd_test.go
+  s_8dad1ed5ebd844::t_6ec58a01ca5662 240-255
+internal/pipeline/catalog_readers_integration_test.go
+  s_8dad1ed5ebd844::t_beb3e44d0bc88e 166-180
+pkg/catalogversion/catalogversion_bdd_test.go
+  s_8dad1ed5ebd844::t_38607a1763d68f 39-40
+  s_8dad1ed5ebd844::t_aef70ff9f2dd25 1-38,41-47
+cmd/crosscodex/results_bdd_test.go
+  s_8dad1ed5ebd844::t_d41997cdee6466 406-420
+internal/results/store_pg.go
+  s_8dad1ed5ebd844::t_3678d9171eba41 19
+  s_694d533b8f36da::t_b7a8ec1ebea01a 225-228,236-238,241-244,258
+internal/gateway/crosswalk.go
+  s_8dad1ed5ebd844::t_3d8e18c68cd34b 19
+  s_8dad1ed5ebd844::t_c8b4a0f8c1933e 142,144-149,299-301,307
+cmd/crosscodex/run_bdd_test.go
+  s_8dad1ed5ebd844::t_189d59a620d8a4 569-624
+internal/catalog/service.go
+  s_8dad1ed5ebd844::t_febe34d4d00495 19
+  s_8dad1ed5ebd844::t_493d2729edd97a 563
+pkg/jobconfig/jobconfig_bdd_test.go
+  s_8dad1ed5ebd844::t_af165429154522 76-83
+internal/pipeline/catalog_readers_telemetry_bdd_test.go
+  s_8dad1ed5ebd844::t_7a24f206d0553d 7
+  s_8dad1ed5ebd844::t_38607a1763d68f 96-98
+pkg/catalogversion/catalogversion.go
+  s_8dad1ed5ebd844::t_c73f3fc17d0cf4 1-48
+README.md
+  s_694d533b8f36da::t_f959e09aec93de 95,404
+api/proto/crosscodex/v1/pipeline.proto
+  s_694d533b8f36da::t_bcf992cd2718dc 108-113
+api/proto/crosscodex/v1/synthesis.proto
+  s_694d533b8f36da::t_492d8cf4d22e21 336-343
+cmd/crosscodex/jobcatalogs.go
+  s_694d533b8f36da::t_87207c469cd8ce 12,49-50,52-60,63-64,70,132-133,158-160,172-173,175,184-188
+cmd/crosscodex/results.go
+  s_694d533b8f36da::t_4bf091fe75f8f7 344-348
+docs/dev/catalog-versions.md
+  s_694d533b8f36da::t_344769a9f142cf 64-84
+internal/catalog/versioning.go
+  s_694d533b8f36da::t_7737f38b521381 13-14,83
+internal/pipeline/catalog_name_reader.go
+  s_694d533b8f36da::t_41c7ab44730fb7 16,23-25,116-122,132-135
+internal/pipeline/catalog_name_reader_bdd_test.go
+  s_694d533b8f36da::t_63e41d76b90253 7,33,38,43-55
+internal/results/service.go
+  s_694d533b8f36da::t_469c974f7478a5 472-473
+internal/results/service_bdd_test.go
+  s_694d533b8f36da::t_5c02dbe3d26c37 425-426,433-434
+internal/results/store_pg_integration_bdd_test.go
+  s_694d533b8f36da::t_3613eafba1c4ac 576-600
+internal/results/types.go
+  s_694d533b8f36da::t_722a6e2adf6f27 79-81,83-89
+pkg/catalogversion/catalogversion_property_test.go
+  s_694d533b8f36da::t_bfb2a0806c26c6 1-32
+pkg/catalogversion/catalogversion_suite_test.go
+  s_694d533b8f36da::t_911f170623bf80 1-13
+pkg/jobconfig/jobconfig.go
+  s_694d533b8f36da::t_a264d8f2f0fd7b 37-39,41-45,73-77,86-87
+pkg/jobconfig/jobconfig_property_test.go
+  s_694d533b8f36da::t_e76daf575d1786 26-27,38-39,41-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "f292e1793390b97059a6f02289fa4ae73f28ed16",
+  "prompts": {},
+  "sessions": {
+    "s_694d533b8f36da": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a3bbda4871c1c56c9",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_8dad1ed5ebd844": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04da376b-50a2-402d-ab80-36096cc27a2d",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
