@@ -271,7 +271,7 @@ func (s *Service) checkRetirable(ctx context.Context, tenantID, slug string, tar
 		}
 		for _, use := range jobs[t.record.CatalogID] {
 			jobID := use.JobID
-			if !terminalJobStatuses[use.Status] {
+			if !IsTerminalJobStatus(use.Status) {
 				blockers = append(blockers, fmt.Sprintf("job %s uses %s and is %q, so it may still read the version; wait for it to finish, or cancel it with `crosscodex run cancel %s`, and retry", jobID, name, use.Status, jobID))
 			}
 			if hold, ok := heldJobs[jobID]; ok {

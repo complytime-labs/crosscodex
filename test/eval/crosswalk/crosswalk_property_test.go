@@ -12,6 +12,20 @@ import (
 	"github.com/complytime-labs/crosscodex/test/eval/crosswalk"
 )
 
+// canonicalRuneAllowed is the Canonical output alphabet: '.', ASCII digits,
+// ASCII lowercase, and any non-ASCII letter that is not uppercase (NFKC and
+// lowercasing leave non-Latin letters, which may have no case at all).
+func canonicalRuneAllowed(r rune) bool {
+	switch {
+	case r == '.' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z'):
+		return true
+	case r <= unicode.MaxASCII:
+		return false
+	default:
+		return unicode.IsLetter(r) && !unicode.IsUpper(r)
+	}
+}
+
 var _ = Describe("Property Specifications", Ordered, func() {
 	It("Canonical is idempotent", func() {
 		rapid.Check(GinkgoT(), func(t *rapid.T) {
@@ -38,7 +52,7 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		rapid.Check(GinkgoT(), func(t *rapid.T) {
 			s := rapid.String().Draw(t, "s")
 			for _, r := range crosswalk.Canonical(s) {
-				if r != '.' && (r < '0' || r > '9') && !unicode.IsLetter(r) {
+				if !canonicalRuneAllowed(r) {
 					t.Fatalf("Canonical(%q) contains %q", s, r)
 				}
 			}

@@ -28,10 +28,12 @@ import (
 // retireRecorder fakes the archiver, purger and audit publisher retire borrows
 // from the retention engine, recording every call in one ordered log.
 type retireRecorder struct {
-	log        []string
-	archiveErr error
-	purgeErr   error
-	audits     []retention.AuditRecord
+	log         []string
+	archiveErr  error
+	purgeErr    error
+	backendsErr error
+	publishErr  error
+	audits      []retention.AuditRecord
 }
 
 type recordingArchiver struct{ r *retireRecorder }
@@ -66,6 +68,9 @@ func (p recordingPurger) PurgeBatch(_ context.Context, cs []retention.Candidate)
 }
 
 func (r *retireRecorder) Publish(_ context.Context, rec retention.AuditRecord) error {
+	if r.publishErr != nil {
+		return r.publishErr
+	}
 	r.audits = append(r.audits, rec)
 	return nil
 }
@@ -113,6 +118,9 @@ func newRetireKit(withRetention bool) *retireKit {
 			Holds: k.holds,
 			Backends: func(tenantID string) (retention.Archiver, retention.Purger, error) {
 				Expect(tenantID).To(Equal("tenant-1"))
+				if k.rec.backendsErr != nil {
+					return nil, nil, k.rec.backendsErr
+				}
 				return recordingArchiver{k.rec}, recordingPurger{k.rec}, nil
 			},
 			Audit: k.rec,
@@ -272,6 +280,54 @@ var _ = Describe("RetireCatalogVersions", func() {
 			`legal hold "litigation" covers nist@"Rev 4"`, `nist@"Rev 5" is the document's current version`),
 	)
 
+	// A dependency failure is not a protection verdict: it returns the cause
+	// with what was being attempted, and still changes nothing.
+	DescribeTable("fails closed when a dependency fails and changes nothing",
+		func(arm func(*retireKit), wantMsg ...string) {
+			k := newRetireKit(true)
+			arm(k)
+			before := k.snapshot()
+			ids, err := k.svc.RetireCatalogVersions(k.ctx, "nist", []string{"Rev 4"})
+			Expect(err).To(HaveOccurred())
+			Expect(err).NotTo(MatchError(catalog.ErrVersionProtected))
+			for _, m := range wantMsg {
+				Expect(err.Error()).To(ContainSubstring(m))
+			}
+			Expect(ids).To(BeEmpty())
+			k.expectUnchanged(before)
+		},
+		Entry("the hold store cannot be read", func(k *retireKit) {
+			k.holds.ActiveFunc = func(context.Context, time.Time) ([]retention.Hold, error) {
+				return nil, errors.New("hold store down")
+			}
+		}, "load active holds", "hold store down"),
+		Entry("the attestations of a job cannot be listed", func(k *retireKit) {
+			k.seedJob("job-att", "cat-2", "loose")
+			k.objects.ListFunc = func(context.Context, string) ([]storage.ObjectMetadata, error) {
+				return nil, errors.New("object store down")
+			}
+		}, "list attestations of job job-att", "object store down"),
+		Entry("the retention backends cannot be built", func(k *retireKit) {
+			k.rec.backendsErr = errors.New("no archive credentials")
+		}, "build retention backends", "no archive credentials"),
+	)
+
+	// The archive precedes the delete, so an archived copy outlives a failed
+	// delete; the rows themselves must remain.
+	It("keeps every row when the batch delete fails", func() {
+		k := newRetireKit(true)
+		k.rec.purgeErr = errors.New("database down")
+		before := k.snapshot()
+		ids, err := k.svc.RetireCatalogVersions(k.ctx, "nist", []string{"Rev 4"})
+		Expect(err).To(MatchError(ContainSubstring("delete versions of nist; nothing was retired")))
+		Expect(err).To(MatchError(ContainSubstring("database down")))
+		Expect(err).NotTo(MatchError(catalog.ErrVersionProtected))
+		Expect(ids).To(BeEmpty())
+		Expect(k.rec.log).To(Equal([]string{"archive:cat-2"}))
+		Expect(k.rec.audits).To(BeEmpty())
+		Expect(k.snapshot()).To(Equal(before))
+	})
+
 	DescribeTable("refuses a request it cannot resolve and changes nothing",
 		func(slug string, labels []string, sentinel error, wantMsg string) {
 			k := newRetireKit(true)
@@ -332,6 +388,17 @@ var _ = Describe("RetireCatalogVersions", func() {
 		Expect(err).To(MatchError(catalog.ErrRetireUnavailable))
 		Expect(err.Error()).To(ContainSubstring("retention.archive"))
 		Expect(k.rec.log).To(BeEmpty())
+	})
+
+	It("still returns the retired IDs when the audit record cannot be published", func() {
+		k := newRetireKit(true)
+		k.rec.publishErr = errors.New("audit bus down")
+		ids, err := k.svc.RetireCatalogVersions(k.ctx, "nist", []string{"Rev 4"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ids).To(Equal([]string{"cat-2"}))
+		Expect(k.rec.log).To(Equal([]string{"archive:cat-2", "purge:tenant-1/cat-2"}))
+		Expect(k.logs.String()).To(ContainSubstring("publish catalog retire audit record"))
+		Expect(k.logs.String()).To(ContainSubstring("audit bus down"))
 	})
 
 	It("reports a version that became current before the purge as current", func() {
@@ -417,6 +484,17 @@ var _ = Describe("RetireCatalogVersion RPC", func() {
 		Entry("an unknown document", func(*retireKit) {},
 			&crosscodexv1.RetireCatalogVersionRequest{TenantContext: tc, DocumentSlug: "other", VersionLabel: []string{"Rev 9"}},
 			connect.CodeNotFound, `document "other" not found`),
+		Entry("an invalid label", func(*retireKit) {},
+			&crosscodexv1.RetireCatalogVersionRequest{TenantContext: tc, DocumentSlug: "nist", VersionLabel: []string{"Rev\n4"}},
+			connect.CodeInvalidArgument, "control character"),
+		Entry("a label two versions share", func(k *retireKit) {
+			Expect(k.store.UpsertCatalogVersion(k.ctx, catalog.CatalogRecord{
+				CatalogID: "cat-4", TenantID: "tenant-1", DocumentSlug: "nist", VersionLabel: "Rev 4",
+				CreatedAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+			}, nil, nil)).To(Succeed())
+		},
+			&crosscodexv1.RetireCatalogVersionRequest{TenantContext: tc, DocumentSlug: "nist", VersionLabel: []string{"Rev 4"}},
+			connect.CodeFailedPrecondition, "cat-2, cat-4"),
 		Entry("the current version", func(*retireKit) {},
 			&crosscodexv1.RetireCatalogVersionRequest{TenantContext: tc, DocumentSlug: "nist", VersionLabel: []string{"Rev 5"}},
 			connect.CodeFailedPrecondition, "current version"),

@@ -21,6 +21,7 @@ import (
 type retireGateway struct {
 	crosscodexv1connect.UnimplementedGatewayServiceHandler
 	err      error
+	omitIDs  int // how many trailing IDs to leave out of the response
 	requests []*pb.RetireCatalogVersionRequest
 }
 
@@ -29,7 +30,7 @@ func (g *retireGateway) RetireCatalogVersion(_ context.Context, req *connectrpc.
 	if g.err != nil {
 		return nil, g.err
 	}
-	ids := make([]string, len(req.Msg.GetVersionLabel()))
+	ids := make([]string, len(req.Msg.GetVersionLabel())-g.omitIDs)
 	for i := range ids {
 		ids[i] = "cat-" + req.Msg.GetVersionLabel()[i]
 	}
@@ -44,7 +45,7 @@ var _ = Describe("catalog retire", func() {
 		srv := httptest.NewServer(mux)
 		DeferCleanup(srv.Close)
 
-		root := &cobra.Command{Use: "crosscodex"}
+		root := &cobra.Command{Use: "crosscodex", SilenceUsage: true, SilenceErrors: true}
 		root.PersistentFlags().Bool("json", false, "")
 		root.PersistentFlags().Bool("plain", false, "")
 		root.PersistentFlags().Bool("no-color", false, "")
@@ -55,7 +56,7 @@ var _ = Describe("catalog retire", func() {
 
 	It("retires every named version of one document in one request and reports each", func() {
 		gw := &retireGateway{}
-		out, err := run(gw, "nist@Rev 3", "nist@Rev 4", "nist@Rev 3", "--plain")
+		out, err := run(gw, "nist@Rev 3", "nist@Rev 4", "nist@Rev 3", "--yes", "--plain")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(gw.requests).To(HaveLen(1))
 		Expect(gw.requests[0].GetDocumentSlug()).To(Equal("nist"))
@@ -65,13 +66,13 @@ var _ = Describe("catalog retire", func() {
 
 	It("splits at the first @, so a label may contain one", func() {
 		gw := &retireGateway{}
-		_, err := run(gw, "nist@v1@draft")
+		_, err := run(gw, "nist@v1@draft", "--yes")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(gw.requests[0].GetVersionLabel()).To(Equal([]string{"v1@draft"}))
 	})
 
 	It("prints the retired versions as JSON", func() {
-		out, err := run(&retireGateway{}, "nist@Rev 4", "--json")
+		out, err := run(&retireGateway{}, "nist@Rev 4", "--yes", "--json")
 		Expect(err).NotTo(HaveOccurred())
 		var got map[string]any
 		Expect(json.Unmarshal([]byte(out), &got)).To(Succeed())
@@ -98,7 +99,31 @@ var _ = Describe("catalog retire", func() {
 	It("returns the server's refusal", func() {
 		gw := &retireGateway{err: connectrpc.NewError(connectrpc.CodeFailedPrecondition,
 			errors.New(`catalog version is protected: legal hold "litigation" covers nist@"Rev 4"`))}
-		_, err := run(gw, "nist@Rev 4")
+		_, err := run(gw, "nist@Rev 4", "--yes")
 		Expect(err).To(MatchError(ContainSubstring(`failed to retire catalog versions: failed_precondition: catalog version is protected: legal hold "litigation"`)))
+	})
+
+	It("refuses without --yes, names the versions and the flag, and does not call the server", func() {
+		gw := &retireGateway{}
+		out, err := run(gw, "nist@Rev 3", "nist@Rev 4")
+		Expect(err).To(MatchError(And(
+			ContainSubstring(`nist@"Rev 3", nist@"Rev 4"`),
+			ContainSubstring("--yes"),
+			ContainSubstring("no command to restore"),
+			ContainSubstring("crosscodex catalog list"),
+		)))
+		Expect(gw.requests).To(BeEmpty())
+		Expect(out).To(BeEmpty())
+	})
+
+	It("points at the list command and prints nothing when the server retires fewer versions than named", func() {
+		gw := &retireGateway{omitIDs: 1}
+		out, err := run(gw, "nist@Rev 3", "nist@Rev 4", "--yes")
+		Expect(err).To(MatchError(And(
+			ContainSubstring("retired 1 versions for 2 labels"),
+			ContainSubstring(`crosscodex catalog list`),
+		)))
+		Expect(gw.requests).To(HaveLen(1))
+		Expect(out).To(BeEmpty())
 	})
 })

@@ -207,6 +207,27 @@ var _ = Describe("Purger", func() {
 		Entry("when set_config fails", "set_config", retention.ClassJobResults),
 	)
 
+	DescribeTable("rolls back a catalog purge whose version-chain unlink fails, before any delete",
+		func(newTx func() *dbtest.Tx, wantMsg string) {
+			tx := newTx()
+			err := retention.NewPurger(&dbtest.Conn{Tx: tx}, nil).Purge(ctx, retention.Candidate{Store: retention.StorePostgres, Class: retention.ClassCatalogs, ID: "cat-1", TenantID: "t1"})
+			Expect(err).To(MatchError(ContainSubstring(wantMsg)))
+			Expect(countExecs(tx, "DELETE")).To(BeZero())
+			Expect(tx.Commits()).To(Equal(0))
+			Expect(tx.Rollbacks()).To(Equal(1))
+		},
+		Entry("when checking for a current version fails", func() *dbtest.Tx {
+			tx := catalogPurgeTx("", nil)
+			tx.QueryRowFunc = func(context.Context, string, ...any) db.Row {
+				return dbtest.Row(fmt.Errorf("injected query failure"))
+			}
+			return tx
+		}, "purge catalog cat-1: check whether it is a document's current version: injected query failure"),
+		Entry("when re-pointing the superseding version fails", func() *dbtest.Tx {
+			return catalogPurgeTx("UPDATE catalogs", nil)
+		}, `purge catalog cat-1: re-point the version that supersedes it: injected failure on "UPDATE catalogs"`),
+	)
+
 	It("deletes an object candidate via the primary provider", func() {
 		prov := &deleteRecorder{Fake: &storagetest.Fake{}}
 		Expect(prov.Put(ctx, "k", strings.NewReader("doomed"))).To(Succeed())

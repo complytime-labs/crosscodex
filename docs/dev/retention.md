@@ -186,7 +186,13 @@ therefore performed under a dedicated, sanctioned credential:
 
 `CatalogService.RetireCatalogVersion` (CLI: `crosscodex catalog retire
 <slug>@<label>...`) deletes chosen versions of a catalog document on request.
-Retention never retires anything implicitly. `internal/catalog/retire.go`
+Retention never retires anything implicitly. The CLI refuses without `--yes`
+and lists the versions it would retire; the RPC has no preview or confirmation
+of its own. There is no restore path: nothing in `pkg/retention` or the CLI
+reads an archived catalog back or re-imports it, so the archive copy
+(`db/catalogs/<id>.json` plus its controls and containers, see
+[Archive-Verify Guarantee](#archive-verify-guarantee)) is the only copy and
+recovery is manual. `internal/catalog/retire.go`
 implements it on the retention engine's own parts:
 
 1. **Resolve every label first.** The labels are looked up among the

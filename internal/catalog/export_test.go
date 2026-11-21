@@ -33,6 +33,6 @@ func ExportServiceHasStore(s *Service) bool { return s.store != nil }
 // ExportServiceHasStorage reports whether the Service has a storage provider set.
 func ExportServiceHasStorage(s *Service) bool { return s.storage != nil }
 
-// JobsUsingCatalogsFromConfigs exposes jobsUsingCatalogs so the specs' store
+// JobsUsingCatalogsFromJobs exposes jobsUsingCatalogs so the specs' store
 // fake resolves job references exactly as PGStore does.
 var JobsUsingCatalogsFromJobs = jobsUsingCatalogs

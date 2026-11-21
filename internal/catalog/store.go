@@ -748,9 +748,14 @@ type JobUse struct {
 
 // terminalJobStatuses are the jobs.status values after which a job no longer
 // reads its catalogs. They mirror pipeline.JobStatusCompleted, Failed and
-// Cancelled, which this package may not import (AGENTS.md import rules). Any
-// other status, including one this list does not know, counts as in flight.
+// Cancelled, which this package may not import (AGENTS.md import rules); a
+// spec in internal/pipeline pins the two together through IsTerminalJobStatus.
+// Any other status, including one this list does not know, counts as in flight.
 var terminalJobStatuses = map[string]bool{"completed": true, "failed": true, "cancelled": true}
+
+// IsTerminalJobStatus reports whether a job with the stored jobs.status can
+// no longer read its catalogs.
+func IsTerminalJobStatus(status string) bool { return terminalJobStatuses[status] }
 
 // JobsUsingCatalogs reads every stored job config of the context tenant and
 // returns the jobs that use each of catalogIDs (see jobsUsingCatalogs). It

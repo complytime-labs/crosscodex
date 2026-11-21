@@ -121,6 +121,14 @@ var _ = Describe("DiffControls", func() {
 			[]catalog.ControlRecord{ctl("m", "1"), ctl("z", "1")},
 			[]catalog.ControlRecord{ctl("m", "1"), ctl("z", "1"), ctl("c", "1"), ctl("b", "1")},
 			[]string{"b", "c"}, []string(nil), []string(nil)),
+		Entry("a repeated identifier compares its last occurrence",
+			[]catalog.ControlRecord{ctl("a", "x")},
+			[]catalog.ControlRecord{ctl("a", "x"), ctl("a", "y")},
+			[]string(nil), []string(nil), []string{"a"}),
+		Entry("a repeated identifier whose last occurrence is unchanged",
+			[]catalog.ControlRecord{ctl("a", "x")},
+			[]catalog.ControlRecord{ctl("a", "y"), ctl("a", "x")},
+			[]string(nil), []string(nil), []string(nil)),
 	)
 
 	It("reports everything as added against an empty previous version, without flagging unstable ids", func() {

@@ -476,12 +476,23 @@ version is protected while it is the document's current version, a legal
 hold covers it, a job under legal hold uses it, or a job that uses it has
 attestations.
 
+Retiring cannot be undone from the CLI: the archive copy is the only copy
+left, and crosscodex has no command to restore it. Pass --yes to confirm;
+without it the command refuses and names the versions it would retire.
+
 Retiring needs the admin role, and a crosscodexd server running role all with
 database.purge_dsn and retention.archive configured.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			slug, labels, err := parseRetireArgs(args)
 			if err != nil {
 				return err
+			}
+			if yes, _ := cmd.Flags().GetBool("yes"); !yes {
+				versions := make([]string, len(labels))
+				for i, label := range labels {
+					versions[i] = fmt.Sprintf("%s@%q", slug, label)
+				}
+				return fmt.Errorf("refusing to retire %s without confirmation: retiring deletes each version with its controls, embeddings and cached results, and crosscodex has no command to restore it from the archive; pass --yes to confirm, or run \"crosscodex catalog list\" to review the versions first", strings.Join(versions, ", "))
 			}
 			resp, err := state.client.RetireCatalogVersion(cmd.Context(), connectrpc.NewRequest(&pb.RetireCatalogVersionRequest{
 				DocumentSlug: slug,
@@ -514,10 +525,12 @@ database.purge_dsn and retention.archive configured.`,
 		find:  "crosscodex catalog list",
 		usage: "crosscodex catalog retire <slug>@<label>...",
 		examples: []string{
-			`crosscodex catalog retire "nist-800-53@Rev 4"`,
-			`crosscodex catalog retire "nist-800-53@Rev 3" "nist-800-53@Rev 4"`,
+			`crosscodex catalog retire --yes "nist-800-53@Rev 4"`,
+			`crosscodex catalog retire --yes "nist-800-53@Rev 3" "nist-800-53@Rev 4"`,
 		},
 	})
+
+	cmd.Flags().BoolP("yes", "y", false, "Confirm that the named versions are deleted (required)")
 
 	return cmd
 }
