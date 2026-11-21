@@ -789,6 +789,40 @@ var _ = Describe("Pipeline end-to-end with the critique stage", Ordered, func() 
 			"SELECT count(*) FROM vote_summaries WHERE job_id = $1 AND source_id = $2 AND target_id = $3", jobID, src+"/c2", tgt+"/c2")).
 			To(BeZero(), "synthesis received the vetoed pair")
 	})
+
+	// Issue #210's acceptance: a two-catalog run yields edges that connect
+	// the two catalogs, and only them.
+	It("writes SEMANTIC_MATCH edges from source-catalog controls to target-catalog controls and none inside either catalog", func() {
+		src, tgt := "cat-src-"+uuid.New().String(), "cat-tgt-"+uuid.New().String()
+		env.seedCatalog(src, "E2E Crosswalk Source", []e2eControl{
+			{src + "/section", "Access Control", "Access control family.", oscal.ClassSection, ""},
+			{src + "/c1", "Account management", "Manage system accounts.", "SC", "section"},
+		})
+		env.seedCatalog(tgt, "E2E Crosswalk Target", []e2eControl{
+			{tgt + "/section", "Access Control", "Access control family.", oscal.ClassSection, ""},
+			{tgt + "/c1", "Account management", "Manage system accounts.", "SC", "section"},
+		})
+		for _, id := range []string{src + "/c1", tgt + "/c1"} {
+			Expect(env.graph.CreateNode(env.ctxA, env.tenantA, graphdb.Node{ID: id, Label: "Control", ValidFrom: time.Now().UTC()})).To(Succeed())
+		}
+
+		jobID := env.runJob(&pb.JobConfig{CatalogId: src, TargetCatalogId: tgt})
+
+		Eventually(func(g Gomega) {
+			g.Expect(env.semanticMatches(g, jobID, results.StageSynthesized)).NotTo(BeEmpty())
+		}, 30*time.Second, 250*time.Millisecond).Should(Succeed())
+
+		rels, err := env.graph.QueryRelationships(env.ctxA, env.tenantA, graphdb.RelationshipQuery{
+			EdgeLabel:  results.SemanticMatchEdgeLabel,
+			Properties: map[string]any{"job_id": jobID},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rels).NotTo(BeEmpty(), "want at least one edge between the two catalogs")
+		for _, r := range rels {
+			Expect(r.Source.ID).To(HavePrefix(src+"/"), "edge source %s is not a source-catalog control", r.Source.ID)
+			Expect(r.Target.ID).To(HavePrefix(tgt+"/"), "edge target %s is not a target-catalog control", r.Target.ID)
+		}
+	})
 })
 
 var _ = Describe("Pipeline end-to-end with a shared-model panel", Ordered, func() {
