@@ -1,0 +1,69 @@
+README.md
+  s_8dad1ed5ebd844::t_608e90fe48d457 94-96,342-349
+api/proto/crosscodex/v1/catalog.proto
+  s_8dad1ed5ebd844::t_da2f6c6e92c3e5 48-59,69-94,117-130
+api/proto/crosscodex/v1/gateway.proto
+  s_8dad1ed5ebd844::t_6ccbf4e5b266ed 429-440,456-464,557-568
+cmd/crosscodex/catalog.go
+  s_8dad1ed5ebd844::t_084ed163fd2200 47-55,59-75,99-100,134-136,142,147-152,165,170-171,183-250,356-362,366-370,379,385-392,441-447,528,536-546
+cmd/crosscodex/catalog_import_bdd_test.go
+  s_8dad1ed5ebd844::t_35232dc2a4e1df 12,18,29-40,45-47,172-375
+cmd/crosscodex/embedded_integration_bdd_test.go
+  s_8dad1ed5ebd844::t_e8438b21bc5170 547,570,572,574,578,580-585,589-594
+cmd/crosscodex/embedded_integration_suite_test.go
+  s_8dad1ed5ebd844::t_f6cfdd0a50cbce 90-95,99
+docs/dev/migrations.md
+  s_8dad1ed5ebd844::t_412d930fea62b4 16-17,20
+internal/catalog/catalog_bdd_test.go
+  s_8dad1ed5ebd844::t_a3dc6a5c5f115b 11,14-15,79-80,87,99,101-106,110-111,116-119,128-167,534-738
+internal/catalog/catalog_integration_bdd_test.go
+  s_8dad1ed5ebd844::t_605e2706b43fc0 14,1718-1926
+internal/catalog/catalog_parsed_event_bdd_test.go
+  s_8dad1ed5ebd844::t_48d9d96a47d8e7 83-100
+internal/catalog/rpc_errors_bdd_test.go
+  s_8dad1ed5ebd844::t_a21d54df11fece 35-43
+internal/catalog/service.go
+  s_8dad1ed5ebd844::t_1b57527076c193 219-241,343-348,401-411,493-498,502-550,609-613,667-672,1037-1063,1078-1082
+internal/catalog/service_helpers_bdd_test.go
+  s_8dad1ed5ebd844::t_682ee49bed8787 197-209
+internal/catalog/store.go
+  s_8dad1ed5ebd844::t_f93eee40f577cc 15-19,21-24,32-42,64-70,149-177,258,265,303,320,366-367,385-402,524-722
+internal/catalog/versioning.go
+  s_8dad1ed5ebd844::t_be89205c80d0bf 1-149
+internal/catalog/versioning_bdd_test.go
+  s_8dad1ed5ebd844::t_d53c64ea1786fe 1-173
+internal/catalog/versioning_property_test.go
+  s_8dad1ed5ebd844::t_926c4cafd2bb2f 1-44
+internal/gateway/document.go
+  s_8dad1ed5ebd844::t_080cfaaa39065c 47-48,57-58,100-101,127-131,155-158
+internal/gateway/document_attestation_bdd_test.go
+  s_8dad1ed5ebd844::t_b8c945537b42de 132-151
+internal/gateway/gateway_bdd_test.go
+  s_8dad1ed5ebd844::t_520893a919d422 1244-1315
+internal/gateway/stream.go
+  s_8dad1ed5ebd844::t_31badd758d89e2 77-78
+pkg/db/catalog_documents_integration_bdd_test.go
+  s_8dad1ed5ebd844::t_1b32f431d05388 1-183
+pkg/db/migrations/002_catalog_documents.down.sql
+  s_8dad1ed5ebd844::t_aec036295c3de2 1-12
+pkg/db/migrations/002_catalog_documents.up.sql
+  s_8dad1ed5ebd844::t_e46bac701f6322 1-47
+pkg/db/role_check_integration_bdd_test.go
+  s_8dad1ed5ebd844::t_f662dbfe04dd1f 38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "5a7317a2fa4fb04c3eaa4460ff922516f9ae3df6",
+  "prompts": {},
+  "sessions": {
+    "s_8dad1ed5ebd844": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04da376b-50a2-402d-ab80-36096cc27a2d",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
