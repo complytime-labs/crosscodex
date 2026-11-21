@@ -1,8 +1,13 @@
 package testcerts_test
 
 import (
+	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"net"
 	"os"
 	"os/exec"
@@ -118,6 +123,8 @@ var _ = Describe("VerifyDirWith", func() {
 			writeSet(generateWith(pkigen.WithExtKeyUsage()), dir)
 		}, testcerts.VerifyOptions{ServerAuthOnly: true},
 			"server.pem permits client authentication (no extended key usage, which permits every use)"),
+		Entry("the server cert lists only an unrecognised extended key usage, so it does not assert serverAuth", resignServerWithUnknownEKU,
+			testcerts.VerifyOptions{ServerAuthOnly: true}, "server.pem"),
 	)
 
 	It("accepts a serverAuth-only server cert under ServerAuthOnly while the client cert keeps clientAuth", func() {
@@ -134,6 +141,38 @@ var _ = Describe("VerifyDirWith", func() {
 })
 
 // readCertFile parses the PEM certificate dir/name.
+// resignServerWithUnknownEKU replaces dir/server.pem with a CA-signed cert for
+// the same key whose only extended key usage is an OID Go does not recognise.
+func resignServerWithUnknownEKU(dir string) {
+	caCert := readCertFile(dir, "ca.pem")
+	keyPEM, err := os.ReadFile(filepath.Join(dir, "ca-key.pem"))
+	Expect(err).NotTo(HaveOccurred())
+	block, _ := pem.Decode(keyPEM)
+	Expect(block).NotTo(BeNil())
+	caKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		caKey, err = x509.ParseECPrivateKey(block.Bytes)
+	}
+	Expect(err).NotTo(HaveOccurred())
+	old := readCertFile(dir, "server.pem")
+	ekuValue, err := asn1.Marshal([]asn1.ObjectIdentifier{{1, 3, 6, 1, 4, 1, 99999, 1}})
+	Expect(err).NotTo(HaveOccurred())
+	tmpl := &x509.Certificate{
+		SerialNumber:    big.NewInt(4242),
+		Subject:         old.Subject,
+		NotBefore:       old.NotBefore,
+		NotAfter:        old.NotAfter,
+		KeyUsage:        old.KeyUsage,
+		DNSNames:        old.DNSNames,
+		IPAddresses:     old.IPAddresses,
+		ExtraExtensions: []pkix.Extension{{Id: asn1.ObjectIdentifier{2, 5, 29, 37}, Value: ekuValue}},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, old.PublicKey, caKey)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(os.WriteFile(filepath.Join(dir, "server.pem"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644)).To(Succeed())
+	Expect(testcerts.WriteFingerprint(dir)).To(Succeed())
+}
+
 func readCertFile(dir, name string) *x509.Certificate {
 	data, err := os.ReadFile(filepath.Join(dir, name))
 	Expect(err).NotTo(HaveOccurred())

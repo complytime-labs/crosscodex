@@ -187,6 +187,21 @@ var _ = Describe("RequireHealthAddr", func() {
 		Entry("worker, bare host", config.RoleWorker, "worker.internal"),
 	)
 
+	// Pins current behaviour: like graph.addr (validate.go), only
+	// net.SplitHostPort and a non-empty port are checked, not that the port is
+	// numeric or in range.
+	DescribeTable("accepts any non-empty port segment, as graph.addr does",
+		func(addr string) {
+			Expect(config.RequireHealthAddr(config.RoleWorker, addr)).To(Succeed())
+		},
+		Entry("non-numeric port", ":abc"),
+		Entry("port zero", ":0"),
+	)
+
+	It("ignores health.addr for an unknown role", func() {
+		Expect(config.RequireHealthAddr("no-such-role", "")).To(Succeed())
+	})
+
 	DescribeTable("ignores health.addr for the roles that serve /healthz on server.addr",
 		func(role string) {
 			Expect(config.RequireHealthAddr(role, "")).To(Succeed())

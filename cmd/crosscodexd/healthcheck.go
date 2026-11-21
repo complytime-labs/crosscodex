@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -17,15 +18,16 @@ import (
 // dials for role. graph, pipeline and worker serve /healthz on their
 // dedicated plain-HTTP listener (health.addr); gateway and all serve it on
 // the gateway's TLS listener (server.addr). Only the port of the bind
-// address is kept (e.g. ":9091" or "0.0.0.0:9091" both probe 127.0.0.1:9091).
+// address is kept (e.g. ":9091", "0.0.0.0:9091" or "[::]:9091" all probe
+// 127.0.0.1:9091); an addr that is not host:port is used verbatim as the port.
 func healthcheckURL(role, serverAddr, healthAddr string) string {
 	scheme, addr := "https", serverAddr
 	switch role {
 	case config.RoleGraph, config.RolePipeline, config.RoleWorker:
 		scheme, addr = "http", healthAddr
 	}
-	_, port, found := strings.Cut(addr, ":")
-	if !found {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
 		port = addr
 	}
 	return fmt.Sprintf("%s://127.0.0.1:%s/healthz", scheme, port)

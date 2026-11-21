@@ -36,18 +36,36 @@ func joinTokens(tokens []string) string {
 }
 
 var _ = Describe("Property Specifications", Ordered, func() {
-	It("Connected is true exactly when the fake is neither Disconnected nor closed", func() {
+	It("Connected stays false once the fake is Disconnected or closed, whatever else is called", func() {
+		ctx, err := tenant.WithTenant(context.Background(), "tenant-a")
+		if err != nil {
+			Fail("tenant context: " + err.Error())
+		}
 		rapid.Check(GinkgoT(), func(t *rapid.T) {
-			disconnected := rapid.Bool().Draw(t, "disconnected")
-			closed := rapid.Bool().Draw(t, "closed")
-			fake := &natsbustest.Fake{Disconnected: disconnected}
-			if closed {
+			closeIt := rapid.Bool().Draw(t, "close")
+			fake := &natsbustest.Fake{}
+			if closeIt {
 				if err := fake.Close(); err != nil {
 					t.Fatalf("Close: %v", err)
 				}
+			} else {
+				fake.Disconnected = true
 			}
-			if got, want := fake.Connected(), !disconnected && !closed; got != want {
-				t.Fatalf("Connected() = %v with Disconnected=%v closed=%v, want %v", got, disconnected, closed, want)
+			ops := rapid.SliceOfN(rapid.SampledFrom([]string{"publish", "close", "deliver"}), 0, 6).Draw(t, "ops")
+			for _, op := range ops {
+				switch op {
+				case "publish":
+					_ = fake.Publish(ctx, "a.b", []byte("x"))
+				case "close":
+					if err := fake.Close(); err != nil {
+						t.Fatalf("Close: %v", err)
+					}
+				case "deliver":
+					_ = fake.Deliver(&natsbus.Message{Subject: "a.b"})
+				}
+				if fake.Connected() {
+					t.Fatalf("Connected() = true after %q (closed=%v)", op, closeIt)
+				}
 			}
 		})
 	})

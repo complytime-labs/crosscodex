@@ -246,6 +246,9 @@ func checkServerAuthOnly(cert *x509.Certificate) error {
 	if len(cert.ExtKeyUsage) == 0 && len(cert.UnknownExtKeyUsage) == 0 {
 		return fmt.Errorf(msg, "no extended key usage, which permits every use")
 	}
+	if !slices.Contains(cert.ExtKeyUsage, x509.ExtKeyUsageServerAuth) {
+		return fmt.Errorf(msg, "no serverAuth extended key usage, only unrecognised ones")
+	}
 	for _, usage := range cert.ExtKeyUsage {
 		switch usage {
 		case x509.ExtKeyUsageClientAuth:

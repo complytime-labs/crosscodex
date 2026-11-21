@@ -39,6 +39,10 @@ var _ = Describe("healthcheckURL", func() {
 		Entry("worker: HTTP on health.addr", config.RoleWorker, ":50051", ":9093", "http://127.0.0.1:9093/healthz"),
 		Entry("gateway: loopback in place of an explicit server.addr host", config.RoleGateway, "0.0.0.0:50051", ":9091", "https://127.0.0.1:50051/healthz"),
 		Entry("worker: loopback in place of an explicit health.addr host", config.RoleWorker, ":50051", "0.0.0.0:9093", "http://127.0.0.1:9093/healthz"),
+		Entry("worker: bracketed IPv6 wildcard health.addr", config.RoleWorker, ":50051", "[::]:9091", "http://127.0.0.1:9091/healthz"),
+		Entry("worker: bracketed IPv6 loopback health.addr", config.RoleWorker, ":50051", "[::1]:9091", "http://127.0.0.1:9091/healthz"),
+		Entry("gateway: bracketed IPv6 wildcard server.addr", config.RoleGateway, "[::]:50051", ":9091", "https://127.0.0.1:50051/healthz"),
+		Entry("gateway: bracketed IPv6 loopback server.addr", config.RoleGateway, "[::1]:50051", ":9091", "https://127.0.0.1:50051/healthz"),
 	)
 })
 

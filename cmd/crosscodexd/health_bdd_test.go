@@ -192,7 +192,9 @@ var _ = Describe("runtime.start health listener", func() {
 		Expect(err.Error()).To(ContainSubstring("health.addr " + addr))
 		Expect(err.Error()).To(ContainSubstring("give each role on one host a distinct health.addr"))
 		var opErr *net.OpError
-		Expect(errors.As(err, &opErr)).To(BeTrue(), "the bind error is wrapped")
+		bindErr := errors.Unwrap(err)
+		Expect(bindErr).To(BeAssignableToTypeOf(opErr), "the bind error is wrapped")
+		Expect(bindErr).To(HaveField("Op", "listen"))
 	})
 
 	It("serves /healthz once start returns", func() {

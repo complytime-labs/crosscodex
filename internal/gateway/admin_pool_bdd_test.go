@@ -107,6 +107,19 @@ var _ = Describe("PoolAdminBackend", func() {
 			Expect(resp.Msg.Services["nats"].GetStatus()).To(Equal(pb.HealthStatus_HEALTH_STATUS_HEALTHY))
 		})
 
+		It("runs every check after a failing database and a failing extra check", func() {
+			failing := gateway.DependencyCheck{Name: "graph_database", Check: fail.Check}
+			backend := gateway.NewPoolAdminBackend(&fakeHealthPool{err: errors.New("connection refused")}, failing, pass)
+			resp, err := backend.HealthCheck(context.Background(), connect.NewRequest(&pb.HealthCheckRequest{}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.Status).To(Equal(pb.HealthStatus_HEALTH_STATUS_UNHEALTHY))
+			Expect(resp.Msg.Services["database"].GetStatus()).To(Equal(pb.HealthStatus_HEALTH_STATUS_UNHEALTHY))
+			Expect(resp.Msg.Services).To(HaveKey("graph_database"))
+			Expect(resp.Msg.Services["graph_database"].GetStatus()).To(Equal(pb.HealthStatus_HEALTH_STATUS_UNHEALTHY))
+			Expect(resp.Msg.Services).To(HaveKey("nats"))
+			Expect(resp.Msg.Services["nats"].GetStatus()).To(Equal(pb.HealthStatus_HEALTH_STATUS_HEALTHY))
+		})
+
 		It("withholds the check's error from the message (CWE-209)", func() {
 			leaky := gateway.DependencyCheck{Name: "graph_database", Check: func(context.Context) error {
 				return errors.New("dial tcp 10.0.0.9:5432: password authentication failed for user graph_user")
