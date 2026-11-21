@@ -1,0 +1,29 @@
+pkg/db/catalog_documents_integration_bdd_test.go
+  s_8dad1ed5ebd844::t_575d38265802b6 70-71,83-84,89,107-109,129-131,148-150,170-183
+  s_8dad1ed5ebd844::t_24ebcffae10ff8 1-7,9-69,72-82,85-88,90-106,110-118,120-121,123-128,132-147,151-169
+  s_8dad1ed5ebd844::t_7bf6de952e6b2c 8,119,122
+pkg/db/migrations/002_catalog_documents.down.sql
+  s_8dad1ed5ebd844::t_11f657ba4d9291 1-12
+pkg/db/role_check_integration_bdd_test.go
+  s_8dad1ed5ebd844::t_06682bce9b77ec 38
+pkg/db/migrations/002_catalog_documents.up.sql
+  s_8dad1ed5ebd844::t_6c35cb171f3404 1-47
+docs/dev/migrations.md
+  s_8dad1ed5ebd844::t_8a344abf220c6d 16-17,20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "fce2fb624d574a20c4b62bf565472188e55009da",
+  "prompts": {},
+  "sessions": {
+    "s_8dad1ed5ebd844": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04da376b-50a2-402d-ab80-36096cc27a2d",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
