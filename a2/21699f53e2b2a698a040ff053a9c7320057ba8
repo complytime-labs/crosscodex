@@ -1,0 +1,49 @@
+pkg/retention/purge_bdd_test.go
+  s_b8bd2398d6a5bf::t_6fde2455b99cd7 210-230
+internal/catalog/store.go
+  s_b8bd2398d6a5bf::t_537bf3a4e27998 751-753,756-758
+  s_b8bd2398d6a5bf::t_807a70c72cb888 759
+internal/pipeline/job_status_drift_bdd_test.go
+  s_b8bd2398d6a5bf::t_537bf3a4e27998 1-29
+internal/catalog/retire.go
+  s_b8bd2398d6a5bf::t_537bf3a4e27998 274
+cmd/crosscodex/catalog.go
+  s_b8bd2398d6a5bf::t_bb430e8e62bb18 479-482
+  s_b8bd2398d6a5bf::t_5c56989d7b4c39 528-529
+  s_b8bd2398d6a5bf::t_03305061feb1a2 533-534
+  s_b8bd2398d6a5bf::t_cbbe51b2d7e943 490-496
+test/eval/crosswalk/crosswalk_property_test.go
+  s_b8bd2398d6a5bf::t_6fde2455b99cd7 15-21,23-28
+  s_b8bd2398d6a5bf::t_574817f3cf7d08 22,55
+internal/catalog/export_test.go
+  s_b8bd2398d6a5bf::t_537bf3a4e27998 36
+cmd/crosscodex/catalog_retire_bdd_test.go
+  s_b8bd2398d6a5bf::t_d1fde3f3352628 48
+  s_b8bd2398d6a5bf::t_537bf3a4e27998 24,33,59,69,75,102,105-128
+internal/catalog/retire_bdd_test.go
+  s_b8bd2398d6a5bf::t_e85ae99b3f920e 314-329
+  s_b8bd2398d6a5bf::t_59dd8f3af96d23 31-36,71-73,121-123,283-312,393-403,487-497
+  s_b8bd2398d6a5bf::t_f748aa1c772131 313,330
+internal/catalog/versioning_bdd_test.go
+  s_b8bd2398d6a5bf::t_59dd8f3af96d23 124-131
+README.md
+  s_b8bd2398d6a5bf::t_f3dce4f189530b 96,355,358
+docs/dev/retention.md
+  s_b8bd2398d6a5bf::t_10de96698c2934 189-195
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "a221699f53e2b2a698a040ff053a9c7320057ba8",
+  "prompts": {},
+  "sessions": {
+    "s_b8bd2398d6a5bf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "397f9d89-ee31-4eb3-b212-622b2c703ccd",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
