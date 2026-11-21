@@ -19,7 +19,7 @@ testcases:
     steps:
       - type: exec
         script: |
-          TABLE=$'db 0000000000000001 256 -\nnats 0000000000000000 256 -' \
+          TABLE="$(printf '%s\n' 'db 0000000000000001 256 -' 'nats 0000000000000000 256 -')" \
             bash {{.root}}/test/tooling/lib/smoke-up-hardening.sh {{.root}}
         assertions:
           - result.code ShouldEqual 0
@@ -31,7 +31,7 @@ testcases:
     steps:
       - type: exec
         script: |
-          TABLE=$'mystery 0000000000000000 256 -' \
+          TABLE="$(printf '%s\n' 'mystery 0000000000000000 256 -')" \
             bash {{.root}}/test/tooling/lib/smoke-up-hardening.sh {{.root}}
         assertions:
           - result.code ShouldEqual 0
@@ -42,7 +42,7 @@ testcases:
     steps:
       - type: exec
         script: |
-          TABLE=$'db 0000000000000000 2048 -' \
+          TABLE="$(printf '%s\n' 'db 0000000000000000 2048 -')" \
             bash {{.root}}/test/tooling/lib/smoke-up-hardening.sh {{.root}}
         assertions:
           - result.code ShouldEqual 0
@@ -75,7 +75,7 @@ testcases:
     steps:
       - type: exec
         script: |
-          TABLE=$'db 0000000000000000 256 smoke-client-certs\nnats 0000000000000000 256 -\nlitellm-tls 0000000000000000 256 -\nmigrate 0000000000000000 256 smoke-client-certs\ncrosscodexd 0000000000000000 256 smoke-client-certs,smoke-attestation-keys' \
+          TABLE="$(printf '%s\n' 'db 0000000000000000 256 smoke-client-certs' 'nats 0000000000000000 256 -' 'litellm-tls 0000000000000000 256 -' 'migrate 0000000000000000 256 smoke-client-certs' 'crosscodexd 0000000000000000 256 smoke-client-certs,smoke-attestation-keys')" \
             bash {{.root}}/test/tooling/lib/smoke-up-hardening.sh {{.root}}
         assertions:
           - result.code ShouldEqual 0
@@ -86,7 +86,7 @@ testcases:
     steps:
       - type: exec
         script: |
-          TABLE=$'db 0000000000000000 256 -\nnats 0000000000000000 256 -\nlitellm-tls 0000000000000000 256 -\nmigrate 0000000000000000 256 smoke-client-certs,smoke-attestation-keys\ncrosscodexd 0000000000000000 256 smoke-client-certs,smoke-attestation-keys' \
+          TABLE="$(printf '%s\n' 'db 0000000000000000 256 -' 'nats 0000000000000000 256 -' 'litellm-tls 0000000000000000 256 -' 'migrate 0000000000000000 256 smoke-client-certs,smoke-attestation-keys' 'crosscodexd 0000000000000000 256 smoke-client-certs,smoke-attestation-keys')" \
             bash {{.root}}/test/tooling/lib/smoke-up-hardening.sh {{.root}}
         assertions:
           - result.code ShouldEqual 0
