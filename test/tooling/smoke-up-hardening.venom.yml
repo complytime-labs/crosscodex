@@ -1,0 +1,94 @@
+name: smoke_up.sh hardening and key-separation gates fail closed
+
+vars:
+  root: "."
+
+testcases:
+  - name: A compliant stack passes both gates (the later nats client-identity probe is not stubbed)
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/smoke-up-hardening.sh {{.root}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "Hardening checks passed for 5 running container(s)."
+          - result.systemout ShouldContainSubstring "Key volumes hold only their own files"
+          - 'result.systemout ShouldNotContainSubstring "FAIL: hardening"'
+          - 'result.systemout ShouldNotContainSubstring "FAIL: certs volume"'
+
+  - name: A capability bit beyond the allowlist fails the service
+    steps:
+      - type: exec
+        script: |
+          TABLE=$'db 0000000000000001 256 -\nnats 0000000000000000 256 -' \
+            bash {{.root}}/test/tooling/lib/smoke-up-hardening.sh {{.root}}
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "FAIL: hardening: service db: capabilities beyond its allowlist: bounding set 0x0000000000000001, allowed 0x0"'
+          - result.systemout ShouldContainSubstring "1 hardening check(s) failed"
+          - result.systemout ShouldContainSubstring "smoke_up exit=1"
+
+  - name: A service missing from the hardening table fails and names the fix
+    steps:
+      - type: exec
+        script: |
+          TABLE=$'mystery 0000000000000000 256 -' \
+            bash {{.root}}/test/tooling/lib/smoke-up-hardening.sh {{.root}}
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "FAIL: hardening: service mystery: no expected hardening in test/deploy/smoke_up.sh; add the service to the hardening table"'
+          - result.systemout ShouldContainSubstring "smoke_up exit=1"
+
+  - name: A pids limit at the engine default fails
+    steps:
+      - type: exec
+        script: |
+          TABLE=$'db 0000000000000000 2048 -' \
+            bash {{.root}}/test/tooling/lib/smoke-up-hardening.sh {{.root}}
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "FAIL: hardening: service db: no pids limit below the engine default 2048"'
+          - result.systemout ShouldContainSubstring "smoke_up exit=1"
+
+  - name: A CA key in the client volume fails and names the volume
+    steps:
+      - type: exec
+        script: |
+          PRESENT='smoke-client-certs:/v/ca-key.pem' \
+            bash {{.root}}/test/tooling/lib/smoke-up-hardening.sh {{.root}}
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "FAIL: certs volume: smoke-client-certs holds /v/ca-key.pem"'
+          - result.systemout ShouldContainSubstring "smoke_up exit=1"
+
+  - name: A client key visible in the server volume fails
+    steps:
+      - type: exec
+        script: |
+          PRESENT='db:/certs/client-key.pem' \
+            bash {{.root}}/test/tooling/lib/smoke-up-hardening.sh {{.root}}
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "FAIL: certs volume: crosscodex-smoke-certs (seen from db) holds /certs/client-key.pem"'
+          - result.systemout ShouldContainSubstring "smoke_up exit=1"
+
+  - name: The client volume mounted by an unexpected service fails
+    steps:
+      - type: exec
+        script: |
+          TABLE=$'db 0000000000000000 256 smoke-client-certs\nnats 0000000000000000 256 -\nlitellm-tls 0000000000000000 256 -\nmigrate 0000000000000000 256 smoke-client-certs\ncrosscodexd 0000000000000000 256 smoke-client-certs,smoke-attestation-keys' \
+            bash {{.root}}/test/tooling/lib/smoke-up-hardening.sh {{.root}}
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "FAIL: certs volume: service db mounts smoke-client-certs; only migrate and crosscodexd may hold the client key."'
+          - result.systemout ShouldContainSubstring "smoke_up exit=1"
+
+  - name: The attestation volume mounted by migrate fails
+    steps:
+      - type: exec
+        script: |
+          TABLE=$'db 0000000000000000 256 -\nnats 0000000000000000 256 -\nlitellm-tls 0000000000000000 256 -\nmigrate 0000000000000000 256 smoke-client-certs,smoke-attestation-keys\ncrosscodexd 0000000000000000 256 smoke-client-certs,smoke-attestation-keys' \
+            bash {{.root}}/test/tooling/lib/smoke-up-hardening.sh {{.root}}
+        assertions:
+          - result.code ShouldEqual 0
+          - 'result.systemout ShouldContainSubstring "FAIL: certs volume: service migrate mounts smoke-attestation-keys; only crosscodexd may hold the attestation key."'
+          - result.systemout ShouldContainSubstring "smoke_up exit=1"
