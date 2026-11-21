@@ -1,0 +1,35 @@
+pkg/natsbus/natsbustest/natsbustest_property_test.go
+  s_8923db9c123f3f::t_1215d9054672c4 39-41,43,45-47,51-52,54-68
+  s_8923db9c123f3f::t_27cf46abb824ef 42
+cmd/crosscodexd/health_bdd_test.go
+  s_8923db9c123f3f::t_3d2340969a7737 195-197
+internal/testcerts/ensure_bdd_test.go
+  s_8923db9c123f3f::t_86d202e1b4c04c 4,6-8,10,126-127,144-175
+cmd/crosscodexd/healthcheck.go
+  s_8923db9c123f3f::t_7f778db37ca134 7,29-30
+  s_8923db9c123f3f::t_22a723869c9772 21-22
+internal/gateway/admin_pool_bdd_test.go
+  s_8923db9c123f3f::t_ac67edb435bf72 110-122
+cmd/crosscodexd/healthcheck_bdd_test.go
+  s_8923db9c123f3f::t_761882f872285a 42-45
+internal/testcerts/testcerts.go
+  s_8923db9c123f3f::t_6dc3d3ef4a550d 249-251
+pkg/config/role_bdd_test.go
+  s_8923db9c123f3f::t_ab1cb338639314 190-204
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "85b43d3f5dc99afbc5c354410d10f7021b30e806",
+  "prompts": {},
+  "sessions": {
+    "s_8923db9c123f3f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "296221a8-92e2-467b-93ca-cab4e7da5942",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
