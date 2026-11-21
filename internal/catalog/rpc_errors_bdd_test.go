@@ -34,6 +34,15 @@ func (f failingStore) ListCatalogs(context.Context, catalog.ListOptions) ([]cata
 func (f failingStore) UpsertCatalogWithTree(context.Context, catalog.CatalogRecord, []catalog.ContainerRecord, []catalog.ControlRecord) error {
 	return f.err
 }
+func (f failingStore) GetDocumentCurrent(context.Context, string) (*catalog.CatalogRecord, error) {
+	return nil, f.err
+}
+func (f failingStore) ListControlsForCatalog(context.Context, string) ([]catalog.ControlRecord, error) {
+	return nil, f.err
+}
+func (f failingStore) UpsertCatalogVersion(context.Context, catalog.CatalogRecord, []catalog.ContainerRecord, []catalog.ControlRecord) error {
+	return f.err
+}
 func (f failingStore) GetControl(context.Context, string) (*catalog.ControlRecord, error) {
 	return nil, f.err
 }

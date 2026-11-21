@@ -13,9 +13,11 @@ pkg/db/migrations/
   embed.go                       # //go:embed *.sql → migrations.FS
   001_initial_schema.up.sql      # the baseline: roles, tables, RLS, triggers, functions, grants
   001_initial_schema.down.sql    # drops everything the baseline creates, roles included
+  002_catalog_documents.up.sql   # catalog_documents table; version-lineage columns on catalogs (#204)
+  002_catalog_documents.down.sql # drops them; catalogs rows and their dependents are untouched
 ```
 
-`001_initial_schema` is the whole pre-release schema in one baseline, grouped by domain (roles; tenants and identity; jobs; catalogs; retention; verdicts; tenant administration; restricted-role access; the AGE graph lifecycle). The next migration is `002`.
+`001_initial_schema` is the whole pre-release schema in one baseline, grouped by domain (roles; tenants and identity; jobs; catalogs; retention; verdicts; tenant administration; restricted-role access; the AGE graph lifecycle). `002_catalog_documents` is the first append-only migration: it adds nullable columns and one table, so databases at version 1 upgrade with `crosscodexd migrate`. The next migration is `003`.
 
 Each migration is a pair of SQL files:
 

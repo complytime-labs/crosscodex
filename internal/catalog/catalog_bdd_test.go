@@ -8,8 +8,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -73,13 +76,15 @@ type mockStore struct {
 	catalogRecords   map[string]*catalog.CatalogRecord
 	controlRecords   map[string]*catalog.ControlRecord
 	containerRecords []catalog.ContainerRecord
-	upsertErr        error // returned by UpsertCatalogWithTree before it records anything
+	currentByDoc     map[string]string // document slug -> current catalog ID
+	upsertErr        error             // returned by UpsertCatalogWithTree before it records anything
 }
 
 func newMockStore() *mockStore {
 	return &mockStore{
 		catalogRecords: make(map[string]*catalog.CatalogRecord),
 		controlRecords: make(map[string]*catalog.ControlRecord),
+		currentByDoc:   make(map[string]string),
 	}
 }
 
@@ -91,21 +96,72 @@ func (m *mockStore) GetCatalog(_ context.Context, catalogID string) (*catalog.Ca
 	return rec, nil
 }
 
+// ListCatalogs returns every stored catalog ordered by ID.
 func (m *mockStore) ListCatalogs(_ context.Context, _ catalog.ListOptions) ([]catalog.CatalogRecord, catalog.PageInfo, error) {
-	return nil, catalog.PageInfo{}, nil
+	recs := make([]catalog.CatalogRecord, 0, len(m.catalogRecords))
+	for _, rec := range m.catalogRecords {
+		recs = append(recs, *rec)
+	}
+	sort.Slice(recs, func(i, j int) bool { return recs[i].CatalogID < recs[j].CatalogID })
+	return recs, catalog.PageInfo{TotalCount: int64(len(recs))}, nil
 }
 
 // UpsertCatalogWithTree mirrors the store's one transaction: a set upsertErr
-// records nothing.
+// records nothing. Like the store, it leaves the lineage of a stored catalog
+// alone.
 func (m *mockStore) UpsertCatalogWithTree(_ context.Context, cat catalog.CatalogRecord, containers []catalog.ContainerRecord, controls []catalog.ControlRecord) error {
 	if m.upsertErr != nil {
 		return m.upsertErr
+	}
+	if prev, ok := m.catalogRecords[cat.CatalogID]; ok {
+		cat.DocumentSlug, cat.VersionLabel = prev.DocumentSlug, prev.VersionLabel
+		cat.SupersedesCatalogID, cat.LinkMethod = prev.SupersedesCatalogID, prev.LinkMethod
 	}
 	m.catalogRecords[cat.CatalogID] = &cat
 	for _, ctrl := range controls {
 		m.controlRecords[ctrl.ControlID] = &ctrl
 	}
 	m.containerRecords = append(m.containerRecords, containers...)
+	return nil
+}
+
+func (m *mockStore) GetDocumentCurrent(_ context.Context, slug string) (*catalog.CatalogRecord, error) {
+	id, ok := m.currentByDoc[slug]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", catalog.ErrDocumentNotFound, slug)
+	}
+	return m.catalogRecords[id], nil
+}
+
+func (m *mockStore) ListControlsForCatalog(_ context.Context, catalogID string) ([]catalog.ControlRecord, error) {
+	var out []catalog.ControlRecord
+	for _, ctrl := range m.controlRecords {
+		if ctrl.CatalogID == catalogID {
+			out = append(out, *ctrl)
+		}
+	}
+	return out, nil
+}
+
+// UpsertCatalogVersion mirrors PGStore.UpsertCatalogVersion's lineage rules:
+// new content supersedes the document's current version and becomes current;
+// content already in the document keeps its place; content in another document
+// is refused with nothing written.
+func (m *mockStore) UpsertCatalogVersion(ctx context.Context, cat catalog.CatalogRecord, containers []catalog.ContainerRecord, controls []catalog.ControlRecord) error {
+	prev := m.catalogRecords[cat.CatalogID]
+	if prev != nil && prev.DocumentSlug != "" && prev.DocumentSlug != cat.DocumentSlug {
+		return fmt.Errorf("%w: catalog %s is already a version of document %q", catalog.ErrCatalogInOtherDocument, cat.CatalogID, prev.DocumentSlug)
+	}
+	if err := m.UpsertCatalogWithTree(ctx, cat, containers, controls); err != nil {
+		return err
+	}
+	if prev != nil && prev.DocumentSlug != "" {
+		return nil
+	}
+	stored := m.catalogRecords[cat.CatalogID]
+	stored.DocumentSlug, stored.VersionLabel, stored.LinkMethod = cat.DocumentSlug, cat.VersionLabel, "declared"
+	stored.SupersedesCatalogID = m.currentByDoc[cat.DocumentSlug]
+	m.currentByDoc[cat.DocumentSlug] = cat.CatalogID
 	return nil
 }
 
@@ -473,6 +529,211 @@ var _ = Describe("Service", func() {
 				Entry("a version", map[string]interface{}{"title": "SP 800-53", "version": "5.1.1"}, "5.1.1"),
 				Entry("none", map[string]interface{}{"title": "SP 800-53"}, ""),
 			)
+		})
+
+		Context("as a document version", func() {
+			const tenantID = "tenant-1"
+			var parser *mockParser
+
+			// docWithVersion is an OSCAL document whose bytes (hence content
+			// hash) differ by version; the parser mock supplies the controls.
+			docWithVersion := func(version string) string {
+				return `{"catalog":{"uuid":"test-uuid","metadata":{"title":"T","version":` + strconv.Quote(version) + `}}}`
+			}
+			importDoc := func(docID, body, slug, label string) (*crosscodexv1.ParseCatalogResponse, error) {
+				Expect(stg.Put(context.Background(), docID, strings.NewReader(body))).To(Succeed())
+				resp, err := svc.ParseCatalog(context.Background(), connect.NewRequest(&crosscodexv1.ParseCatalogRequest{
+					TenantContext: &crosscodexv1.TenantContext{TenantId: tenantID},
+					DocumentId:    docID,
+					DocumentSlug:  slug,
+					VersionLabel:  label,
+				}))
+				if err != nil {
+					return nil, err
+				}
+				return resp.Msg, nil
+			}
+			controls := func(ids ...string) []oscal.ControlItem {
+				items := make([]oscal.ControlItem, len(ids))
+				for i, id := range ids {
+					items[i] = oscal.ControlItem{ID: id, Title: id, Text: "text " + id, Class: oscal.ClassRequirement}
+				}
+				return items
+			}
+
+			BeforeEach(func() {
+				parser = &mockParser{items: controls("ac-1", "ac-2")}
+				svc = catalog.NewService(catalog.WithParser(parser), catalog.WithStore(ms), catalog.WithStorage(stg))
+			})
+
+			It("creates the document with its first version and no change report", func() {
+				resp, err := importDoc("d1", docWithVersion("1.0"), "nist-800-53", "")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.Version).To(MatchRegexp(`^nist-800-53 @ 1\.0 \(\d{4}-\d{2}-\d{2} · [0-9a-f]{6}\)$`))
+				Expect(resp.SupersededCatalogId).To(BeEmpty())
+				Expect(resp.ChangeReport).To(BeNil())
+				Expect(ms.currentByDoc).To(HaveKeyWithValue("nist-800-53", resp.CatalogId))
+			})
+
+			It("supersedes the current version and reports the control differences", func() {
+				first, err := importDoc("d1", docWithVersion("1.0"), "nist-800-53", "")
+				Expect(err).NotTo(HaveOccurred())
+
+				parser.items = controls("ac-1", "ac-3")
+				parser.items[0].Text = "reworded"
+				second, err := importDoc("d2", docWithVersion("2.0"), "nist-800-53", "rev-2")
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(second.CatalogId).NotTo(Equal(first.CatalogId))
+				Expect(second.SupersededCatalogId).To(Equal(first.CatalogId))
+				Expect(second.Version).To(HavePrefix("nist-800-53 @ rev-2 ("))
+				Expect(second.ChangeReport.GetAdded()).To(ConsistOf("ac-3"))
+				Expect(second.ChangeReport.GetRemoved()).To(ConsistOf("ac-2"))
+				Expect(second.ChangeReport.GetChanged()).To(ConsistOf("ac-1"))
+				Expect(ms.currentByDoc["nist-800-53"]).To(Equal(second.CatalogId))
+			})
+
+			It("returns the same catalog and an empty report for an identical re-import", func() {
+				first, err := importDoc("d1", docWithVersion("1.0"), "nist-800-53", "")
+				Expect(err).NotTo(HaveOccurred())
+				again, err := importDoc("d1", docWithVersion("1.0"), "nist-800-53", "")
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(again.CatalogId).To(Equal(first.CatalogId))
+				Expect(again.SupersededCatalogId).To(BeEmpty())
+				Expect(again.ChangeReport).To(BeNil())
+				Expect(again.Version).To(Equal(first.Version))
+				Expect(ms.currentByDoc["nist-800-53"]).To(Equal(first.CatalogId))
+			})
+
+			It("keeps the newest version current when an older one is re-imported (A, B, A)", func() {
+				a, err := importDoc("d1", docWithVersion("1.0"), "nist-800-53", "")
+				Expect(err).NotTo(HaveOccurred())
+				parser.items = controls("ac-1", "ac-3")
+				b, err := importDoc("d2", docWithVersion("2.0"), "nist-800-53", "")
+				Expect(err).NotTo(HaveOccurred())
+
+				parser.items = controls("ac-1", "ac-2")
+				again, err := importDoc("d1", docWithVersion("1.0"), "nist-800-53", "")
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(again.CatalogId).To(Equal(a.CatalogId))
+				Expect(again.SupersededCatalogId).To(BeEmpty())
+				Expect(again.ChangeReport).To(BeNil())
+				Expect(ms.currentByDoc["nist-800-53"]).To(Equal(b.CatalogId))
+				Expect(ms.catalogRecords[a.CatalogId].SupersedesCatalogID).To(BeEmpty())
+			})
+
+			It("supersedes the document's current version when content stored without a document is attached to it", func() {
+				first, err := importDoc("d1", docWithVersion("1.0"), "nist-800-53", "")
+				Expect(err).NotTo(HaveOccurred())
+				parser.items = controls("ac-1", "ac-7")
+				plain, err := importDoc("d2", docWithVersion("2.0"), "", "")
+				Expect(err).NotTo(HaveOccurred())
+
+				attached, err := importDoc("d2", docWithVersion("2.0"), "nist-800-53", "")
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(attached.CatalogId).To(Equal(plain.CatalogId))
+				Expect(attached.SupersededCatalogId).To(Equal(first.CatalogId))
+				Expect(attached.ChangeReport.GetAdded()).To(ConsistOf("ac-7"))
+				Expect(attached.ChangeReport.GetRemoved()).To(ConsistOf("ac-2"))
+				Expect(ms.currentByDoc["nist-800-53"]).To(Equal(plain.CatalogId))
+				Expect(ms.catalogRecords).To(HaveLen(2))
+			})
+
+			It("attaches content stored without a document, without a duplicate row", func() {
+				plain, err := importDoc("d1", docWithVersion("1.0"), "", "")
+				Expect(err).NotTo(HaveOccurred())
+				attached, err := importDoc("d1", docWithVersion("1.0"), "nist-800-53", "")
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(attached.CatalogId).To(Equal(plain.CatalogId))
+				Expect(ms.catalogRecords).To(HaveLen(1))
+				Expect(ms.catalogRecords[plain.CatalogId].DocumentSlug).To(Equal("nist-800-53"))
+			})
+
+			It("refuses content stored under another document and names that document", func() {
+				first, err := importDoc("d1", docWithVersion("1.0"), "nist-800-53", "")
+				Expect(err).NotTo(HaveOccurred())
+				before := *ms.catalogRecords[first.CatalogId]
+				_, err = importDoc("d1", docWithVersion("1.0"), "other-doc", "")
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+				Expect(err.Error()).To(ContainSubstring(`"nist-800-53"`))
+				Expect(ms.currentByDoc).NotTo(HaveKey("other-doc"))
+				Expect(*ms.catalogRecords[first.CatalogId]).To(Equal(before))
+				Expect(ms.currentByDoc["nist-800-53"]).To(Equal(first.CatalogId))
+			})
+
+			It("leaves an import without a slug unchanged", func() {
+				resp, err := importDoc("d1", docWithVersion("1.0"), "", "")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.Version).To(BeEmpty())
+				Expect(resp.SupersededCatalogId).To(BeEmpty())
+				Expect(resp.ChangeReport).To(BeNil())
+				Expect(ms.currentByDoc).To(BeEmpty())
+			})
+
+			DescribeTable("rejects bad version arguments with InvalidArgument and stores nothing",
+				func(slug, label, want string) {
+					_, err := importDoc("d1", docWithVersion("1.0"), slug, label)
+					Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+					Expect(err.Error()).To(ContainSubstring(want))
+					Expect(ms.catalogRecords).To(BeEmpty())
+				},
+				Entry("an uppercase slug", "NIST", "", "a-z0-9"),
+				Entry("a slug with a newline", "abc\n", "", "a-z0-9"),
+				Entry("a label with a newline", "nist", "v1\nv2", "control character"),
+				Entry("a label with a bidi override", "nist", "v\u202e1", "format character"),
+				Entry("a label with markup", "nist", "<b>v1</b>", "markup"),
+				Entry("a label without a slug", "", "rev5", "document_slug"),
+			)
+
+			DescribeTable("falls back to date and hash when the OSCAL version is not a valid label",
+				func(oscalVersion string) {
+					resp, err := importDoc("d1", docWithVersion(oscalVersion), "nist-800-53", "")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(resp.Version).To(MatchRegexp(`^nist-800-53 @ \d{4}-\d{2}-\d{2} · [0-9a-f]{6} \(`))
+					Expect(ms.catalogRecords[resp.CatalogId].VersionLabel).To(MatchRegexp(`^\d{4}-\d{2}-\d{2} · [0-9a-f]{6}$`))
+				},
+				Entry("a bidi override", "v1\u202e2"),
+				Entry("an angle bracket", "<b>1</b>"),
+				Entry("a backtick", "`1`"),
+			)
+
+			It("fails Internal without leaking store detail when the store errors", func() {
+				const dbDetail = `ERROR: relation "catalogs" (SQLSTATE 42P01)`
+				svc = catalog.NewService(catalog.WithParser(parser), catalog.WithStore(failingStore{err: errors.New(dbDetail)}), catalog.WithStorage(stg))
+				_, err := importDoc("d1", docWithVersion("1.0"), "nist-800-53", "")
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
+				Expect(err.Error()).NotTo(ContainSubstring("SQLSTATE"))
+			})
+
+			It("shows lineage and currency in GetCatalog and ListCatalogs", func() {
+				first, err := importDoc("d1", docWithVersion("1.0"), "nist-800-53", "")
+				Expect(err).NotTo(HaveOccurred())
+				parser.items = controls("ac-9")
+				second, err := importDoc("d2", docWithVersion("2.0"), "nist-800-53", "")
+				Expect(err).NotTo(HaveOccurred())
+				tc := &crosscodexv1.TenantContext{TenantId: tenantID}
+
+				got, err := svc.GetCatalog(context.Background(), connect.NewRequest(&crosscodexv1.GetCatalogRequest{TenantContext: tc, CatalogId: first.CatalogId}))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got.Msg.Catalog.GetCurrent()).To(BeFalse())
+				Expect(got.Msg.Catalog.GetDocumentSlug()).To(Equal("nist-800-53"))
+				Expect(got.Msg.Catalog.GetVersionLabel()).To(Equal("1.0"))
+				Expect(got.Msg.Catalog.GetLinkMethod()).To(Equal("declared"))
+
+				list, err := svc.ListCatalogs(context.Background(), connect.NewRequest(&crosscodexv1.ListCatalogsRequest{TenantContext: tc}))
+				Expect(err).NotTo(HaveOccurred())
+				byID := map[string]*crosscodexv1.Catalog{}
+				for _, c := range list.Msg.Catalogs {
+					byID[c.CatalogId] = c
+				}
+				Expect(byID[second.CatalogId].GetCurrent()).To(BeTrue())
+				Expect(byID[second.CatalogId].GetSupersedesCatalogId()).To(Equal(first.CatalogId))
+				Expect(byID[first.CatalogId].GetCurrent()).To(BeFalse())
+			})
 		})
 
 		Context("with two controls sharing an ID", func() {

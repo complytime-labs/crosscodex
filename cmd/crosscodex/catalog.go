@@ -44,10 +44,35 @@ Supported formats:
 
 With --raw the server detects the format from the content instead of
 assuming OSCAL. Only OSCAL JSON is accepted today; other documents are
-rejected as an unsupported catalog format.`,
+rejected as an unsupported catalog format.
+
+With --document the catalog is stored as a version of that document. Import
+the next edition of the same document under the same slug and it becomes the
+current version; the output counts the controls added, removed and changed
+against the version it superseded (--json lists their identifiers). --version-label names the version (for
+example "Rev 5"); without it the label is the OSCAL metadata version, else the
+import date and a short content hash. Content already stored under another
+document cannot be moved to this one.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			filePath := args[0]
 			raw, _ := cmd.Flags().GetBool("raw")
+			documentSlug, _ := cmd.Flags().GetString("document")
+			versionLabel, _ := cmd.Flags().GetString("version-label")
+
+			// The server validates again; checking here fails before the upload.
+			if documentSlug != "" {
+				if err := catalog.ValidateDocumentSlug(documentSlug); err != nil {
+					return fmt.Errorf("--document: %w", err)
+				}
+			}
+			if versionLabel != "" {
+				if documentSlug == "" {
+					return fmt.Errorf("--version-label requires --document: a label names a version of a document. Add --document <slug>, or drop --version-label")
+				}
+				if err := catalog.ValidateVersionLabel(versionLabel); err != nil {
+					return fmt.Errorf("--version-label: %w", err)
+				}
+			}
 
 			chunkSize := 1048576 // 1MB default
 			if state.cfg != nil && state.cfg.UploadChunkSize > 0 {
@@ -71,6 +96,8 @@ rejected as an unsupported catalog format.`,
 				Payload: &pb.StreamDocumentChunk_Metadata{
 					Metadata: &pb.StreamDocumentMetadata{
 						CatalogFormat: catalogFormat,
+						DocumentSlug:  documentSlug,
+						VersionLabel:  versionLabel,
 					},
 				},
 			}); err != nil {
@@ -104,18 +131,25 @@ rejected as an unsupported catalog format.`,
 
 			catalogID := resp.Msg.GetCatalogId()
 			textless := textlessResults(resp.Msg.GetTextlessControls())
+			version := terminalSafe(resp.Msg.GetVersion())
+			superseded := resp.Msg.GetSupersededCatalogId()
+			changes := toChangeReportResult(resp.Msg.GetChangeReport())
 			return emit(cmd,
 				func(w io.Writer, color bool) {
 					fmt.Fprintf(w, "Catalog imported\n")
 					fmt.Fprintf(w, "Catalog ID: %s\n", catalogID)
 					fmt.Fprintf(w, "Document ID: %s\n", resp.Msg.GetDocumentId())
+					printVersionOutcome(w, version, superseded, changes)
 					printTextlessControls(w, textless)
 					fmt.Fprintf(w, "Next: crosscodex run start --source %s --target <catalog-id>\n", catalogID)
 				},
 				catalogImportResult{
-					CatalogID:        catalogID,
-					DocumentID:       resp.Msg.GetDocumentId(),
-					TextlessControls: textless,
+					CatalogID:           catalogID,
+					DocumentID:          resp.Msg.GetDocumentId(),
+					TextlessControls:    textless,
+					VersionDisplay:      resp.Msg.GetVersion(),
+					SupersededCatalogID: superseded,
+					ChangeReport:        changes,
 				},
 			)
 		},
@@ -128,10 +162,13 @@ rejected as an unsupported catalog format.`,
 		examples: []string{
 			"crosscodex catalog import nist-800-53.json",
 			"crosscodex catalog import --raw nist-800-53.json",
+			"crosscodex catalog import --document nist-800-53 --version-label \"Rev 5\" nist-800-53.json",
 		},
 	})
 
 	cmd.Flags().Bool("raw", false, "Let the server detect the format instead of assuming OSCAL")
+	cmd.Flags().String("document", "", "Store the catalog as a version of this document (slug: a-z, 0-9 and '-', e.g. nist-800-53); re-import under the same slug to supersede the current version")
+	cmd.Flags().String("version-label", "", "Name this version, e.g. \"Rev 5\" (needs --document; default: the OSCAL metadata version, else import date and content hash)")
 
 	return cmd
 }
@@ -143,6 +180,74 @@ type catalogImportResult struct {
 	// TextlessControls lists every control imported without requirement text;
 	// an empty array, never null, when there are none.
 	TextlessControls []textlessResult `json:"textless_controls"`
+	// VersionDisplay is the "slug @ label (date · hash)" form, the same key
+	// catalog list and inspect use; empty, and omitted, when the catalog was
+	// imported without --document. (Not "version": there it is the OSCAL
+	// metadata version.)
+	VersionDisplay string `json:"version_display,omitempty"`
+	// SupersededCatalogID is the catalog this version replaced as the
+	// document's current version; omitted for a document's first version.
+	SupersededCatalogID string `json:"superseded_catalog_id,omitempty"`
+	// ChangeReport lists control identifiers that differ from the superseded
+	// version; omitted when nothing was superseded.
+	ChangeReport *changeReportResult `json:"change_report,omitempty"`
+}
+
+// changeReportResult mirrors pb.ChangeReport. The lists are never null.
+type changeReportResult struct {
+	Added   []string `json:"added"`
+	Removed []string `json:"removed"`
+	Changed []string `json:"changed"`
+	// IDsUnstable is true when the versions share too few identifiers for the
+	// lists to read as an edit history.
+	IDsUnstable bool `json:"ids_unstable"`
+}
+
+func toChangeReportResult(r *pb.ChangeReport) *changeReportResult {
+	if r == nil {
+		return nil
+	}
+	return &changeReportResult{
+		Added:       append([]string{}, r.GetAdded()...),
+		Removed:     append([]string{}, r.GetRemoved()...),
+		Changed:     append([]string{}, r.GetChanged()...),
+		IDsUnstable: r.GetIdsUnstable(),
+	}
+}
+
+// printVersionOutcome prints the version, the catalog it superseded and the
+// change counts. It prints nothing for an import without --document.
+func printVersionOutcome(w io.Writer, version, superseded string, changes *changeReportResult) {
+	if version == "" {
+		return
+	}
+	fmt.Fprintf(w, "Version: %s\n", version)
+	if superseded == "" {
+		return
+	}
+	fmt.Fprintf(w, "Supersedes: %s\n", terminalSafe(superseded))
+	if changes == nil {
+		return
+	}
+	fmt.Fprintf(w, "Changes: %d added, %d removed, %d changed\n", len(changes.Added), len(changes.Removed), len(changes.Changed))
+	if changes.IDsUnstable {
+		fmt.Fprintln(w, "Warning: the two versions share too few identifiers for these lists to be an edit history (the publisher may have renumbered). Use --json for the full lists and compare by title.")
+	}
+}
+
+// catalogVersionDisplay renders a catalog's "slug @ label (date · hash)" form
+// from its summary fields. It returns "" for a catalog not under a document.
+// Callers print it to a terminal through terminalSafe.
+func catalogVersionDisplay(cat *pb.Catalog) string {
+	if cat.GetDocumentSlug() == "" {
+		return ""
+	}
+	return catalog.FormatVersion(
+		cat.GetDocumentSlug(),
+		cat.GetVersionLabel(),
+		cat.GetAudit().GetCreatedAt().AsTime(),
+		cat.GetProvenance().GetLineageMetadata()["content_hash"],
+	)
 }
 
 type textlessResult struct {
@@ -248,10 +353,21 @@ func newCatalogListCmd(state *cliState) *cobra.Command {
 				)
 			}
 
+			// The VERSION column appears only when some catalog is under a
+			// document, so a list of plain catalogs renders unchanged.
+			versioned := false
+			for _, cat := range catalogs {
+				versioned = versioned || cat.GetDocumentSlug() != ""
+			}
+
 			return emit(cmd,
 				func(w io.Writer, color bool) {
 					tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-					fmt.Fprintln(tw, "ID\tNAME\tCONTROLS\tFORMAT")
+					header := "ID\tNAME\tCONTROLS\tFORMAT"
+					if versioned {
+						header += "\tVERSION"
+					}
+					fmt.Fprintln(tw, header)
 					for _, cat := range catalogs {
 						format := cat.GetFormat().String()
 						switch format {
@@ -260,12 +376,20 @@ func newCatalogListCmd(state *cliState) *cobra.Command {
 						case "CATALOG_FORMAT_GEMARA":
 							format = "GEMARA"
 						}
-						fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n",
+						row := fmt.Sprintf("%s\t%s\t%d\t%s",
 							cat.GetCatalogId(),
 							cat.GetName(),
 							cat.GetControlCount(),
 							format,
 						)
+						if versioned {
+							version := terminalSafe(catalogVersionDisplay(cat))
+							if cat.GetCurrent() {
+								version += " (current)"
+							}
+							row += "\t" + version
+						}
+						fmt.Fprintln(tw, row)
 					}
 					if err := tw.Flush(); err != nil {
 						fmt.Fprintf(w, "Error flushing output: %v\n", err)
@@ -314,6 +438,13 @@ func newCatalogInspectCmd(state *cliState) *cobra.Command {
 					fmt.Fprintf(w, "Format: %s\n", cat.GetFormat().String())
 					fmt.Fprintf(w, "Version: %s\n", cat.GetVersion())
 					fmt.Fprintf(w, "Controls: %d\n", cat.GetControlCount())
+					if version := catalogVersionDisplay(cat); version != "" {
+						fmt.Fprintf(w, "Document version: %s\n", terminalSafe(version))
+						fmt.Fprintf(w, "Current: %t\n", cat.GetCurrent())
+						if id := cat.GetSupersedesCatalogId(); id != "" {
+							fmt.Fprintf(w, "Supersedes: %s\n", terminalSafe(id))
+						}
+					}
 					if len(cat.GetProperties()) > 0 {
 						fmt.Fprintln(w, "\nProperties:")
 						for k, v := range cat.GetProperties() {
@@ -394,7 +525,7 @@ structure. It does not require a running daemon.`,
 }
 
 func catalogToJSON(cat *pb.Catalog) map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"catalog_id":    cat.GetCatalogId(),
 		"name":          cat.GetName(),
 		"format":        cat.GetFormat().String(),
@@ -402,6 +533,17 @@ func catalogToJSON(cat *pb.Catalog) map[string]any {
 		"control_count": cat.GetControlCount(),
 		"properties":    cat.GetProperties(),
 	}
+	// Document fields appear only for a catalog under a document, so
+	// unversioned catalogs keep their previous JSON shape.
+	if cat.GetDocumentSlug() != "" {
+		out["document_slug"] = cat.GetDocumentSlug()
+		out["version_label"] = cat.GetVersionLabel()
+		out["version_display"] = catalogVersionDisplay(cat)
+		out["supersedes_catalog_id"] = cat.GetSupersedesCatalogId()
+		out["link_method"] = cat.GetLinkMethod()
+		out["current"] = cat.GetCurrent()
+	}
+	return out
 }
 
 func catalogsToJSON(catalogs []*pb.Catalog) []map[string]any {

@@ -1241,3 +1241,75 @@ var _ = Describe("Required request arguments", func() {
 		}),
 	)
 })
+
+var _ = Describe("Document version arguments through the gateway", func() {
+	type importFn func(svc *gateway.Service, slug, label string) (*pb.SubmitDocumentResponse, error)
+	submit := func(svc *gateway.Service, slug, label string) (*pb.SubmitDocumentResponse, error) {
+		resp, err := svc.SubmitDocument(userCtx("user-a"), connect.NewRequest(&pb.SubmitDocumentRequest{
+			Source:       &pb.SubmitDocumentRequest_Content{Content: []byte("doc")},
+			DocumentSlug: slug,
+			VersionLabel: label,
+		}))
+		if err != nil {
+			return nil, err
+		}
+		return resp.Msg, nil
+	}
+	stream := func(svc *gateway.Service, slug, label string) (*pb.SubmitDocumentResponse, error) {
+		resp, err := gateway.ExportHandleStreamedDocument(svc, userCtx("user-a"), time.Now(),
+			&pb.StreamDocumentMetadata{DocumentSlug: slug, VersionLabel: label}, []byte("doc"))
+		if err != nil {
+			return nil, err
+		}
+		return resp.Msg, nil
+	}
+
+	DescribeTable("passes the slug and label to the catalog and returns the version results",
+		func(run importFn) {
+			var got *pb.ParseCatalogRequest
+			report := &pb.ChangeReport{Added: []string{"ac-3"}, Removed: []string{"ac-2"}, Changed: []string{"ac-1"}, IdsUnstable: true}
+			cat := &mockCatalog{
+				parseFn: func(_ context.Context, req *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
+					got = req.Msg
+					return connect.NewResponse(&pb.ParseCatalogResponse{
+						CatalogId: "cat-2", Version: "nist-800-53 @ rev5 (2026-01-02 · abc123)",
+						SupersededCatalogId: "cat-1", ChangeReport: report,
+					}), nil
+				},
+			}
+			svc := newTestService(gateway.WithCatalogBackend(cat))
+
+			resp, err := run(svc, "nist-800-53", "rev5")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.GetDocumentSlug()).To(Equal("nist-800-53"))
+			Expect(got.GetVersionLabel()).To(Equal("rev5"))
+			Expect(resp.GetVersion()).To(Equal("nist-800-53 @ rev5 (2026-01-02 · abc123)"))
+			Expect(resp.GetSupersededCatalogId()).To(Equal("cat-1"))
+			Expect(resp.GetChangeReport().GetAdded()).To(ConsistOf("ac-3"))
+			Expect(resp.GetChangeReport().GetRemoved()).To(ConsistOf("ac-2"))
+			Expect(resp.GetChangeReport().GetChanged()).To(ConsistOf("ac-1"))
+			Expect(resp.GetChangeReport().GetIdsUnstable()).To(BeTrue())
+		},
+		Entry("SubmitDocument", importFn(submit)),
+		Entry("StreamDocument", importFn(stream)),
+	)
+
+	DescribeTable("returns the backend's actionable refusal to the caller with its message intact",
+		func(run importFn, code connect.Code, msg string) {
+			cat := &mockCatalog{
+				parseFn: func(context.Context, *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
+					return nil, connect.NewError(code, errors.New(msg))
+				},
+			}
+			svc := newTestService(gateway.WithCatalogBackend(cat))
+
+			_, err := run(svc, "nist-800-53", "")
+			Expect(connect.CodeOf(err)).To(Equal(code))
+			Expect(err.Error()).To(ContainSubstring(msg))
+		},
+		Entry("SubmitDocument, invalid slug", importFn(submit), connect.CodeInvalidArgument, `invalid document slug "NIST": use a-z0-9`),
+		Entry("StreamDocument, invalid slug", importFn(stream), connect.CodeInvalidArgument, `invalid document slug "NIST": use a-z0-9`),
+		Entry("SubmitDocument, content in another document", importFn(submit), connect.CodeFailedPrecondition, `already a version of document "other-doc"`),
+		Entry("StreamDocument, content in another document", importFn(stream), connect.CodeFailedPrecondition, `already a version of document "other-doc"`),
+	)
+})

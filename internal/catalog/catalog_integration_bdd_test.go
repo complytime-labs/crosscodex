@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1712,5 +1713,214 @@ var _ = Describe("E2E Integration", func() {
 			}
 			Expect(found).To(BeTrue(), "newly added ac-2.b not found via FTS 'account managers'")
 		})
+	})
+})
+
+var _ = Describe("PGStore document versions", func() {
+	// versionRecord is a catalog version of slug whose ID stands for its content.
+	versionRecord := func(tenantID, catalogID, slug, label string) catalog.CatalogRecord {
+		rec := catalogRecord(tenantID, catalogID, "Doc "+slug)
+		rec.DocumentSlug = slug
+		rec.VersionLabel = label
+		return rec
+	}
+	newTenant := func() (string, context.Context) {
+		tenantID := fmt.Sprintf("docver-%d", time.Now().UnixNano())
+		setupTenant(tenantID, tenantID)
+		ctx, err := tenant.WithTenant(context.Background(), tenantID)
+		Expect(err).NotTo(HaveOccurred())
+		return tenantID, ctx
+	}
+	control := func(tenantID, catalogID, identifier string) catalog.ControlRecord {
+		return ftsControl(tenantID, catalogID, identifier, "Title "+identifier, "Statement "+identifier)
+	}
+
+	It("creates the document with its first version as current", func() {
+		tenantID, ctx := newTenant()
+		store := catalog.NewPGStore(tenantConn())
+		v1 := tenantID + "-v1"
+
+		Expect(store.UpsertCatalogVersion(ctx, versionRecord(tenantID, v1, "doc-a", "1.0"), nil,
+			[]catalog.ControlRecord{control(tenantID, v1, "c-1")})).To(Succeed())
+
+		cur, err := store.GetDocumentCurrent(ctx, "doc-a")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cur.CatalogID).To(Equal(v1))
+		Expect(cur.DocumentSlug).To(Equal("doc-a"))
+		Expect(cur.VersionLabel).To(Equal("1.0"))
+		Expect(cur.LinkMethod).To(Equal("declared"))
+		Expect(cur.SupersedesCatalogID).To(BeEmpty())
+		Expect(cur.ControlCount).To(Equal(int64(1)))
+	})
+
+	It("links a second version to the first and moves current", func() {
+		tenantID, ctx := newTenant()
+		store := catalog.NewPGStore(tenantConn())
+		v1, v2 := tenantID+"-v1", tenantID+"-v2"
+
+		Expect(store.UpsertCatalogVersion(ctx, versionRecord(tenantID, v1, "doc-a", "1.0"), nil, nil)).To(Succeed())
+		Expect(store.UpsertCatalogVersion(ctx, versionRecord(tenantID, v2, "doc-a", "2.0"), nil, nil)).To(Succeed())
+
+		cur, err := store.GetDocumentCurrent(ctx, "doc-a")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cur.CatalogID).To(Equal(v2))
+		Expect(cur.SupersedesCatalogID).To(Equal(v1))
+		first, err := store.GetCatalog(ctx, v1)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(first.SupersedesCatalogID).To(BeEmpty())
+		Expect(first.DocumentSlug).To(Equal("doc-a"))
+	})
+
+	It("re-importing the same content is a no-op that keeps current and lineage", func() {
+		tenantID, ctx := newTenant()
+		store := catalog.NewPGStore(tenantConn())
+		v1, v2 := tenantID+"-v1", tenantID+"-v2"
+		Expect(store.UpsertCatalogVersion(ctx, versionRecord(tenantID, v1, "doc-a", "1.0"), nil, nil)).To(Succeed())
+		Expect(store.UpsertCatalogVersion(ctx, versionRecord(tenantID, v2, "doc-a", "2.0"), nil, nil)).To(Succeed())
+
+		// Re-importing the older version must not move current backwards.
+		Expect(store.UpsertCatalogVersion(ctx, versionRecord(tenantID, v1, "doc-a", "ignored"), nil, nil)).To(Succeed())
+		// Nor may re-importing the current one change its lineage.
+		Expect(store.UpsertCatalogVersion(ctx, versionRecord(tenantID, v2, "doc-a", "ignored"), nil, nil)).To(Succeed())
+
+		cur, err := store.GetDocumentCurrent(ctx, "doc-a")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cur.CatalogID).To(Equal(v2))
+		Expect(cur.SupersedesCatalogID).To(Equal(v1))
+		Expect(cur.VersionLabel).To(Equal("2.0"))
+		first, err := store.GetCatalog(ctx, v1)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(first.SupersedesCatalogID).To(BeEmpty())
+		Expect(first.VersionLabel).To(Equal("1.0"))
+		records, _, err := store.ListCatalogs(ctx, catalog.ListOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(records).To(HaveLen(2))
+	})
+
+	It("attaches content stored without a document, adding no duplicate row", func() {
+		tenantID, ctx := newTenant()
+		store := catalog.NewPGStore(tenantConn())
+		v1 := tenantID + "-v1"
+		Expect(store.UpsertCatalogWithTree(ctx, catalogRecord(tenantID, v1, "Doc"), nil, nil)).To(Succeed())
+		before, err := store.GetCatalog(ctx, v1)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(before.DocumentSlug).To(BeEmpty())
+
+		Expect(store.UpsertCatalogVersion(ctx, versionRecord(tenantID, v1, "doc-a", "1.0"), nil, nil)).To(Succeed())
+
+		cur, err := store.GetDocumentCurrent(ctx, "doc-a")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cur.CatalogID).To(Equal(v1))
+		Expect(cur.LinkMethod).To(Equal("declared"))
+		records, _, err := store.ListCatalogs(ctx, catalog.ListOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(records).To(HaveLen(1))
+	})
+
+	It("refuses content already under another document and changes nothing", func() {
+		tenantID, ctx := newTenant()
+		store := catalog.NewPGStore(tenantConn())
+		v1 := tenantID + "-v1"
+		Expect(store.UpsertCatalogVersion(ctx, versionRecord(tenantID, v1, "doc-a", "1.0"), nil, nil)).To(Succeed())
+
+		err := store.UpsertCatalogVersion(ctx, versionRecord(tenantID, v1, "doc-b", "9.9"), nil, nil)
+
+		Expect(err).To(MatchError(catalog.ErrCatalogInOtherDocument))
+		Expect(err).To(MatchError(ContainSubstring("doc-a")), "the error must name the document it already belongs to")
+		_, err = store.GetDocumentCurrent(ctx, "doc-b")
+		Expect(err).To(MatchError(catalog.ErrDocumentNotFound))
+		kept, err := store.GetCatalog(ctx, v1)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(kept.DocumentSlug).To(Equal("doc-a"))
+		Expect(kept.VersionLabel).To(Equal("1.0"))
+	})
+
+	It("refuses another tenant's record and writes nothing", func() {
+		tenantID, ctx := newTenant()
+		store := catalog.NewPGStore(tenantConn())
+
+		err := store.UpsertCatalogVersion(ctx, versionRecord("someone-else", "foreign-v1", "doc-a", "1.0"), nil, nil)
+
+		Expect(err).To(MatchError(ContainSubstring("does not match the request tenant")))
+		_, err = store.GetDocumentCurrent(ctx, "doc-a")
+		Expect(err).To(MatchError(catalog.ErrDocumentNotFound))
+		Expect(tenantID).NotTo(BeEmpty())
+	})
+
+	It("refuses a record without a document slug", func() {
+		tenantID, ctx := newTenant()
+		store := catalog.NewPGStore(tenantConn())
+
+		err := store.UpsertCatalogVersion(ctx, catalogRecord(tenantID, tenantID+"-v1", "Doc"), nil, nil)
+
+		Expect(err).To(MatchError(ContainSubstring("document slug")))
+	})
+
+	It("keeps a linear chain with one current when different content races for a slug", func() {
+		for round := 0; round < 8; round++ {
+			tenantID, ctx := newTenant()
+			store := catalog.NewPGStore(tenantConn())
+			ids := []string{tenantID + "-x", tenantID + "-y"}
+
+			errs := make([]error, len(ids))
+			var wg sync.WaitGroup
+			start := make(chan struct{})
+			for i, id := range ids {
+				wg.Add(1)
+				go func() {
+					defer GinkgoRecover()
+					defer wg.Done()
+					<-start
+					errs[i] = store.UpsertCatalogVersion(ctx, versionRecord(tenantID, id, "doc-race", "v"+id), nil, nil)
+				}()
+			}
+			close(start)
+			wg.Wait()
+			Expect(errs).To(Equal([]error{nil, nil}))
+
+			cur, err := store.GetDocumentCurrent(ctx, "doc-race")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ids).To(ContainElement(cur.CatalogID))
+			loser := ids[0]
+			if cur.CatalogID == ids[0] {
+				loser = ids[1]
+			}
+			Expect(cur.SupersedesCatalogID).To(Equal(loser), "the current version must supersede the other")
+			orphan, err := store.GetCatalog(ctx, loser)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(orphan.DocumentSlug).To(Equal("doc-race"))
+			Expect(orphan.SupersedesCatalogID).To(BeEmpty(), "the chain must have exactly one root")
+		}
+	})
+
+	It("hides another tenant's document", func() {
+		tenantA, ctxA := newTenant()
+		_, ctxB := newTenant()
+		store := catalog.NewPGStore(tenantConn())
+		Expect(store.UpsertCatalogVersion(ctxA, versionRecord(tenantA, tenantA+"-v1", "doc-a", "1.0"), nil, nil)).To(Succeed())
+
+		_, err := store.GetDocumentCurrent(ctxB, "doc-a")
+
+		Expect(err).To(MatchError(catalog.ErrDocumentNotFound))
+	})
+
+	It("lists a catalog's controls in identifier order and nothing for another tenant", func() {
+		tenantA, ctxA := newTenant()
+		_, ctxB := newTenant()
+		store := catalog.NewPGStore(tenantConn())
+		v1 := tenantA + "-v1"
+		Expect(store.UpsertCatalogVersion(ctxA, versionRecord(tenantA, v1, "doc-a", "1.0"), nil, []catalog.ControlRecord{
+			control(tenantA, v1, "c-2"), control(tenantA, v1, "c-1"),
+		})).To(Succeed())
+
+		got, err := store.ListControlsForCatalog(ctxA, v1)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(HaveLen(2))
+		Expect(got[0].Identifier).To(Equal("c-1"))
+		Expect(got[1].Identifier).To(Equal("c-2"))
+
+		other, err := store.ListControlsForCatalog(ctxB, v1)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(other).To(BeEmpty())
 	})
 })

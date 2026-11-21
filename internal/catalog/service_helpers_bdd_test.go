@@ -195,6 +195,19 @@ var _ = Describe("catalogRecordToProto", func() {
 		)
 	})
 
+	It("maps the document lineage fields and leaves current to the service", func() {
+		proto := catalogRecordToProto(&CatalogRecord{
+			CatalogID: "c2", DocumentSlug: "nist-800-53", VersionLabel: "rev5",
+			SupersedesCatalogID: "c1", LinkMethod: "declared",
+		})
+
+		Expect(proto.GetDocumentSlug()).To(Equal("nist-800-53"))
+		Expect(proto.GetVersionLabel()).To(Equal("rev5"))
+		Expect(proto.GetSupersedesCatalogId()).To(Equal("c1"))
+		Expect(proto.GetLinkMethod()).To(Equal("declared"))
+		Expect(proto.GetCurrent()).To(BeFalse())
+	})
+
 	Describe("nil record", func() {
 		It("returns nil", func() {
 			Expect(catalogRecordToProto(nil)).To(BeNil())

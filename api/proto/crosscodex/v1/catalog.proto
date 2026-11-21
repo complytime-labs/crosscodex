@@ -45,6 +45,18 @@ message ParseCatalogRequest {
   CatalogFormat format = 3;      // Required - which parser to use
   string catalog_name = 4;       // User-provided name
   map<string, string> parse_options = 5;  // Format-specific hints
+  // Optional. Imports the catalog as a version of the named document (for
+  // example "nist-800-53"): 1-63 characters of a-z, 0-9 and '-', starting with
+  // a letter or digit. The first import of a slug creates the document; a later
+  // import of different content becomes its current version and supersedes the
+  // previous one. Content already stored under another slug is refused with
+  // FAILED_PRECONDITION. Empty imports the catalog outside any document.
+  string document_slug = 6;
+  // Optional, requires document_slug. Label for this version, 1-64 characters
+  // with no control characters, Unicode format characters, line or paragraph
+  // separators, '<', '>' or '`'. When empty, the OSCAL metadata.version is used
+  // if it is a valid label, else "<UTC date> · <first 6 hex of content hash>".
+  string version_label = 7;
 }
 
 message ParseCatalogResponse {
@@ -54,6 +66,32 @@ message ParseCatalogResponse {
   // text nor a usable title, in document order, with no cap. They keep their
   // place in the catalog but are not analysed.
   repeated TextlessControl textless_controls = 3;
+  // Set only when document_slug was given: the version rendered for humans as
+  // "slug @ label (date · hash6)".
+  string version = 4;
+  // The catalog this import superseded as its document's current version. Empty
+  // for a document's first version and when the same content was re-imported.
+  string superseded_catalog_id = 5;
+  // Control differences against superseded_catalog_id. Absent when there is no
+  // superseded catalog.
+  ChangeReport change_report = 6;
+}
+
+// ChangeReport lists control identifiers that differ between a version and the
+// one it superseded. It is computed from stored controls, never the graph.
+message ChangeReport {
+  // Identifiers present in the new version only, sorted.
+  // protolint:disable:next REPEATED_FIELD_NAMES_PLURALIZED
+  repeated string added = 1;
+  // Identifiers present in the superseded version only, sorted.
+  // protolint:disable:next REPEATED_FIELD_NAMES_PLURALIZED
+  repeated string removed = 2;
+  // Identifiers in both versions whose statement text differs, sorted.
+  // protolint:disable:next REPEATED_FIELD_NAMES_PLURALIZED
+  repeated string changed = 3;
+  // True when the versions share so few identifiers that the lists should not
+  // be read as an edit history (for example the publisher renumbered controls).
+  bool ids_unstable = 4;
 }
 
 // A control imported without requirement text or a usable title. It is stored
@@ -76,6 +114,20 @@ message Catalog {
   ProvenanceMetadata provenance = 7;
   int32 control_count = 8;
   map<string, string> properties = 9;  // Format-specific metadata
+  // Slug of the document this catalog is a version of; empty when the catalog
+  // was imported outside any document.
+  string document_slug = 10;
+  // Label of this version within its document; empty outside a document.
+  string version_label = 11;
+  // The catalog this version superseded; empty for a document's first version
+  // and outside a document.
+  string supersedes_catalog_id = 12;
+  // How the lineage link was established: "declared" (the importer named the
+  // document). Empty outside a document.
+  string link_method = 13;
+  // True when this catalog is the current version of its document. False for
+  // superseded versions and for catalogs outside any document.
+  bool current = 14;
 }
 
 message Control {

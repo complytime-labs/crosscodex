@@ -80,6 +80,24 @@ func (m *memStore) UpsertCatalogWithTree(_ context.Context, cat CatalogRecord, c
 	m.log.add("upsert catalog with tree")
 	return nil
 }
+func (m *memStore) GetDocumentCurrent(context.Context, string) (*CatalogRecord, error) {
+	return nil, ErrDocumentNotFound
+}
+func (m *memStore) ListControlsForCatalog(_ context.Context, catalogID string) ([]ControlRecord, error) {
+	var out []ControlRecord
+	for _, c := range m.controls {
+		if c.CatalogID == catalogID {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+// UpsertCatalogVersion records the write like UpsertCatalogWithTree; the parsed
+// event specs do not exercise document lineage (see mockStore for that).
+func (m *memStore) UpsertCatalogVersion(ctx context.Context, cat CatalogRecord, containers []ContainerRecord, c []ControlRecord) error {
+	return m.UpsertCatalogWithTree(ctx, cat, containers, c)
+}
 func (m *memStore) GetControl(context.Context, string) (*ControlRecord, error) { return nil, nil }
 func (m *memStore) SearchControls(context.Context, SearchQuery) ([]ControlRecord, PageInfo, error) {
 	return nil, PageInfo{}, nil

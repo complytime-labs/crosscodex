@@ -426,6 +426,18 @@ message SubmitDocumentRequest {
   ContentMetadata metadata = 3;
   CatalogFormat catalog_format = 4;
   string catalog_name = 5;
+  // Optional. Imports the catalog as a version of the named document (for
+  // example "nist-800-53"): 1-63 characters of a-z, 0-9 and '-', starting with
+  // a letter or digit. The first import of a slug creates the document; a later
+  // import of different content becomes its current version and supersedes the
+  // previous one. Content already stored under another slug is refused with
+  // FAILED_PRECONDITION. Empty imports the catalog outside any document.
+  string document_slug = 8;
+  // Optional, requires document_slug. Label for this version, 1-64 characters
+  // with no control characters, Unicode format characters, line or paragraph
+  // separators, '<', '>' or '`'. When empty, the OSCAL metadata.version is used
+  // if it is a valid label, else "<UTC date> · <first 6 hex of content hash>".
+  string version_label = 9;
 
   reserved 6, 7;
   reserved "target_catalog_id", "synthesis_config";
@@ -441,6 +453,15 @@ message SubmitDocumentResponse {
   // control's parts that hold prose, the candidates for
   // catalog.requirement_part_names.
   repeated TextlessControl textless_controls = 5;
+  // Set only when document_slug was given: the version rendered for humans as
+  // "slug @ label (date · hash6)".
+  string version = 6;
+  // The catalog this import superseded as its document's current version. Empty
+  // for a document's first version and when the same content was re-imported.
+  string superseded_catalog_id = 7;
+  // Control differences against superseded_catalog_id. Absent when there is no
+  // superseded catalog.
+  ChangeReport change_report = 8;
 
   reserved 1, 3;
   reserved "job_id", "status";
@@ -533,6 +554,18 @@ message StreamDocumentMetadata {
   CatalogFormat catalog_format = 1;
   string catalog_name = 2;
   ContentMetadata content_metadata = 5;
+  // Optional. Imports the catalog as a version of the named document (for
+  // example "nist-800-53"): 1-63 characters of a-z, 0-9 and '-', starting with
+  // a letter or digit. The first import of a slug creates the document; a later
+  // import of different content becomes its current version and supersedes the
+  // previous one. Content already stored under another slug is refused with
+  // FAILED_PRECONDITION. Empty imports the catalog outside any document.
+  string document_slug = 6;
+  // Optional, requires document_slug. Label for this version, 1-64 characters
+  // with no control characters, Unicode format characters, line or paragraph
+  // separators, '<', '>' or '`'. When empty, the OSCAL metadata.version is used
+  // if it is a valid label, else "<UTC date> · <first 6 hex of content hash>".
+  string version_label = 7;
 
   reserved 3, 4;
   reserved "target_catalog_id", "synthesis_config";

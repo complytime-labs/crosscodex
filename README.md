@@ -91,6 +91,9 @@ Similarity search (#271):
 - New `graph.max_similarity_catalogs` (default 100, range 1-10000, global only) bounds the catalogs in one search.
 - New `graph.max_similarity_limit` (default 1000, range 1-10000, global only) is the largest `limit` a search may ask for per catalog. A larger `limit` returns `InvalidArgument` naming the maximum; before, it was unbounded.
 
+Catalog document versions (#204):
+- Additive, nothing breaks. `catalog import` gained `--document` and `--version-label`. `catalog import --json` gained `version_display` (`slug @ label (date · hash)`), `superseded_catalog_id` and `change_report` (`added`, `removed`, `changed`, `ids_unstable`), present only for an import under a document. `catalog list --json` and `catalog inspect --json` gained `document_slug`, `version_label`, `version_display`, `supersedes_catalog_id`, `link_method` and `current` for a catalog under a document; their `version` is still the OSCAL metadata version. `catalog list` adds a VERSION column only when a catalog is under a document. Unversioned output is unchanged.
+
 Independent panels, sanity check and critique (#260):
 
 - **Stages stop when the model stops answering.** New `analysis.engine.success_timeout` (default 10m, range (0, 24h], at most `pipeline.stage_timeout`; a config that sets it longer no longer loads). A stage that receives only failed task results, and no successful one, for that long now fails with error class `llm_unavailable` and abandons its queued tasks. If its last failure was an answer cut off at `max_tokens`, it fails as `llm_output_truncated` with that advice instead. Before, each failed result reset `analysis.engine.task_timeout`, so a stage whose every LLM call failed ran until `pipeline.stage_timeout` (24h). The window starts at the first failure after the stage's last success, and the stage fails only while its own failures keep arriving (each within `task_timeout` of the previous; a longer gap restarts the window). It must be at least `task_timeout`. A stage waiting behind another stage's queue, which receives no results of its own, is not failed by it. If your model server legitimately takes longer than 10m between successful answers while some calls fail, raise it. Resume a failed job with `crosscodex run retry --from-failure <job-id>`.
@@ -335,6 +338,14 @@ crosscodex catalog import catalogs/NIST_SP-800-53_rev5_catalog.json
 ```
 
 Import stores and parses the catalog and prints its catalog ID. It does not start analysis. If some controls that are not withdrawn have no requirement text (none of the parts in `catalog.requirement_part_names`) and no usable title, import lists them: they will not be analysed.
+
+To track editions of one document, import each under the same slug. The newest import becomes the document's current version, and the output counts the controls added, removed and changed against the version it superseded (`--json` lists their identifiers):
+
+```sh
+crosscodex catalog import --document nist-800-53 --version-label "Rev 5" catalogs/NIST_SP-800-53_rev5_catalog.json
+```
+
+A slug is 1-63 characters of `a-z`, `0-9` and `-`. Without `--version-label` the label is the OSCAL metadata version, else the import date and a short content hash. `catalog list` then shows `slug @ label (date · hash)` with the current version marked; catalogs imported without `--document` list as before.
 
 ### 7. List and inspect catalogs
 

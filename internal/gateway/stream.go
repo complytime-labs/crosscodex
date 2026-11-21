@@ -74,6 +74,8 @@ func (s *Service) handleStreamedDocument(ctx context.Context, start time.Time, m
 		},
 		catalogFormat: meta.GetCatalogFormat(),
 		catalogName:   meta.GetCatalogName(),
+		documentSlug:  meta.GetDocumentSlug(),
+		versionLabel:  meta.GetVersionLabel(),
 		rpcName:       "StreamDocument",
 	})
 }
