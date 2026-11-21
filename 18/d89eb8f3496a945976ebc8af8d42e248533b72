@@ -1,0 +1,73 @@
+docs/dev/retention.md
+  s_8dad1ed5ebd844::t_4b010728a2d92c 145-146,159-174,180-222
+  s_8dad1ed5ebd844::t_32553a9fee211d 223
+internal/catalog/retire_bdd_test.go
+  s_8dad1ed5ebd844::t_e1666bdc0a8dc4 263
+  s_8dad1ed5ebd844::t_831e10027f4703 1-262,264-403
+internal/catalog/store.go
+  s_8dad1ed5ebd844::t_7e4b8ac68cd281 9,13,45-50,684-739,741-742,744-747,749-754,756-762,764-767,769-770,772,775-777,782-790,792-794,797-799,801-803,805
+  s_8dad1ed5ebd844::t_72d1652d7d450d 51-54,740,743,748,755,763,768,771,773-774,778-781,791,795-796,800,804
+  s_8dad1ed5ebd844::t_8b040d2e67dca4 806
+internal/gateway/gateway_bdd_test.go
+  s_8dad1ed5ebd844::t_bf2b7d162b9f99 384-436
+  s_8dad1ed5ebd844::t_3437fd48e00330 79,105-106
+  s_8dad1ed5ebd844::t_2a407cee268337 107-108,437-438
+internal/gateway/backends.go
+  s_8dad1ed5ebd844::t_76f4270946ef0a 24
+internal/gateway/stream_bdd_test.go
+  s_8dad1ed5ebd844::t_3437fd48e00330 140-143
+cmd/crosscodexd/bootstrap.go
+  s_8dad1ed5ebd844::t_fc5bf297c7b253 349-353,402,411-415,451-452,454-457,471,556-558,567,579-581,644-646,649,654,659-666,678-691,696,1111-1113
+  s_8dad1ed5ebd844::t_983e5736759d1d 453
+internal/catalog/service.go
+  s_8dad1ed5ebd844::t_72d1652d7d450d 50-53,61,97-111
+internal/catalog/catalog_parsed_event_bdd_test.go
+  s_8dad1ed5ebd844::t_72d1652d7d450d 104-105
+  s_8dad1ed5ebd844::t_831e10027f4703 101-103,106
+internal/catalog/catalog_integration_bdd_test.go
+  s_8dad1ed5ebd844::t_3507c4a7c51c16 31-32,1928-2097,2099-2103
+internal/catalog/export_test.go
+  s_8dad1ed5ebd844::t_c8f16dda26fb1a 35-38
+internal/gateway/backend_errors_bdd_test.go
+  s_8dad1ed5ebd844::t_23d26cbed01ce2 165
+  s_8dad1ed5ebd844::t_94611976782bc7 166-172
+internal/gateway/catalog.go
+  s_8dad1ed5ebd844::t_3437fd48e00330 11
+  s_8dad1ed5ebd844::t_76f4270946ef0a 76-108
+  s_8dad1ed5ebd844::t_fb9d8bb58c663d 109-111
+internal/catalog/catalog_bdd_test.go
+  s_8dad1ed5ebd844::t_831e10027f4703 80,89,170-192,196
+  s_8dad1ed5ebd844::t_72d1652d7d450d 193-195
+  s_8dad1ed5ebd844::t_2af422184ca877 197
+api/proto/crosscodex/v1/gateway.proto
+  s_8dad1ed5ebd844::t_051442bd1c8631 95-104
+cmd/crosscodexd/bootstrap_bdd_test.go
+  s_8dad1ed5ebd844::t_983e5736759d1d 73,101,121,263,293
+internal/catalog/rpc_errors_bdd_test.go
+  s_8dad1ed5ebd844::t_831e10027f4703 22-23,48-50,53,67,81-87,110-111
+  s_8dad1ed5ebd844::t_72d1652d7d450d 51-52
+  s_8dad1ed5ebd844::t_a9e916915ea994 112-113
+api/proto/crosscodex/v1/catalog.proto
+  s_8dad1ed5ebd844::t_33288f5a565c14 173-175
+  s_8dad1ed5ebd844::t_051442bd1c8631 33-45,166-172,176-182
+  s_8dad1ed5ebd844::t_c3f2fc11c07385 183
+internal/catalog/retire.go
+  s_8dad1ed5ebd844::t_72d1652d7d450d 249-250,252-255
+  s_8dad1ed5ebd844::t_fe43a7cd5af6e3 1-248,251,256-353
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "18d89eb8f3496a945976ebc8af8d42e248533b72",
+  "prompts": {},
+  "sessions": {
+    "s_8dad1ed5ebd844": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04da376b-50a2-402d-ab80-36096cc27a2d",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
