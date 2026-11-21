@@ -1,0 +1,19 @@
+test/tooling/smoke-up-hardening.venom.yml
+  s_0a2dd9a6c45831::t_dd86bba979d4fa 22,34,45,78,89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "b62e99b0381f024410b779318efc166ac5b04f2e",
+  "prompts": {},
+  "sessions": {
+    "s_0a2dd9a6c45831": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "06e531fe-7f3b-4918-aa31-6c532b8bac3c",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
