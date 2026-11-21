@@ -1,129 +1,252 @@
 README.md
   s_8dad1ed5ebd844::t_9a99952a75b000 95-97,350-358,404
+  s_8dad1ed5ebd844::t_79daba0155ee03 352-357
+  s_8dad1ed5ebd844::t_bec709997e0946 359
+  s_8dad1ed5ebd844::t_c57a25eeb3ff71 96
+  s_694d533b8f36da::t_740de438042d72 350,358
+  s_694d533b8f36da::t_4b0c035b4787c6 97
+  s_694d533b8f36da::t_f959e09aec93de 95,404
 api/proto/crosscodex/v1/admin.proto
   s_8dad1ed5ebd844::t_534e7f685d28d5 245-247
+  s_694d533b8f36da::t_3dfddd242f240b 245-247
 api/proto/crosscodex/v1/catalog.proto
   s_8dad1ed5ebd844::t_ccc6274fc218f0 33-45,91-95,171-188
+  s_8dad1ed5ebd844::t_33288f5a565c14 178-180
+  s_8dad1ed5ebd844::t_051442bd1c8631 33-45,171-177,181-187
+  s_8dad1ed5ebd844::t_c3f2fc11c07385 188
+  s_8dad1ed5ebd844::t_3adb2e9a370c4b 91-95
 api/proto/crosscodex/v1/gateway.proto
   s_8dad1ed5ebd844::t_3a420bc360daab 95-104
+  s_8dad1ed5ebd844::t_051442bd1c8631 95-104
 api/proto/crosscodex/v1/pipeline.proto
   s_8dad1ed5ebd844::t_2787bf355622b7 108-113
+  s_694d533b8f36da::t_bcf992cd2718dc 108-113
 api/proto/crosscodex/v1/synthesis.proto
   s_8dad1ed5ebd844::t_4f14ddc97b6922 336-343
+  s_694d533b8f36da::t_492d8cf4d22e21 336-343
 cmd/crosscodex/catalog.go
   s_8dad1ed5ebd844::t_a48dbdda73bbfb 17,32,373,428,463-553,619
+  s_8dad1ed5ebd844::t_09a4f439e68469 32,463-552
+  s_8dad1ed5ebd844::t_854459ea4bdab6 553
+  s_8dad1ed5ebd844::t_febe34d4d00495 17
+  s_694d533b8f36da::t_6870438c744372 373,428,619
 cmd/crosscodex/catalog_retire_bdd_test.go
   s_8dad1ed5ebd844::t_15a126ca05760d 1-104
+  s_8dad1ed5ebd844::t_8adeaae44e97a8 1-104
 cmd/crosscodex/jobcatalogs.go
   s_8dad1ed5ebd844::t_0da5a4aa97ac09 12,49-50,52-60,63-64,70,132-133,158-160,172-173,175,184-188
+  s_694d533b8f36da::t_87207c469cd8ce 12,49-50,52-60,63-64,70,132-133,158-160,172-173,175,184-188
 cmd/crosscodex/results.go
   s_8dad1ed5ebd844::t_05d5e618813178 344-348
+  s_694d533b8f36da::t_4bf091fe75f8f7 344-348
 cmd/crosscodex/results_bdd_test.go
   s_8dad1ed5ebd844::t_0cdcb1cf73d463 406-420
+  s_8dad1ed5ebd844::t_d41997cdee6466 406-420
 cmd/crosscodex/run_bdd_test.go
   s_8dad1ed5ebd844::t_d6555872279a79 569-624
+  s_8dad1ed5ebd844::t_189d59a620d8a4 569-624
 cmd/crosscodexd/bootstrap.go
   s_8dad1ed5ebd844::t_5eaf7701c18066 349-353,402,411-415,451-457,471,556-558,567,579-581,644-646,649,654,659-666,678-691,696,1111-1113
+  s_8dad1ed5ebd844::t_fc5bf297c7b253 349-353,402,411-415,451-452,454-457,471,556-558,567,579-581,644-646,649,654,659-666,678-691,696,1111-1113
+  s_8dad1ed5ebd844::t_983e5736759d1d 453
 cmd/crosscodexd/bootstrap_bdd_test.go
   s_8dad1ed5ebd844::t_a57503ee83c067 73,101,121,263,293
+  s_8dad1ed5ebd844::t_983e5736759d1d 73,101,121,263,293
 docs/dev/catalog-versions.md
   s_8dad1ed5ebd844::t_d0f54987c32731 1-186
+  s_8dad1ed5ebd844::t_7405686b69109e 1-22,24-38,43-63,85-97,101-140,145-147,152-165,169-186
+  s_8dad1ed5ebd844::t_81b387049deaa2 23
+  s_694d533b8f36da::t_7947008d1fe4af 148-151
+  s_694d533b8f36da::t_344769a9f142cf 64-84
 docs/dev/migrations.md
   s_8dad1ed5ebd844::t_5b38653cc878e0 16,20,31
+  s_8dad1ed5ebd844::t_5efaa5cddcfc0a 16,20,31
 docs/dev/retention.md
   s_8dad1ed5ebd844::t_bb759884bb8126 145-146,159-179,185-234
+  s_8dad1ed5ebd844::t_4b010728a2d92c 145-146,159-167,175-179,185-204,209-211,215-233
+  s_8dad1ed5ebd844::t_32553a9fee211d 234
+  s_694d533b8f36da::t_e6d29f7c628074 205-208,212-214
+  s_694d533b8f36da::t_9c5f2b72d39552 168-174
 internal/catalog/catalog_bdd_test.go
   s_8dad1ed5ebd844::t_66688ebe4b9479 79-81,89,170-197,603,640-669,733,760
+  s_8dad1ed5ebd844::t_831e10027f4703 170-191,196
+  s_8dad1ed5ebd844::t_72d1652d7d450d 195
+  s_8dad1ed5ebd844::t_2af422184ca877 197
+  s_8dad1ed5ebd844::t_38607a1763d68f 79-81
+  s_8dad1ed5ebd844::t_dc17df7dbba368 647
+  s_8dad1ed5ebd844::t_e6ceb43cf3a346 640-646,648-663,665-669
+  s_8dad1ed5ebd844::t_423518c78d5500 89,192-194,603,664,733,760
 internal/catalog/catalog_integration_bdd_test.go
   s_8dad1ed5ebd844::t_93c4f3a36fa5e7 31-32,1928-2098,2100-2104
+  s_8dad1ed5ebd844::t_3507c4a7c51c16 31-32,1928-1951,1953-1955,1957,1960-1962,1968-1970,1974,1976-2098,2100-2104
+  s_694d533b8f36da::t_ea3dc2770c7262 1952,1956,1958-1959,1963-1967,1971-1973,1975
 internal/catalog/catalog_parsed_event_bdd_test.go
   s_8dad1ed5ebd844::t_6f3b9042d4e09b 101-106
+  s_8dad1ed5ebd844::t_831e10027f4703 101-103,106
+  s_8dad1ed5ebd844::t_6b7a54d5f5c026 104-105
 internal/catalog/export_test.go
   s_8dad1ed5ebd844::t_8b59397b948e2a 35-38
+  s_8dad1ed5ebd844::t_c8f16dda26fb1a 35-37
+  s_694d533b8f36da::t_21f566a755e08c 38
 internal/catalog/retire.go
   s_8dad1ed5ebd844::t_0e45df853836cc 1-358
+  s_8dad1ed5ebd844::t_72d1652d7d450d 250-251,253-256
+  s_8dad1ed5ebd844::t_fe43a7cd5af6e3 1-108,116-249,252,257-271,277-358
+  s_8dad1ed5ebd844::t_ae787454e745fd 109-115
+  s_8dad1ed5ebd844::t_206748babee31d 272-276
 internal/catalog/retire_bdd_test.go
   s_8dad1ed5ebd844::t_4ce34f6cabac65 1-440
+  s_8dad1ed5ebd844::t_e1666bdc0a8dc4 300
+  s_8dad1ed5ebd844::t_831e10027f4703 1-142,144,153-189,203-245,247-248,265-299,301-440
+  s_694d533b8f36da::t_9ac5775c6966a5 143,145-152,190-202,246,249-264
 internal/catalog/rpc_errors_bdd_test.go
   s_8dad1ed5ebd844::t_d8b40344614d5b 22-23,48-53,67,81-87,110-113
+  s_8dad1ed5ebd844::t_831e10027f4703 22-23,48-50,53,67,81-87,110-111
+  s_8dad1ed5ebd844::t_72d1652d7d450d 52
+  s_8dad1ed5ebd844::t_a9e916915ea994 112-113
+  s_694d533b8f36da::t_e96c8696cf00fd 51
 internal/catalog/service.go
   s_8dad1ed5ebd844::t_4fb9e20766395a 19,51-54,62,98-112,365,429,518,525-526,535,538,541-545,554,556,561,563,565,570,573
+  s_8dad1ed5ebd844::t_72d1652d7d450d 51-54,62,98-112
+  s_8dad1ed5ebd844::t_5e1c69579254ae 365
+  s_8dad1ed5ebd844::t_f3d3cbf1b9bcf5 541,544-545
+  s_8dad1ed5ebd844::t_c97aa28783af38 543
+  s_8dad1ed5ebd844::t_5545041d702436 429,518,525-526,535,538,542,554,556,561,565,570,573
+  s_8dad1ed5ebd844::t_febe34d4d00495 19
+  s_8dad1ed5ebd844::t_493d2729edd97a 563
 internal/catalog/store.go
   s_8dad1ed5ebd844::t_58885d21014d0f 9,13,45-54,684-825
+  s_8dad1ed5ebd844::t_7e4b8ac68cd281 9,13,45-49,684-735,755-758,760-761,763-766,768-771,773,775-776,778-779,783,785-786,788-789,791,794-795,801-804,807-809,811,813,816-818,820-822,824
+  s_8dad1ed5ebd844::t_72d1652d7d450d 762,767,774,782,787,790,793,814-815,823
+  s_8dad1ed5ebd844::t_8b040d2e67dca4 825
+  s_694d533b8f36da::t_30e49c71901a91 50-54,736-754,759,772,777,780-781,784,792,796-800,805-806,810,812,819
 internal/catalog/versioning.go
   s_8dad1ed5ebd844::t_17e64ae62a8a1a 13-14,18-20,22-24,83
+  s_8dad1ed5ebd844::t_e14695fe4f65f8 18-20,22-24
+  s_694d533b8f36da::t_7737f38b521381 13-14,83
 internal/gateway/backend_errors_bdd_test.go
   s_8dad1ed5ebd844::t_ade5542ce65133 165-172
+  s_8dad1ed5ebd844::t_23d26cbed01ce2 165
+  s_8dad1ed5ebd844::t_94611976782bc7 166-172
 internal/gateway/backends.go
   s_8dad1ed5ebd844::t_d8ec01677deb3e 24
+  s_8dad1ed5ebd844::t_76f4270946ef0a 24
 internal/gateway/catalog.go
   s_8dad1ed5ebd844::t_8072c4628d08cf 11,76-111
+  s_8dad1ed5ebd844::t_3437fd48e00330 11
+  s_8dad1ed5ebd844::t_76f4270946ef0a 76-108
+  s_8dad1ed5ebd844::t_fb9d8bb58c663d 109-111
 internal/gateway/crosswalk.go
   s_8dad1ed5ebd844::t_71b10747877940 19,142,144-149,299-301,307
+  s_8dad1ed5ebd844::t_3d8e18c68cd34b 19
+  s_8dad1ed5ebd844::t_c8b4a0f8c1933e 142,144-149,299-301,307
 internal/gateway/crosswalk_bdd_test.go
   s_8dad1ed5ebd844::t_2d3981b46ea681 240-255
+  s_8dad1ed5ebd844::t_6ec58a01ca5662 240-255
 internal/gateway/document.go
   s_8dad1ed5ebd844::t_31cb8b93ff80d8 129
+  s_8dad1ed5ebd844::t_5b8a5eb58c3c0d 129
 internal/gateway/document_attestation_bdd_test.go
   s_8dad1ed5ebd844::t_4bff85d7bb4cc2 132-148,150-159
+  s_694d533b8f36da::t_a2b377b5fff6be 132-148,150-159
 internal/gateway/gateway_bdd_test.go
   s_8dad1ed5ebd844::t_4462a34839d4e7 79,105-108,384-438
+  s_8dad1ed5ebd844::t_bf2b7d162b9f99 384-436
+  s_8dad1ed5ebd844::t_3437fd48e00330 79,105-106
+  s_8dad1ed5ebd844::t_2a407cee268337 107-108,437-438
 internal/gateway/stream_bdd_test.go
   s_8dad1ed5ebd844::t_8980aafb088c6c 140-143
+  s_8dad1ed5ebd844::t_3437fd48e00330 140-143
 internal/pipeline/catalog_name_reader.go
   s_8dad1ed5ebd844::t_aa2ea21eda0484 16,23-25,116-122,132-135
+  s_694d533b8f36da::t_41c7ab44730fb7 16,23-25,116-122,132-135
 internal/pipeline/catalog_name_reader_bdd_test.go
   s_8dad1ed5ebd844::t_d697c3ee3d78a8 7,33,38,43-55
+  s_694d533b8f36da::t_63e41d76b90253 7,33,38,43-55
 internal/pipeline/catalog_readers_integration_test.go
   s_8dad1ed5ebd844::t_bf326315bac9f6 166-180
+  s_8dad1ed5ebd844::t_beb3e44d0bc88e 166-180
 internal/pipeline/catalog_readers_telemetry_bdd_test.go
   s_8dad1ed5ebd844::t_186bf840979399 7,96-98
+  s_8dad1ed5ebd844::t_7a24f206d0553d 7
+  s_8dad1ed5ebd844::t_38607a1763d68f 96-98
 internal/results/service.go
   s_8dad1ed5ebd844::t_f0c5f4b9769afc 472-473
+  s_694d533b8f36da::t_469c974f7478a5 472-473
 internal/results/service_bdd_test.go
   s_8dad1ed5ebd844::t_159758885c7c75 425-426,433-434
+  s_694d533b8f36da::t_5c02dbe3d26c37 425-426,433-434
 internal/results/store_pg.go
   s_8dad1ed5ebd844::t_e7f0814d425e1f 19,225-228,236-238,241-244,258
+  s_8dad1ed5ebd844::t_3678d9171eba41 19
+  s_694d533b8f36da::t_b7a8ec1ebea01a 225-228,236-238,241-244,258
 internal/results/store_pg_integration_bdd_test.go
   s_8dad1ed5ebd844::t_e0db39586aaeb9 576-600
+  s_694d533b8f36da::t_3613eafba1c4ac 576-600
 internal/results/types.go
   s_8dad1ed5ebd844::t_e7e62b46bb086e 79-81,83-89
+  s_694d533b8f36da::t_722a6e2adf6f27 79-81,83-89
 pkg/catalogversion/catalogversion.go
   s_8dad1ed5ebd844::t_52858a2910b273 1-48
+  s_8dad1ed5ebd844::t_c73f3fc17d0cf4 1-48
 pkg/catalogversion/catalogversion_bdd_test.go
   s_8dad1ed5ebd844::t_cdf6f6f2608654 1-47
+  s_8dad1ed5ebd844::t_38607a1763d68f 39-40
+  s_8dad1ed5ebd844::t_aef70ff9f2dd25 1-38,41-47
 pkg/catalogversion/catalogversion_property_test.go
   s_8dad1ed5ebd844::t_73ede4d4c30d8f 1-32
+  s_694d533b8f36da::t_bfb2a0806c26c6 1-32
 pkg/catalogversion/catalogversion_suite_test.go
   s_8dad1ed5ebd844::t_21ee21b336d0bc 1-13
+  s_694d533b8f36da::t_911f170623bf80 1-13
 pkg/db/catalog_documents_integration_bdd_test.go
   s_8dad1ed5ebd844::t_483c591c1acf16 169-209
+  s_8dad1ed5ebd844::t_f66d4d5aa6424b 169-209
 pkg/db/migrations/002_catalog_documents.down.sql
   s_8dad1ed5ebd844::t_591042bda20695 4
+  s_8dad1ed5ebd844::t_dfcafe5a2cc7a6 4
 pkg/db/migrations/002_catalog_documents.up.sql
   s_8dad1ed5ebd844::t_0fff677573c30f 48-56
+  s_8dad1ed5ebd844::t_dfcafe5a2cc7a6 48-56
 pkg/jobconfig/jobconfig.go
   s_8dad1ed5ebd844::t_d58c58797eb05f 37-39,41-45,73-77,86-87
+  s_694d533b8f36da::t_a264d8f2f0fd7b 37-39,41-45,73-77,86-87
 pkg/jobconfig/jobconfig_bdd_test.go
   s_8dad1ed5ebd844::t_1011dc36205686 76-83
+  s_8dad1ed5ebd844::t_af165429154522 76-83
 pkg/jobconfig/jobconfig_property_test.go
   s_8dad1ed5ebd844::t_2a8d64f50692bc 26-27,38-39,41-42
+  s_694d533b8f36da::t_e76daf575d1786 26-27,38-39,41-42
 pkg/retention/candidate.go
   s_8dad1ed5ebd844::t_7f30af25a079fe 34-38
+  s_8dad1ed5ebd844::t_c9f0f6ec4a2967 34-38
 pkg/retention/collector.go
   s_8dad1ed5ebd844::t_01909c9c274dbb 77-80,88-89,107-111,121-122,134
+  s_694d533b8f36da::t_e74c7c693c53cf 77-80,88-89,107-111,121-122,134
 pkg/retention/collector_bdd_test.go
   s_8dad1ed5ebd844::t_f8ae9e58c33ad0 70-71,81-98,170
+  s_694d533b8f36da::t_00979ebffc33c4 70-71,81-98,170
 pkg/retention/engine.go
   s_8dad1ed5ebd844::t_087896a6636861 104-105,160
+  s_694d533b8f36da::t_2b10083bf68a02 104-105,160
 pkg/retention/engine_bdd_test.go
   s_8dad1ed5ebd844::t_29f18d4f00c69f 65-74,168-192
+  s_8dad1ed5ebd844::t_8afda3843c15cd 65-74
+  s_694d533b8f36da::t_b5947e8d5b27fd 168-192
 pkg/retention/engine_integration_bdd_test.go
   s_8dad1ed5ebd844::t_c9fb8a305615ea 410-454,551-552,726-790
+  s_8dad1ed5ebd844::t_f66d4d5aa6424b 410-454,551-552,727-739,742,753-789
+  s_8dad1ed5ebd844::t_4965b2e603a1d6 790
+  s_694d533b8f36da::t_eaa06939afcc31 726,740-741,743-752
 pkg/retention/purge.go
   s_8dad1ed5ebd844::t_ac1f9923d76b9b 5-6,13-18,22-26,123-145,155,159-179,188-217
+  s_8dad1ed5ebd844::t_8448846d2ece24 5-6,13-18,22-26,123-145,155,159,164-179,188-215,217
+  s_8dad1ed5ebd844::t_6b3c1397ea5db8 160-163
+  s_8dad1ed5ebd844::t_5fe79bfd7173d3 216
 pkg/retention/purge_bdd_test.go
   s_8dad1ed5ebd844::t_40e9b22b70d949 5,12,29-56,106-107,109-115,117-122,125-129,138-196
+  s_8dad1ed5ebd844::t_8afda3843c15cd 5,12,29-56,106-107,109-115,117-122,125-129,138-195
+  s_8dad1ed5ebd844::t_e7595e92454f58 196
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -131,6 +254,14 @@ pkg/retention/purge_bdd_test.go
   "base_commit_sha": "41116a500224861888b8450516e696bc1c090a03",
   "prompts": {},
   "sessions": {
+    "s_694d533b8f36da": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a3bbda4871c1c56c9",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
     "s_8dad1ed5ebd844": {
       "agent_id": {
         "tool": "claude",
