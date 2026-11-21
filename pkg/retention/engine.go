@@ -101,7 +101,8 @@ func (e *Engine) publishAudit(ctx context.Context, rep *Report, c Candidate, act
 }
 
 // Scan runs one retention sweep. It loads active holds, collects expired
-// candidates from all collectors, filters held candidates, and (unless
+// candidates from all collectors, filters held and Protected candidates
+// (both counted in Report.Held), and (unless
 // DryRun) archives then purges each remaining candidate, emitting an audit
 // record for each completed action.
 //
@@ -156,7 +157,7 @@ func (e *Engine) Scan(ctx context.Context, opts ScanOptions) (rep Report, err er
 		cc.Scanned++
 		rep.Scanned++
 
-		if hc.Held(c) {
+		if c.Protected || hc.Held(c) {
 			cc.Held++
 			rep.Held++
 			rep.PerClass[c.Class] = cc

@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	analyzerresults "github.com/complytime-labs/crosscodex/pkg/analyzer/results"
+	"github.com/complytime-labs/crosscodex/pkg/catalogversion"
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
@@ -221,7 +222,10 @@ func readAnalysis(ctx context.Context, tx db.Transaction, op, tenantID string, c
 	if !ok {
 		return nil, nil
 	}
-	rows, err := tx.Query(ctx, `SELECT catalog_id, name, version FROM catalogs WHERE tenant_id = $1 AND catalog_id = ANY($2::text[])`,
+	rows, err := tx.Query(ctx, `
+		SELECT catalog_id, name, version, COALESCE(document_slug, ''), COALESCE(version_label, ''), created_at,
+		       COALESCE(content_hash, ''), COALESCE(supersedes_catalog_id, '')
+		FROM catalogs WHERE tenant_id = $1 AND catalog_id = ANY($2::text[])`,
 		tenantID, cats.CatalogIDs())
 	if err != nil {
 		return nil, fmt.Errorf("%s: read the job's catalogs: %w", op, err)
@@ -229,8 +233,14 @@ func readAnalysis(ctx context.Context, tx db.Transaction, op, tenantID string, c
 	found := make(map[string]CatalogSummary, 2)
 	for rows.Next() {
 		var c CatalogSummary
-		if err := rows.Scan(&c.ID, &c.Name, &c.Version); err != nil {
+		var slug, label, contentHash, supersedes string
+		var importedAt time.Time
+		if err := rows.Scan(&c.ID, &c.Name, &c.Version, &slug, &label, &importedAt, &contentHash, &supersedes); err != nil {
 			return nil, errors.Join(fmt.Errorf("%s: scan the job's catalog: %w", op, err), rows.Close())
+		}
+		if slug != "" {
+			c.VersionDisplay = catalogversion.Format(slug, label, importedAt, contentHash)
+			c.SupersedesCatalogID = supersedes
 		}
 		c.Imported = true
 		found[c.ID] = c
@@ -245,6 +255,7 @@ func readAnalysis(ctx context.Context, tx db.Transaction, op, tenantID string, c
 		}
 		if label := cats.LabelOf(id); label.Recorded {
 			c.Name, c.Version, c.Snapshot = label.Name, label.Version, true
+			c.VersionDisplay, c.SupersedesCatalogID = label.VersionDisplay, label.SupersedesCatalogID
 		}
 		return c
 	}

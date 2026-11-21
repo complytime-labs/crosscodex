@@ -9,6 +9,7 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/catalogversion"
 )
 
 // Directions a job pairs its catalogs' controls in, as run status reports
@@ -45,23 +46,28 @@ const maxJobErrorBytes = 2048
 // when the lookup did not return the catalog; on NotFound (deleted or purged
 // after the job was created, or not visible to the caller's tenant)
 // LookupError is empty, and on any other failure it holds the cleaned reason.
+// VersionDisplay and SupersedesID describe a version of a catalog document,
+// recorded or current as Name is; both are empty outside any document.
 type catalogRef struct {
-	ID           string
-	Name         string
-	Version      string
-	ControlCount int32
-	Found        bool
-	LookupError  string
-	Snapshot     bool
+	ID             string
+	Name           string
+	Version        string
+	VersionDisplay string
+	SupersedesID   string
+	ControlCount   int32
+	Found          bool
+	LookupError    string
+	Snapshot       bool
 }
 
-// withSnapshot returns r with snap's name and version when snap is r's
-// catalog's snapshot; r unchanged otherwise.
+// withSnapshot returns r with snap's name, version and document version when
+// snap is r's catalog's snapshot; r unchanged otherwise.
 func (r catalogRef) withSnapshot(snap *pb.CatalogSnapshot) catalogRef {
 	if snap == nil || snap.GetCatalogId() != r.ID {
 		return r
 	}
 	r.Name, r.Version, r.Snapshot = snap.GetName(), snap.GetVersion(), true
+	r.VersionDisplay, r.SupersedesID = snap.GetVersionDisplay(), snap.GetSupersedesCatalogId()
 	return r
 }
 
@@ -123,7 +129,8 @@ func lookupCatalog(ctx context.Context, client crosscodexv1connect.GatewayServic
 		return catalogRef{ID: id, LookupError: intanalyzer.CleanDisplay(err.Error(), maxLookupErrorBytes)}
 	}
 	c := resp.Msg.GetCatalog()
-	return catalogRef{ID: id, Name: c.GetName(), Version: c.GetVersion(), ControlCount: c.GetControlCount(), Found: true}
+	return catalogRef{ID: id, Name: c.GetName(), Version: c.GetVersion(), ControlCount: c.GetControlCount(), Found: true,
+		VersionDisplay: catalogversion.OfCatalog(c), SupersedesID: c.GetSupersedesCatalogId()}
 }
 
 // describe renders r for text output. Name and version are uploader- or
@@ -148,6 +155,9 @@ func (r catalogRef) describe() string {
 	if version == "" {
 		version = "not recorded"
 	}
+	if r.VersionDisplay != "" {
+		version += ", document version " + intanalyzer.CleanDisplay(r.VersionDisplay, maxUntrustedDisplayBytes)
+	}
 	name := intanalyzer.CleanDisplay(r.Name, maxUntrustedDisplayBytes)
 	if state != "" {
 		return fmt.Sprintf("%s (version %s, ID %s, %s)", name, version, id, state)
@@ -159,8 +169,10 @@ func (r catalogRef) describe() string {
 	return line
 }
 
+// toJSON returns r's JSON form. version_display and supersedes_catalog_id
+// are present only for a version of a catalog document.
 func (r catalogRef) toJSON() map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"catalog_id":    r.ID,
 		"name":          r.Name,
 		"version":       r.Version,
@@ -169,6 +181,11 @@ func (r catalogRef) toJSON() map[string]any {
 		"lookup_error":  r.LookupError,
 		"snapshot":      r.Snapshot,
 	}
+	if r.VersionDisplay != "" {
+		out["version_display"] = r.VersionDisplay
+		out["supersedes_catalog_id"] = r.SupersedesID
+	}
+	return out
 }
 
 // toJSON returns the JSON form of jc: nil (null) for a job with no catalogs.

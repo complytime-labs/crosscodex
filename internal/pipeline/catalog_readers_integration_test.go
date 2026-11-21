@@ -163,6 +163,21 @@ var _ = Describe("Catalog readers integration", func() {
 		Expect(snap.GetCatalogId()).To(Equal(own))
 		Expect(snap.GetName()).To(Equal("CSF 2.0"))
 		Expect(snap.GetVersion()).To(Equal("v1"))
+		Expect(snap.GetVersionDisplay()).To(BeEmpty(), "a catalog outside any document has no version display")
+		Expect(snap.GetSupersedesCatalogId()).To(BeEmpty())
+
+		// A second catalog becomes a version of a document that supersedes own.
+		versioned := "cat-ver-" + uuid.NewString()
+		seedEmbeddedCatalog(ctx, idb, tenantA, versioned, "CSF 2.0", "names-model", nil)
+		Expect(idb.suPool.Exec(ctx, `
+			UPDATE catalogs SET document_slug = 'csf', version_label = 'Rev 2', supersedes_catalog_id = $3,
+			       link_method = 'declared', content_hash = '0123456789abcdef', created_at = '2026-01-02T12:00:00Z'
+			WHERE catalog_id = $1 AND tenant_id = $2
+		`, versioned, tenantA, own)).To(Succeed())
+		snap, err = reader.CatalogSnapshot(ctxA, tenantA, versioned)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(snap.GetVersionDisplay()).To(Equal("csf @ Rev 2 (2026-01-02 · 012345)"))
+		Expect(snap.GetSupersedesCatalogId()).To(Equal(own))
 
 		_, err = reader.CatalogSnapshot(ctxA, tenantA, others)
 		Expect(err).To(MatchError(ErrCatalogNotFound), "tenant A read tenant B's catalog name")

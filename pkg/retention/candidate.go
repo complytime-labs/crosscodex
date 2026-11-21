@@ -31,4 +31,9 @@ type Candidate struct {
 	CreatedAt time.Time
 	Size      int64
 	ObjectKey string
+	// Protected marks an expired candidate its store keeps regardless of
+	// policy: a catalog that is its document's current version (see
+	// catalogCollector). Engine.Scan skips it exactly like a held candidate
+	// (counted in Held; not archived, purged or audited).
+	Protected bool
 }

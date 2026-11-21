@@ -8,6 +8,7 @@ import (
 	"connectrpc.com/connect"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -69,6 +70,42 @@ func (s *Service) GetCatalog(ctx context.Context, req *connect.Request[pb.GetCat
 	}
 
 	s.recordMetrics(ctx, "GetCatalog", start, connect.Code(0))
+	return resp, nil
+}
+
+// RetireCatalogVersion deletes catalog versions, so it is admin only, like
+// the other gateway operations that change or expose data beyond the
+// caller's own imports (QueryGraph, feedback). The backend decides what may be
+// retired.
+func (s *Service) RetireCatalogVersion(ctx context.Context, req *connect.Request[pb.RetireCatalogVersionRequest]) (*connect.Response[pb.RetireCatalogVersionResponse], error) {
+	start := time.Now()
+	identity := identityFromContext(ctx)
+	if identity == nil {
+		return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("not authenticated"))
+	}
+	if err := authn.RequireRole(*identity, authn.RoleAdmin); err != nil {
+		s.recordMetrics(ctx, "RetireCatalogVersion", start, connect.CodePermissionDenied)
+		return nil, connect.NewError(connect.CodePermissionDenied, errors.New("retiring a catalog version deletes data, so it requires the admin role. Ask an administrator to retire it, or to map your certificate to the admin role in auth.x509_mappings"))
+	}
+
+	ctx, endSpan := s.startHandlerSpan(ctx, "RetireCatalogVersion", identity,
+		attribute.String("catalog.document_slug", req.Msg.GetDocumentSlug()))
+	defer endSpan()
+
+	if s.catalog == nil {
+		return nil, connect.NewError(connect.CodeUnavailable, errors.New("catalog backend not configured"))
+	}
+
+	req.Msg.TenantContext = buildTenantContext(identity)
+
+	resp, err := s.catalog.RetireCatalogVersion(ctx, req)
+	if err != nil {
+		err = s.publicError(ctx, "RetireCatalogVersion", err)
+		s.recordMetrics(ctx, "RetireCatalogVersion", start, connect.CodeOf(err))
+		return nil, err
+	}
+
+	s.recordMetrics(ctx, "RetireCatalogVersion", start, connect.Code(0))
 	return resp, nil
 }
 

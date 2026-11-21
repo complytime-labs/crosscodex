@@ -1,6 +1,7 @@
 -- Reverses 002_catalog_documents.up.sql. Version lineage is lost; the catalogs
 -- rows, their controls and every other dependent are untouched.
 
+-- Dropping the table and the column also drops purge_user's grants on them.
 DROP TABLE IF EXISTS catalog_documents;
 
 ALTER TABLE catalogs

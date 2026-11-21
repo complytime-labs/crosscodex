@@ -13,11 +13,11 @@ pkg/db/migrations/
   embed.go                       # //go:embed *.sql → migrations.FS
   001_initial_schema.up.sql      # the baseline: roles, tables, RLS, triggers, functions, grants
   001_initial_schema.down.sql    # drops everything the baseline creates, roles included
-  002_catalog_documents.up.sql   # catalog_documents table; version-lineage columns on catalogs (#204)
+  002_catalog_documents.up.sql   # catalog_documents table; version-lineage columns on catalogs; purge_user lineage grants (#204)
   002_catalog_documents.down.sql # drops them; catalogs rows and their dependents are untouched
 ```
 
-`001_initial_schema` is the whole pre-release schema in one baseline, grouped by domain (roles; tenants and identity; jobs; catalogs; retention; verdicts; tenant administration; restricted-role access; the AGE graph lifecycle). `002_catalog_documents` is the first append-only migration: it adds nullable columns and one table, so databases at version 1 upgrade with `crosscodexd migrate`. The next migration is `003`.
+`001_initial_schema` is the whole pre-release schema in one baseline, grouped by domain (roles; tenants and identity; jobs; catalogs; retention; verdicts; tenant administration; restricted-role access; the AGE graph lifecycle). `002_catalog_documents` is the first append-only migration: it adds nullable columns and one table, so databases at version 1 upgrade with `crosscodexd migrate`. It also grants `purge_user` `SELECT` on `catalog_documents` and `UPDATE (supersedes_catalog_id)` on `catalogs`, so retention purge and catalog retire can re-point the version chain (see [retention.md](retention.md#role-based-purge-carve-out)); those grants were added to `002` in place before the first release, so a development database already at version 2 must be recreated to get them. The next migration is `003`.
 
 Each migration is a pair of SQL files:
 
@@ -28,7 +28,7 @@ The numeric prefix (`NNN`) determines execution order. Use zero-padded, sequenti
 
 ## Editing Policy
 
-- **Until the first release**, the baseline may be edited in place. No released database needs an upgrade path, so fold the change into `001_initial_schema.up.sql` (and its down) and recreate development databases with `crosscodexd migrate`. A database created from the earlier baseline still reports version 1, so when the change adds a column, add it to `baselineColumns` (a table column) or `baselineFunctionColumns` (a column a set-returning function returns) in `pkg/db/role_check.go`: `CheckSchemaVersion` then refuses such a database at daemon startup, telling the operator to recreate it, instead of letting it fail at its first write.
+- **Until the first release**, the baseline (and any later pre-release migration, such as `002`) may be edited in place. No released database needs an upgrade path, so fold the change into `001_initial_schema.up.sql` (and its down) and recreate development databases with `crosscodexd migrate`. A database created from the earlier baseline still reports version 1, so when the change adds a column, add it to `baselineColumns` (a table column) or `baselineFunctionColumns` (a column a set-returning function returns) in `pkg/db/role_check.go`: `CheckSchemaVersion` then refuses such a database at daemon startup, telling the operator to recreate it, instead of letting it fail at its first write.
 - **After the first release**, never edit an applied migration. Add a new one with the next sequence number; see [Checksum Verification Failure](#checksum-verification-failure).
 
 ## Creating a New Migration

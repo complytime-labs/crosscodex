@@ -126,7 +126,7 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 	}
 	if input.documentSlug != "" {
 		byProducts["document_slug"] = input.documentSlug
-		byProducts["version_label"] = input.versionLabel
+		byProducts["version_label"] = parseResp.Msg.GetVersionLabel()
 		byProducts["version"] = parseResp.Msg.GetVersion()
 	}
 	if err := s.attestIngest(ctx, "gateway."+input.rpcName, docID, catalogID, input.convertReq.GetContent(), byProducts); err != nil {

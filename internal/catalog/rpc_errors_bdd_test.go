@@ -19,6 +19,8 @@ import (
 	crosscodexv1 "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/catalog"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
+	"github.com/complytime-labs/crosscodex/pkg/retention"
+	"github.com/complytime-labs/crosscodex/pkg/retention/retentiontest"
 	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 )
 
@@ -43,6 +45,12 @@ func (f failingStore) ListControlsForCatalog(context.Context, string) ([]catalog
 func (f failingStore) UpsertCatalogVersion(context.Context, catalog.CatalogRecord, []catalog.ContainerRecord, []catalog.ControlRecord) error {
 	return f.err
 }
+func (f failingStore) ListDocumentVersions(context.Context, string) ([]catalog.CatalogRecord, string, error) {
+	return nil, "", f.err
+}
+func (f failingStore) JobsUsingCatalogs(context.Context, []string) (map[string][]catalog.JobUse, []string, error) {
+	return nil, nil, f.err
+}
 func (f failingStore) GetControl(context.Context, string) (*catalog.ControlRecord, error) {
 	return nil, f.err
 }
@@ -56,7 +64,7 @@ var _ = Describe("RPC error messages", func() {
 	const dbDetail = `ERROR: new row violates row-level security policy for table "catalogs" (SQLSTATE 42501)`
 	traceID := trace.TraceID{0x0a, 0xf7, 0x65, 0x19, 0x16, 0xcd, 0x43, 0xdd, 0x84, 0x48, 0xeb, 0x21, 0x1c, 0x80, 0x31, 0x9c}
 	tc := &crosscodexv1.TenantContext{TenantId: "tenant-1"}
-	methods := []string{"ParseCatalog", "GetCatalog", "ListCatalogs", "GetControl", "SearchControls"}
+	methods := []string{"ParseCatalog", "GetCatalog", "ListCatalogs", "GetControl", "SearchControls", "RetireCatalogVersion"}
 
 	var logs *bytes.Buffer
 
@@ -70,6 +78,13 @@ var _ = Describe("RPC error messages", func() {
 			catalog.WithStore(failingStore{err: err}),
 			catalog.WithStorage(stg),
 			catalog.WithLogger(slog.New(slog.NewTextHandler(logs, nil))),
+			catalog.WithRetention(catalog.Retention{
+				Holds: &retentiontest.Fake{},
+				Backends: func(string) (retention.Archiver, retention.Purger, error) {
+					return nil, nil, errors.New("retire must fail on the store before it needs the backends")
+				},
+				Audit: &retireRecorder{},
+			}),
 		)
 		return map[string]func(context.Context) error{
 			"ParseCatalog": func(ctx context.Context) error {
@@ -90,6 +105,10 @@ var _ = Describe("RPC error messages", func() {
 			},
 			"SearchControls": func(ctx context.Context) error {
 				_, e := svc.SearchControls(ctx, connect.NewRequest(&crosscodexv1.SearchControlsRequest{TenantContext: tc, Query: "policy"}))
+				return e
+			},
+			"RetireCatalogVersion": func(ctx context.Context) error {
+				_, e := svc.RetireCatalogVersion(ctx, connect.NewRequest(&crosscodexv1.RetireCatalogVersionRequest{TenantContext: tc, DocumentSlug: "nist", VersionLabel: []string{"Rev 4"}}))
 				return e
 			},
 		}

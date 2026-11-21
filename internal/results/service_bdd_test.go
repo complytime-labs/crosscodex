@@ -422,14 +422,16 @@ var _ = Describe("Service.ListMappings", func() {
 	Describe("the job's analysis", func() {
 		It("converts the page's analysis to the response", func() {
 			reader.page = results.Page{Analysis: &results.JobAnalysis{
-				Source:        results.CatalogSummary{ID: "cat-src", Name: "CSF 2.0", Version: "2.0", Imported: true, Snapshot: true},
+				Source: results.CatalogSummary{ID: "cat-src", Name: "CSF 2.0", Version: "2.0", Imported: true, Snapshot: true,
+					VersionDisplay: "csf @ Rev 2 (2026-01-02 · 012345)", SupersedesCatalogID: "cat-old"},
 				Target:        results.CatalogSummary{ID: "cat-gone"},
 				Bidirectional: true,
 			}}
 			resp, err := call(context.Background(), validRequest())
 			Expect(err).NotTo(HaveOccurred())
 			Expect(proto.Equal(resp.GetAnalysis(), &pb.JobAnalysis{
-				SourceCatalog: &pb.CatalogSummary{CatalogId: "cat-src", Name: "CSF 2.0", Version: "2.0", Imported: true, Snapshot: true},
+				SourceCatalog: &pb.CatalogSummary{CatalogId: "cat-src", Name: "CSF 2.0", Version: "2.0", Imported: true, Snapshot: true,
+					VersionDisplay: "csf @ Rev 2 (2026-01-02 · 012345)", SupersedesCatalogId: "cat-old"},
 				TargetCatalog: &pb.CatalogSummary{CatalogId: "cat-gone"},
 				Bidirectional: true,
 			})).To(BeTrue(), "got %v", resp.GetAnalysis())

@@ -30,6 +30,19 @@ service CatalogService {
 
   // Search controls by text/metadata
   rpc SearchControls(SearchControlsRequest) returns (SearchControlsResponse);
+
+  // Retire versions of a catalog document: archive each one, then delete it
+  // with its controls, containers, classifications, embeddings and cached
+  // results in one transaction, re-pointing the version that superseded it to
+  // its predecessor. All or nothing: when any named version is protected the
+  // request fails with FAILED_PRECONDITION, the message names every blocker,
+  // and nothing changes. A version is protected while it is the document's
+  // current version, an active legal hold covers it, a job under legal hold
+  // uses it, or a job that uses it has attestations. Graph nodes are left in
+  // place. FAILED_PRECONDITION also means the server cannot retire (it needs
+  // database.purge_dsn and an archive backend); NOT_FOUND means the document
+  // or a label does not exist.
+  rpc RetireCatalogVersion(RetireCatalogVersionRequest) returns (RetireCatalogVersionResponse);
 }
 
 enum CatalogFormat {
@@ -75,6 +88,11 @@ message ParseCatalogResponse {
   // Control differences against superseded_catalog_id. Absent when there is no
   // superseded catalog.
   ChangeReport change_report = 6;
+  // Set only when document_slug was given: the label stored for the version
+  // (the request's version_label, else the OSCAL metadata.version, else
+  // "date · hash6"). For content already in the document it is the label
+  // stored by the first import.
+  string version_label = 7;
 }
 
 // ChangeReport lists control identifiers that differ between a version and the
@@ -148,6 +166,24 @@ message GetCatalogRequest {
 
 message GetCatalogResponse {
   Catalog catalog = 1;
+}
+
+message RetireCatalogVersionRequest {
+  TenantContext tenant_context = 1;
+  // The document whose versions to retire, as given to ParseCatalog's
+  // document_slug (for example "nist-800-53").
+  string document_slug = 2;
+  // One or more version labels of that document (Catalog.version_label), for
+  // example "Rev 4". Every label must name exactly one version; a repeated
+  // label is retired once. Singular to match Catalog.version_label, whose
+  // values it carries.
+  // protolint:disable:next REPEATED_FIELD_NAMES_PLURALIZED
+  repeated string version_label = 3;
+}
+
+message RetireCatalogVersionResponse {
+  // The catalog IDs that were archived and deleted, in request order.
+  repeated string retired_catalog_ids = 1;
 }
 
 message ListCatalogsRequest {

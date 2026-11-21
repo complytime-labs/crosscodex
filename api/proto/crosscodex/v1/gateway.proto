@@ -92,6 +92,16 @@ service GatewayService {
     };
   }
 
+  // Retire versions of a catalog document (admin only). See
+  // CatalogService.RetireCatalogVersion for what is deleted and what blocks it.
+  // INTERNAL: catalog.RetireCatalogVersion
+  rpc RetireCatalogVersion(RetireCatalogVersionRequest) returns (RetireCatalogVersionResponse) {
+    option (google.api.http) = {
+      post: "/v1/catalogs/documents/{document_slug}/retire"
+      body: "*"
+    };
+  }
+
   // Search controls
   // INTERNAL: catalog.SearchControls
   rpc SearchControls(SearchControlsRequest) returns (SearchControlsResponse) {

@@ -105,6 +105,12 @@ message CatalogSnapshot {
   string name = 2;
   // The OSCAL metadata.version; empty when import recorded none.
   string version = 3;
+  // Set when the catalog is a version of a catalog document: the version as
+  // "slug @ label (date · hash6)". Empty for a catalog outside any document.
+  string version_display = 4;
+  // The catalog this version superseded in its document; empty for a
+  // document's first version and outside any document.
+  string supersedes_catalog_id = 5;
 }
 
 message CreateJobResponse {

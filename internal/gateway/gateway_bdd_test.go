@@ -76,6 +76,7 @@ type mockCatalog struct {
 	getCatalogFn     func(context.Context, *connect.Request[pb.GetCatalogRequest]) (*connect.Response[pb.GetCatalogResponse], error)
 	searchControlsFn func(context.Context, *connect.Request[pb.SearchControlsRequest]) (*connect.Response[pb.SearchControlsResponse], error)
 	getControlFn     func(context.Context, *connect.Request[pb.GetControlRequest]) (*connect.Response[pb.GetControlResponse], error)
+	retireFn         func(context.Context, *connect.Request[pb.RetireCatalogVersionRequest]) (*connect.Response[pb.RetireCatalogVersionResponse], error)
 }
 
 func (m *mockCatalog) ParseCatalog(ctx context.Context, req *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
@@ -99,6 +100,10 @@ func (m *mockCatalog) SearchControls(ctx context.Context, req *connect.Request[p
 
 func (m *mockCatalog) GetControl(ctx context.Context, req *connect.Request[pb.GetControlRequest]) (*connect.Response[pb.GetControlResponse], error) {
 	return orDefault(m.getControlFn, ctx, req)
+}
+
+func (m *mockCatalog) RetireCatalogVersion(ctx context.Context, req *connect.Request[pb.RetireCatalogVersionRequest]) (*connect.Response[pb.RetireCatalogVersionResponse], error) {
+	return orDefault(m.retireFn, ctx, req)
 }
 
 type mockPipeline struct {
@@ -373,6 +378,61 @@ var _ = Describe("Catalog handlers", func() {
 		_, err := svc.ListCatalogs(ctx, connect.NewRequest(&pb.ListCatalogsRequest{}))
 		Expect(err).To(HaveOccurred())
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
+	})
+})
+
+var _ = Describe("RetireCatalogVersion handler", func() {
+	retireReq := func() *connect.Request[pb.RetireCatalogVersionRequest] {
+		return connect.NewRequest(&pb.RetireCatalogVersionRequest{
+			TenantContext: &pb.TenantContext{TenantId: "spoofed-tenant"},
+			DocumentSlug:  "nist", VersionLabel: []string{"Rev 4"},
+		})
+	}
+
+	It("forwards an admin's request with the authenticated tenant and returns the retired IDs", func() {
+		var captured *pb.RetireCatalogVersionRequest
+		svc := newTestService(gateway.WithCatalogBackend(&mockCatalog{
+			retireFn: func(_ context.Context, req *connect.Request[pb.RetireCatalogVersionRequest]) (*connect.Response[pb.RetireCatalogVersionResponse], error) {
+				captured = req.Msg
+				return connect.NewResponse(&pb.RetireCatalogVersionResponse{RetiredCatalogIds: []string{"cat-2"}}), nil
+			},
+		}))
+		resp, err := svc.RetireCatalogVersion(adminCtx(), retireReq())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Msg.GetRetiredCatalogIds()).To(Equal([]string{"cat-2"}))
+		Expect(captured.GetTenantContext().GetTenantId()).To(Equal("tenant-a"))
+		Expect(captured.GetDocumentSlug()).To(Equal("nist"))
+		Expect(captured.GetVersionLabel()).To(Equal([]string{"Rev 4"}))
+	})
+
+	DescribeTable("refuses a caller who may not delete catalog data, without reaching the backend",
+		func(ctx context.Context, code connect.Code, wantMsg string) {
+			called := false
+			svc := newTestService(gateway.WithCatalogBackend(&mockCatalog{
+				retireFn: func(context.Context, *connect.Request[pb.RetireCatalogVersionRequest]) (*connect.Response[pb.RetireCatalogVersionResponse], error) {
+					called = true
+					return connect.NewResponse(&pb.RetireCatalogVersionResponse{}), nil
+				},
+			}))
+			_, err := svc.RetireCatalogVersion(ctx, retireReq())
+			Expect(connect.CodeOf(err)).To(Equal(code))
+			Expect(err.Error()).To(ContainSubstring(wantMsg))
+			Expect(called).To(BeFalse())
+		},
+		Entry("an unauthenticated caller", context.Background(), connect.CodeUnauthenticated, "not authenticated"),
+		Entry("a non-admin user", userCtx("user-1"), connect.CodePermissionDenied, "requires the admin role"),
+	)
+
+	It("passes a protected-version refusal through verbatim", func() {
+		const msg = `catalog version is protected: cannot retire from nist: legal hold "litigation" covers nist@"Rev 4"`
+		svc := newTestService(gateway.WithCatalogBackend(&mockCatalog{
+			retireFn: func(context.Context, *connect.Request[pb.RetireCatalogVersionRequest]) (*connect.Response[pb.RetireCatalogVersionResponse], error) {
+				return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New(msg))
+			},
+		}))
+		_, err := svc.RetireCatalogVersion(adminCtx(), retireReq())
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+		Expect(err.Error()).To(ContainSubstring(msg))
 	})
 })
 

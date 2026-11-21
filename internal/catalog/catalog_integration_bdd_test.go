@@ -28,6 +28,8 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
+	"github.com/complytime-labs/crosscodex/pkg/retention"
+	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -1923,4 +1925,180 @@ var _ = Describe("PGStore document versions", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(other).To(BeEmpty())
 	})
+
+	It("lists a document's versions oldest first with its current version, and nothing for another tenant", func() {
+		tenantA, ctxA := newTenant()
+		_, ctxB := newTenant()
+		store := catalog.NewPGStore(tenantConn())
+		v1, v2 := tenantA+"-v1", tenantA+"-v2"
+		rec1, rec2 := versionRecord(tenantA, v1, "doc-a", "1.0"), versionRecord(tenantA, v2, "doc-a", "2.0")
+		rec1.CreatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		rec2.CreatedAt = time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+		Expect(store.UpsertCatalogVersion(ctxA, rec1, nil, nil)).To(Succeed())
+		Expect(store.UpsertCatalogVersion(ctxA, rec2, nil, nil)).To(Succeed())
+
+		versions, current, err := store.ListDocumentVersions(ctxA, "doc-a")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(current).To(Equal(v2))
+		Expect(versions).To(HaveLen(2))
+		Expect(versions[0].CatalogID).To(Equal(v1))
+		Expect(versions[0].VersionLabel).To(Equal("1.0"))
+		Expect(versions[1].CatalogID).To(Equal(v2))
+
+		_, _, err = store.ListDocumentVersions(ctxB, "doc-a")
+		Expect(err).To(MatchError(catalog.ErrDocumentNotFound))
+	})
+
+	It("finds the jobs whose stored config uses a catalog, with their status, and none of another tenant's", func() {
+		tenantA, ctxA := newTenant()
+		tenantB, ctxB := newTenant()
+		store := catalog.NewPGStore(tenantConn())
+		insertJob := func(tenantID, jobID, status string, config any) {
+			execAsTenant(appUserConn(), tenantID, func(tx *sql.Tx) {
+				_, err := tx.Exec(`INSERT INTO jobs (job_id, tenant_id, status, config, created_by) VALUES ($1, $2, $3, $4::jsonb, 'spec')`,
+					jobID, tenantID, status, config)
+				Expect(err).NotTo(HaveOccurred())
+			})
+		}
+		insertJob(tenantA, tenantA+"-j1", "running", `{"catalog_id":"cat-x","target_catalog_id":"cat-y"}`)
+		insertJob(tenantA, tenantA+"-j2", "completed", `{"catalog_id":"cat-y"}`)
+		insertJob(tenantA, tenantA+"-j3", "completed", `{"name":"no catalog"}`)
+		insertJob(tenantA, tenantA+"-j4", "completed", nil)
+		insertJob(tenantB, tenantB+"-j1", "pending", `{"catalog_id":"cat-x"}`)
+
+		uses, unreadable, err := store.JobsUsingCatalogs(ctxA, []string{"cat-x", "cat-y", "cat-z"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(uses).To(Equal(map[string][]catalog.JobUse{
+			"cat-x": {{JobID: tenantA + "-j1", Status: "running"}},
+			"cat-y": {{JobID: tenantA + "-j1", Status: "running"}, {JobID: tenantA + "-j2", Status: "completed"}},
+		}))
+		Expect(unreadable).To(Equal([]string{tenantA + "-j3", tenantA + "-j4"}))
+
+		uses, _, err = store.JobsUsingCatalogs(ctxB, []string{"cat-y"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(uses).To(BeEmpty())
+	})
 })
+
+// Retire runs end to end as the daemon wires it for role all: the store and
+// hold store as app_user under RLS, the archiver over a local archive, and the
+// purger as purge_user.
+var _ = Describe("RetireCatalogVersions end to end", Ordered, func() {
+	var purgePool db.Pool
+
+	BeforeAll(func() {
+		ctx := context.Background()
+		purgePassword, err := dbtest.RolePassword(dbtest.PurgeUserPasswordEnv)
+		Expect(err).NotTo(HaveOccurred(), "purge_user password")
+		Expect(dbtest.SetRolePassword(ctx, suDSN, "purge_user", purgePassword)).To(Succeed())
+		purgeDSN, err := dbtest.RoleDSN(suDSN, "purge_user", purgePassword)
+		Expect(err).NotTo(HaveOccurred())
+		purgePool, err = db.NewPool(db.PoolConfig{DSN: purgeDSN, MaxOpenConns: 2})
+		Expect(err).NotTo(HaveOccurred(), "create purge_user pool")
+		DeferCleanup(func() { purgePool.Close() })
+	})
+
+	type kit struct {
+		svc      *catalog.Service
+		store    *catalog.PGStore
+		holds    retention.HoldStore
+		archive  storage.Provider
+		ctx      context.Context
+		tenantID string
+		ids      []string
+	}
+
+	// newKit stores three versions v1 <- v2 <- v3 (current) of document
+	// "retire-doc", each with one control.
+	newKit := func() kit {
+		tenantID := fmt.Sprintf("retire-%d", time.Now().UnixNano())
+		setupTenant(tenantID, tenantID)
+		ctx, err := tenant.WithTenant(context.Background(), tenantID)
+		Expect(err).NotTo(HaveOccurred())
+		appPool, err := db.NewPool(db.PoolConfig{DSN: appUserDSN(), MaxOpenConns: 2})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { appPool.Close() })
+		conn := db.NewTenantPool(appPool)
+		store := catalog.NewPGStore(conn)
+		primary, err := storage.NewLocal(GinkgoT().TempDir(), tenantID)
+		Expect(err).NotTo(HaveOccurred())
+		archive, err := storage.NewLocal(GinkgoT().TempDir(), tenantID)
+		Expect(err).NotTo(HaveOccurred())
+		holds := retention.NewPgHoldStore(db.NewRetentionTenantPool(appPool))
+
+		k := kit{store: store, holds: holds, archive: archive, ctx: ctx, tenantID: tenantID}
+		for i, label := range []string{"Rev 3", "Rev 4", "Rev 5"} {
+			id := fmt.Sprintf("%s-v%d", tenantID, i+1)
+			rec := catalogRecord(tenantID, id, "Retire doc")
+			rec.DocumentSlug, rec.VersionLabel = "retire-doc", label
+			rec.CreatedAt = time.Date(2026, time.Month(i+1), 1, 0, 0, 0, 0, time.UTC)
+			Expect(store.UpsertCatalogVersion(ctx, rec, nil, []catalog.ControlRecord{
+				ftsControl(tenantID, id, fmt.Sprintf("v%d-c1", i+1), "Title", "Statement"),
+			})).To(Succeed())
+			k.ids = append(k.ids, id)
+		}
+		k.svc = catalog.NewService(
+			catalog.WithStore(store),
+			catalog.WithStorage(primary),
+			catalog.WithRetention(catalog.Retention{
+				Holds: holds,
+				Backends: func(string) (retention.Archiver, retention.Purger, error) {
+					return retention.NewArchiver(conn, primary, archive), retention.NewPurger(purgePool, primary), nil
+				},
+				Audit: discardAudit{},
+			}),
+		)
+		return k
+	}
+
+	catalogExists := func(k kit, id string) bool {
+		_, err := k.store.GetCatalog(k.ctx, id)
+		if errors.Is(err, catalog.ErrCatalogNotFound) {
+			return false
+		}
+		Expect(err).NotTo(HaveOccurred())
+		return true
+	}
+
+	It("archives and deletes a superseded version and re-points its successor to its predecessor", func() {
+		k := newKit()
+		ids, err := k.svc.RetireCatalogVersions(k.ctx, "retire-doc", []string{"Rev 4"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ids).To(Equal([]string{k.ids[1]}))
+
+		Expect(catalogExists(k, k.ids[1])).To(BeFalse())
+		controls, err := k.store.ListControlsForCatalog(k.ctx, k.ids[1])
+		Expect(err).NotTo(HaveOccurred())
+		Expect(controls).To(BeEmpty(), "the retired version's controls must be deleted")
+		successor, err := k.store.GetCatalog(k.ctx, k.ids[2])
+		Expect(err).NotTo(HaveOccurred())
+		Expect(successor.SupersedesCatalogID).To(Equal(k.ids[0]))
+		archived, err := k.archive.Exists(k.ctx, fmt.Sprintf("db/%s/%s.json", retention.ClassCatalogs, k.ids[1]))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(archived).To(BeTrue(), "the version must be archived before it is deleted")
+	})
+
+	It("retires nothing from a batch where an active hold covers one version", func() {
+		k := newKit()
+		cutoff := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+		_, err := k.holds.Create(k.ctx, retention.Hold{Name: "early-versions", CreatedBy: "spec",
+			Scope: retention.HoldScope{TenantID: k.tenantID, CreatedBefore: &cutoff}})
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = k.svc.RetireCatalogVersions(k.ctx, "retire-doc", []string{"Rev 3", "Rev 4"})
+		Expect(err).To(MatchError(catalog.ErrVersionProtected))
+		Expect(err.Error()).To(ContainSubstring(`legal hold "early-versions" covers retire-doc@"Rev 3"`))
+
+		for _, id := range k.ids {
+			Expect(catalogExists(k, id)).To(BeTrue(), "no version may be deleted: %s", id)
+		}
+		successor, err := k.store.GetCatalog(k.ctx, k.ids[2])
+		Expect(err).NotTo(HaveOccurred())
+		Expect(successor.SupersedesCatalogID).To(Equal(k.ids[1]), "the lineage must be unchanged")
+	})
+})
+
+// discardAudit accepts every audit record; the end-to-end specs assert rows.
+type discardAudit struct{}
+
+func (discardAudit) Publish(context.Context, retention.AuditRecord) error { return nil }

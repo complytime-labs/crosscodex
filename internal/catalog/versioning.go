@@ -10,20 +10,22 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/complytime-labs/crosscodex/pkg/catalogversion"
 )
 
 // ErrInvalidDocumentSlug and ErrInvalidVersionLabel are wrapped by the
-// validators below. Callers classify with errors.Is, never by message text.
+// validators below. ErrVersionLabelConflict is wrapped when content already
+// stored as a version is re-imported with a different explicit label. Callers
+// classify with errors.Is, never by message text.
 var (
-	ErrInvalidDocumentSlug = errors.New("invalid document slug")
-	ErrInvalidVersionLabel = errors.New("invalid version label")
+	ErrInvalidDocumentSlug  = errors.New("invalid document slug")
+	ErrInvalidVersionLabel  = errors.New("invalid version label")
+	ErrVersionLabelConflict = errors.New("version label conflicts with the stored label")
 )
 
 const (
 	maxVersionLabelChars = 64
-	// hashPrefixLen is the number of leading hex characters of a content hash
-	// shown to humans.
-	hashPrefixLen = 6
 	// unstableIDShareDivisor: ids are "unstable" when shared ids are fewer than
 	// 1/10 (10%) of the larger version's id count.
 	unstableIDShareDivisor = 10
@@ -69,14 +71,6 @@ func ValidateVersionLabel(s string) error {
 	return nil
 }
 
-func dateAndHash(importedAt time.Time, contentHash string) string {
-	prefix := contentHash
-	if len(prefix) > hashPrefixLen {
-		prefix = prefix[:hashPrefixLen]
-	}
-	return importedAt.UTC().Format("2006-01-02") + " · " + prefix
-}
-
 // ResolveVersionLabel picks the label for a catalog version: the explicit
 // label, else the OSCAL metadata.version, else "<UTC date> · <hash prefix>".
 func ResolveVersionLabel(explicit, oscalVersion string, importedAt time.Time, contentHash string) string {
@@ -86,12 +80,7 @@ func ResolveVersionLabel(explicit, oscalVersion string, importedAt time.Time, co
 	if oscalVersion != "" {
 		return oscalVersion
 	}
-	return dateAndHash(importedAt, contentHash)
-}
-
-// FormatVersion renders a version for humans as "slug @ label (date · hash6)".
-func FormatVersion(slug, label string, importedAt time.Time, contentHash string) string {
-	return fmt.Sprintf("%s @ %s (%s)", slug, label, dateAndHash(importedAt, contentHash))
+	return catalogversion.DateAndHash(importedAt, contentHash)
 }
 
 // ChangeReport lists control identifiers that differ between two versions.

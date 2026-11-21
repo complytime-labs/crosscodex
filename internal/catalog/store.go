@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
@@ -40,6 +42,16 @@ type Store interface {
 	// a DocumentSlug and VersionLabel: it also records the catalog as the
 	// document's newest version. See PGStore.UpsertCatalogVersion.
 	UpsertCatalogVersion(ctx context.Context, catalog CatalogRecord, containers []ContainerRecord, controls []ControlRecord) error
+	// ListDocumentVersions returns every version of the context tenant's
+	// document slug, oldest first, and the ID of its current version, or an
+	// error wrapping ErrDocumentNotFound.
+	ListDocumentVersions(ctx context.Context, slug string) ([]CatalogRecord, string, error)
+	// JobsUsingCatalogs returns, for each of catalogIDs that any of the
+	// context tenant's jobs uses, those jobs and their stored status sorted by
+	// job ID, read from each job's stored config with
+	// jobconfig.ExtractCatalogs, and the sorted IDs of the jobs whose stored
+	// config is NULL or cannot be read (so what they use is unknown).
+	JobsUsingCatalogs(ctx context.Context, catalogIDs []string) (uses map[string][]JobUse, unreadable []string, err error)
 	GetControl(ctx context.Context, controlID string) (*ControlRecord, error)
 	SearchControls(ctx context.Context, query SearchQuery) ([]ControlRecord, PageInfo, error)
 }
@@ -667,6 +679,148 @@ func linkVersionTx(ctx context.Context, tx db.Transaction, tenantID string, cata
 		return fmt.Errorf("upsert catalog version %s: record lineage: %w", catalog.CatalogID, err)
 	}
 	return nil
+}
+
+// ListDocumentVersions returns the versions of the context tenant's document
+// slug, oldest first (ties by catalog ID), and its current version's ID.
+func (s *PGStore) ListDocumentVersions(ctx context.Context, slug string) ([]CatalogRecord, string, error) {
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		return nil, "", fmt.Errorf("list document versions: %w", err)
+	}
+
+	tx, err := s.conn.Begin(ctx)
+	if err != nil {
+		return nil, "", fmt.Errorf("begin list document versions: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+
+	var current string
+	err = tx.QueryRow(ctx,
+		"SELECT current_catalog_id FROM catalog_documents WHERE tenant_id = $1 AND document_slug = $2",
+		tenantID, slug).Scan(&current)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, "", fmt.Errorf("%w: %s", ErrDocumentNotFound, slug)
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("read document %s: %w", slug, err)
+	}
+
+	rows, err := tx.Query(ctx, `
+		SELECT `+catalogColumns+`
+		FROM catalogs
+		WHERE tenant_id = $1 AND document_slug = $2
+		ORDER BY created_at, catalog_id
+	`, tenantID, slug)
+	if err != nil {
+		return nil, "", fmt.Errorf("list versions of document %s: %w", slug, err)
+	}
+	defer rows.Close()
+	var versions []CatalogRecord
+	for rows.Next() {
+		var rec CatalogRecord
+		if err := rows.Scan(catalogScanDest(&rec)...); err != nil {
+			return nil, "", fmt.Errorf("scan version of document %s: %w", slug, err)
+		}
+		versions = append(versions, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("list versions of document %s: %w", slug, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, "", fmt.Errorf("commit list document versions: %w", err)
+	}
+	return versions, current, nil
+}
+
+// StoredJob is a jobs row as JobsUsingCatalogs reads it. A NULL config is nil,
+// which jobconfig.ExtractCatalogs cannot read.
+type StoredJob struct {
+	Config []byte
+	Status string
+}
+
+// JobUse is a job that uses a catalog, with its stored jobs.status.
+type JobUse struct {
+	JobID  string
+	Status string
+}
+
+// terminalJobStatuses are the jobs.status values after which a job no longer
+// reads its catalogs. They mirror pipeline.JobStatusCompleted, Failed and
+// Cancelled, which this package may not import (AGENTS.md import rules). Any
+// other status, including one this list does not know, counts as in flight.
+var terminalJobStatuses = map[string]bool{"completed": true, "failed": true, "cancelled": true}
+
+// JobsUsingCatalogs reads every stored job config of the context tenant and
+// returns the jobs that use each of catalogIDs (see jobsUsingCatalogs). It
+// reads all of the tenant's jobs, because which catalogs a job uses is
+// decided by jobconfig.ExtractCatalogs, not by a SQL filter.
+func (s *PGStore) JobsUsingCatalogs(ctx context.Context, catalogIDs []string) (map[string][]JobUse, []string, error) {
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list jobs using catalogs: %w", err)
+	}
+
+	tx, err := s.conn.Begin(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("begin list jobs using catalogs: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rollback after commit is a no-op
+
+	rows, err := tx.Query(ctx,
+		"SELECT job_id, status, config FROM jobs WHERE tenant_id = $1", tenantID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list job configs: %w", err)
+	}
+	defer rows.Close()
+	jobs := map[string]StoredJob{}
+	for rows.Next() {
+		var jobID string
+		var job StoredJob
+		if err := rows.Scan(&jobID, &job.Status, &job.Config); err != nil {
+			return nil, nil, fmt.Errorf("scan job config: %w", err)
+		}
+		jobs[jobID] = job
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("list job configs: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, nil, fmt.Errorf("commit list jobs using catalogs: %w", err)
+	}
+	uses, unreadable := jobsUsingCatalogs(jobs, catalogIDs)
+	return uses, unreadable, nil
+}
+
+// jobsUsingCatalogs maps each of catalogIDs that a job in jobs (job ID to
+// stored row) uses, as source or target, to those jobs sorted by ID, and
+// returns the sorted IDs of the jobs whose config jobconfig.ExtractCatalogs
+// cannot read.
+func jobsUsingCatalogs(jobs map[string]StoredJob, catalogIDs []string) (uses map[string][]JobUse, unreadable []string) {
+	wanted := map[string]bool{}
+	for _, id := range catalogIDs {
+		wanted[id] = true
+	}
+	jobIDs := make([]string, 0, len(jobs))
+	for id := range jobs {
+		jobIDs = append(jobIDs, id)
+	}
+	slices.Sort(jobIDs)
+	uses = map[string][]JobUse{}
+	for _, jobID := range jobIDs {
+		cats, ok := jobconfig.ExtractCatalogs(jobs[jobID].Config)
+		if !ok {
+			unreadable = append(unreadable, jobID)
+			continue
+		}
+		for _, catalogID := range cats.CatalogIDs() {
+			if wanted[catalogID] {
+				uses[catalogID] = append(uses[catalogID], JobUse{JobID: jobID, Status: jobs[jobID].Status})
+			}
+		}
+	}
+	return uses, unreadable
 }
 
 // ListControlsForCatalog returns the controls of a catalog of the context

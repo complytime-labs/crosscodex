@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -29,14 +30,27 @@ var _ = Describe("PGCatalogNameReader", func() {
 		var gotArgs []any
 		tx := &dbtest.Tx{QueryRowFunc: func(_ context.Context, query string, args ...any) db.Row {
 			gotQuery, gotArgs = query, args
-			return dbtest.Row(nil, "NIST SP 800-53", "5.1.1")
+			return dbtest.Row(nil, "NIST SP 800-53", "5.1.1", "", "", time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), "0123456789", "")
 		}}
 		snap, err := pipeline.NewPGCatalogNameReader(&dbtest.Conn{Tx: tx}).CatalogSnapshot(context.Background(), "tenant-1", "cat-1")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(proto.Equal(snap, &pb.CatalogSnapshot{CatalogId: "cat-1", Name: "NIST SP 800-53", Version: "5.1.1"})).To(BeTrue(), "got %v", snap)
-		Expect(gotQuery).To(ContainSubstring("SELECT name, version FROM catalogs WHERE tenant_id = $1 AND catalog_id = $2"))
+		Expect(gotQuery).To(ContainSubstring("FROM catalogs WHERE tenant_id = $1 AND catalog_id = $2"))
 		Expect(gotArgs).To(Equal([]any{"tenant-1", "cat-1"}))
 		Expect(tx.Commits()).To(Equal(1))
+	})
+
+	It("records a document version's display form and the version it superseded", func() {
+		tx := &dbtest.Tx{QueryRowFunc: func(context.Context, string, ...any) db.Row {
+			return dbtest.Row(nil, "NIST SP 800-53", "5.1.1", "nist-800-53", "Rev 5",
+				time.Date(2026, 1, 2, 23, 0, 0, 0, time.UTC), "0123456789", "cat-rev4")
+		}}
+		snap, err := pipeline.NewPGCatalogNameReader(&dbtest.Conn{Tx: tx}).CatalogSnapshot(context.Background(), "tenant-1", "cat-1")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(proto.Equal(snap, &pb.CatalogSnapshot{
+			CatalogId: "cat-1", Name: "NIST SP 800-53", Version: "5.1.1",
+			VersionDisplay: "nist-800-53 @ Rev 5 (2026-01-02 · 012345)", SupersedesCatalogId: "cat-rev4",
+		})).To(BeTrue(), "got %v", snap)
 	})
 
 	It("reports a catalog the tenant does not have as ErrCatalogNotFound, naming it", func() {

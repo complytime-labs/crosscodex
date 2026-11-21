@@ -45,3 +45,12 @@ CREATE POLICY tenant_isolation ON catalog_documents
 -- owns no table, so it cannot disable RLS, truncate, alter or add triggers.
 -- GRANTs stay at the four DML privileges, never TRUNCATE, ALTER or TRIGGER.
 GRANT SELECT, INSERT, UPDATE, DELETE ON catalog_documents TO app_user;
+
+-- purge_user (retention purge and catalog retire) takes a catalog out of its
+-- document's version chain before deleting it: it reads catalog_documents to
+-- refuse a document's current version, and re-points the successor's
+-- supersedes_catalog_id to the deleted version's predecessor (see
+-- unlinkCatalogVersion in pkg/retention/purge.go). It gets exactly that: no
+-- write on catalog_documents, and UPDATE on that one column of catalogs.
+GRANT SELECT ON catalog_documents TO purge_user;
+GRANT UPDATE (supersedes_catalog_id) ON catalogs TO purge_user;

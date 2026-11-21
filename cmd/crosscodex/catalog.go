@@ -14,6 +14,7 @@ import (
 	connectrpc "connectrpc.com/connect"
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/catalog"
+	"github.com/complytime-labs/crosscodex/pkg/catalogversion"
 	"github.com/spf13/cobra"
 )
 
@@ -28,6 +29,7 @@ func newCatalogCmd(state *cliState) *cobra.Command {
 	catalogCmd.AddCommand(newCatalogListCmd(state))
 	catalogCmd.AddCommand(newCatalogInspectCmd(state))
 	catalogCmd.AddCommand(newCatalogValidateCmd(state))
+	catalogCmd.AddCommand(newCatalogRetireCmd(state))
 
 	return catalogCmd
 }
@@ -235,21 +237,6 @@ func printVersionOutcome(w io.Writer, version, superseded string, changes *chang
 	}
 }
 
-// catalogVersionDisplay renders a catalog's "slug @ label (date · hash)" form
-// from its summary fields. It returns "" for a catalog not under a document.
-// Callers print it to a terminal through terminalSafe.
-func catalogVersionDisplay(cat *pb.Catalog) string {
-	if cat.GetDocumentSlug() == "" {
-		return ""
-	}
-	return catalog.FormatVersion(
-		cat.GetDocumentSlug(),
-		cat.GetVersionLabel(),
-		cat.GetAudit().GetCreatedAt().AsTime(),
-		cat.GetProvenance().GetLineageMetadata()["content_hash"],
-	)
-}
-
 type textlessResult struct {
 	Identifier string   `json:"identifier"`
 	PartNames  []string `json:"part_names"`
@@ -383,7 +370,7 @@ func newCatalogListCmd(state *cliState) *cobra.Command {
 							format,
 						)
 						if versioned {
-							version := terminalSafe(catalogVersionDisplay(cat))
+							version := terminalSafe(catalogversion.OfCatalog(cat))
 							if cat.GetCurrent() {
 								version += " (current)"
 							}
@@ -438,7 +425,7 @@ func newCatalogInspectCmd(state *cliState) *cobra.Command {
 					fmt.Fprintf(w, "Format: %s\n", cat.GetFormat().String())
 					fmt.Fprintf(w, "Version: %s\n", cat.GetVersion())
 					fmt.Fprintf(w, "Controls: %d\n", cat.GetControlCount())
-					if version := catalogVersionDisplay(cat); version != "" {
+					if version := catalogversion.OfCatalog(cat); version != "" {
 						fmt.Fprintf(w, "Document version: %s\n", terminalSafe(version))
 						fmt.Fprintf(w, "Current: %t\n", cat.GetCurrent())
 						if id := cat.GetSupersedesCatalogId(); id != "" {
@@ -471,6 +458,97 @@ func newCatalogInspectCmd(state *cliState) *cobra.Command {
 	cmd.Flags().String("tenant", "", "Tenant to act on; must be the tenant your client certificate authenticates (default: that tenant)")
 
 	return cmd
+}
+
+func newCatalogRetireCmd(state *cliState) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "retire <slug>@<label>...",
+		Short: "Retire old versions of a catalog document (admin only)",
+		Long: `Retire versions of a catalog document: each version is archived, then
+deleted with its controls, embeddings and cached results. The version that
+superseded a retired one is linked to the retired version's predecessor, so
+the document's history stays one chain. Graph nodes are left in place.
+
+Name each version as <slug>@<label>, as "catalog list" shows them (split at
+the first @). Several versions of one document are retired together: if any
+of them is protected, none is retired and the error names every blocker. A
+version is protected while it is the document's current version, a legal
+hold covers it, a job under legal hold uses it, or a job that uses it has
+attestations.
+
+Retiring needs the admin role, and a crosscodexd server running role all with
+database.purge_dsn and retention.archive configured.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			slug, labels, err := parseRetireArgs(args)
+			if err != nil {
+				return err
+			}
+			resp, err := state.client.RetireCatalogVersion(cmd.Context(), connectrpc.NewRequest(&pb.RetireCatalogVersionRequest{
+				DocumentSlug: slug,
+				VersionLabel: labels,
+			}))
+			if err != nil {
+				return fmt.Errorf("failed to retire catalog versions: %w", err)
+			}
+			ids := resp.Msg.GetRetiredCatalogIds()
+			if len(ids) != len(labels) {
+				return fmt.Errorf("the server retired %d versions for %d labels; run \"crosscodex catalog list\" to see which versions of %s remain", len(ids), len(labels), slug)
+			}
+			retired := make([]map[string]any, len(ids))
+			for i, id := range ids {
+				retired[i] = map[string]any{"version_label": labels[i], "catalog_id": id}
+			}
+			return emit(cmd,
+				func(w io.Writer, color bool) {
+					for i, id := range ids {
+						fmt.Fprintf(w, "Retired %s @ %s (catalog %s)\n", slug, terminalSafe(labels[i]), terminalSafe(id))
+					}
+				},
+				map[string]any{"document_slug": slug, "retired": retired},
+			)
+		},
+	}
+
+	guidedArgs(cmd, cobra.MinimumNArgs(1), argGuide{
+		noun:  "one or more document versions as <slug>@<label>",
+		find:  "crosscodex catalog list",
+		usage: "crosscodex catalog retire <slug>@<label>...",
+		examples: []string{
+			`crosscodex catalog retire "nist-800-53@Rev 4"`,
+			`crosscodex catalog retire "nist-800-53@Rev 3" "nist-800-53@Rev 4"`,
+		},
+	})
+
+	return cmd
+}
+
+// parseRetireArgs splits each <slug>@<label> argument at its first '@' and
+// returns the one slug they share and their labels, repeats dropped.
+func parseRetireArgs(args []string) (string, []string, error) {
+	var slug string
+	var labels []string
+	seen := map[string]bool{}
+	for _, arg := range args {
+		s, label, ok := strings.Cut(arg, "@")
+		if !ok {
+			return "", nil, fmt.Errorf("%q is not <slug>@<label>; name the version as the document slug, '@' and the version label, for example \"nist-800-53@Rev 4\"", arg)
+		}
+		if err := catalog.ValidateDocumentSlug(s); err != nil {
+			return "", nil, fmt.Errorf("%q: %w", arg, err)
+		}
+		if err := catalog.ValidateVersionLabel(label); err != nil {
+			return "", nil, fmt.Errorf("%q: %w", arg, err)
+		}
+		if slug != "" && s != slug {
+			return "", nil, fmt.Errorf("%q and %q name different documents; retire versions of one document per command, so that each command retires all of its versions or none", slug+"@"+labels[0], arg)
+		}
+		slug = s
+		if !seen[label] {
+			seen[label] = true
+			labels = append(labels, label)
+		}
+	}
+	return slug, labels, nil
 }
 
 func newCatalogValidateCmd(_ *cliState) *cobra.Command {
@@ -538,7 +616,7 @@ func catalogToJSON(cat *pb.Catalog) map[string]any {
 	if cat.GetDocumentSlug() != "" {
 		out["document_slug"] = cat.GetDocumentSlug()
 		out["version_label"] = cat.GetVersionLabel()
-		out["version_display"] = catalogVersionDisplay(cat)
+		out["version_display"] = catalogversion.OfCatalog(cat)
 		out["supersedes_catalog_id"] = cat.GetSupersedesCatalogId()
 		out["link_method"] = cat.GetLinkMethod()
 		out["current"] = cat.GetCurrent()

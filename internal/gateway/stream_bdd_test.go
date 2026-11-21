@@ -137,6 +137,10 @@ func (s *stubCatalog) GetControl(_ context.Context, _ *connect.Request[pb.GetCon
 	return connect.NewResponse(&pb.GetControlResponse{}), nil
 }
 
+func (s *stubCatalog) RetireCatalogVersion(_ context.Context, _ *connect.Request[pb.RetireCatalogVersionRequest]) (*connect.Response[pb.RetireCatalogVersionResponse], error) {
+	return connect.NewResponse(&pb.RetireCatalogVersionResponse{}), nil
+}
+
 type stubPipeline struct{}
 
 func (s *stubPipeline) CreateJob(_ context.Context, _ *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error) {

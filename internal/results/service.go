@@ -469,7 +469,8 @@ func analysisResponse(a *JobAnalysis) *pb.JobAnalysis {
 		return nil
 	}
 	summary := func(c CatalogSummary) *pb.CatalogSummary {
-		return &pb.CatalogSummary{CatalogId: c.ID, Name: c.Name, Version: c.Version, Imported: c.Imported, Snapshot: c.Snapshot}
+		return &pb.CatalogSummary{CatalogId: c.ID, Name: c.Name, Version: c.Version, Imported: c.Imported, Snapshot: c.Snapshot,
+			VersionDisplay: c.VersionDisplay, SupersedesCatalogId: c.SupersedesCatalogID}
 	}
 	return &pb.JobAnalysis{SourceCatalog: summary(a.Source), TargetCatalog: summary(a.Target), Bidirectional: a.Bidirectional}
 }

@@ -566,6 +566,62 @@ var _ = Describe("run status", func() {
 			Expect(got.Analysis.Target).To(HaveKeyWithValue("snapshot", false))
 		})
 
+		Describe("a catalog document version", func() {
+			const display = "csf @ Rev 2 (2026-01-02 · 012345)"
+			versioned := func() *pb.JobConfig {
+				cfg := recorded(&pb.JobConfig{CatalogId: "cat-src", TargetCatalogId: "cat-tgt"})
+				cfg.SourceCatalog.VersionDisplay, cfg.SourceCatalog.SupersedesCatalogId = display, "cat-old"
+				return cfg
+			}
+
+			It("shows the version the job recorded beside the name, and leaves an unversioned side unchanged", func() {
+				out, err := statusOf(&fakeGetJobClient{catalogs: catalogs, job: jobOver(versioned())})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(out).To(SatisfyAll(
+					ContainSubstring("Source catalog: CSF 2.0 (version 2.0, document version "+display+", ID cat-src, 185 controls)\n"),
+					ContainSubstring("Target catalog: NIST SP 800-53 (version not recorded, ID cat-tgt, 1196 controls)\n"),
+				))
+			})
+
+			It("adds the version and its lineage to the JSON output only for a versioned side", func() {
+				out, err := statusOf(&fakeGetJobClient{catalogs: catalogs, job: jobOver(versioned())}, "--json")
+				Expect(err).NotTo(HaveOccurred())
+				var got struct {
+					Analysis struct {
+						Source map[string]any `json:"source_catalog"`
+						Target map[string]any `json:"target_catalog"`
+					} `json:"analysis"`
+				}
+				Expect(json.Unmarshal([]byte(out), &got)).To(Succeed())
+				Expect(got.Analysis.Source).To(SatisfyAll(
+					HaveKeyWithValue("version_display", display), HaveKeyWithValue("supersedes_catalog_id", "cat-old")))
+				Expect(got.Analysis.Target).NotTo(HaveKey("version_display"))
+				Expect(got.Analysis.Target).NotTo(HaveKey("supersedes_catalog_id"))
+			})
+
+			It("shows a current version for a job from before snapshots", func() {
+				current := map[string]*pb.Catalog{
+					"cat-src": {CatalogId: "cat-src", Name: "CSF 2.0", Version: "2.0", ControlCount: 185,
+						DocumentSlug: "csf", VersionLabel: "Rev 2",
+						Audit:      &pb.AuditMetadata{CreatedAt: timestamppb.New(time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))},
+						Provenance: &pb.ProvenanceMetadata{LineageMetadata: map[string]string{"content_hash": "0123456789"}}},
+					"cat-tgt": catalogs["cat-tgt"],
+				}
+				out, err := statusOf(&fakeGetJobClient{catalogs: current, job: jobOver(&pb.JobConfig{CatalogId: "cat-src", TargetCatalogId: "cat-tgt"})})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(out).To(ContainSubstring("Source catalog: CSF 2.0 (version 2.0, document version " + display + ", ID cat-src, 185 controls)" + notRecorded + "\n"))
+			})
+
+			It("shows a recorded version display as one clean line", func() {
+				cfg := versioned()
+				cfg.SourceCatalog.VersionDisplay = "csf @ R\x1b[2J\n2 (x)"
+				out, err := statusOf(&fakeGetJobClient{catalogs: catalogs, job: jobOver(cfg)})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(out).To(ContainSubstring("document version csf @ R [2J 2 (x), ID cat-src"))
+				Expect(out).NotTo(ContainSubstring("\x1b"))
+			})
+		})
+
 		It("still shows a job whose catalog is gone, by ID", func() {
 			client := &fakeGetJobClient{catalogs: catalogs, job: jobOver(&pb.JobConfig{CatalogId: "cat-src", TargetCatalogId: "cat-gone"})}
 			out, err := statusOf(client)

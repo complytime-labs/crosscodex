@@ -98,6 +98,12 @@ func (m *memStore) ListControlsForCatalog(_ context.Context, catalogID string) (
 func (m *memStore) UpsertCatalogVersion(ctx context.Context, cat CatalogRecord, containers []ContainerRecord, c []ControlRecord) error {
 	return m.UpsertCatalogWithTree(ctx, cat, containers, c)
 }
+func (m *memStore) ListDocumentVersions(_ context.Context, slug string) ([]CatalogRecord, string, error) {
+	return nil, "", fmt.Errorf("%w: %s", ErrDocumentNotFound, slug)
+}
+func (m *memStore) JobsUsingCatalogs(context.Context, []string) (map[string][]JobUse, []string, error) {
+	return map[string][]JobUse{}, nil, nil
+}
 func (m *memStore) GetControl(context.Context, string) (*ControlRecord, error) { return nil, nil }
 func (m *memStore) SearchControls(context.Context, SearchQuery) ([]ControlRecord, PageInfo, error) {
 	return nil, PageInfo{}, nil

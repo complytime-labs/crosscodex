@@ -407,6 +407,51 @@ func integPurgeCatalog(tenantID, catalogID string) {
 	_ = tx.Commit()
 }
 
+// integSeedVersionChain provisions the tenant and stores ids, oldest first, as
+// the versions of document slug as app_user: each supersedes the one before
+// it and the last is the document's current version. The catalogs have no
+// dependents, so versions of one tenant never collide on a control key.
+func integSeedVersionChain(tenantID, slug string, ids ...string) {
+	ctx, err := tenant.WithTenant(context.Background(), tenantID)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(db.EnsureTenant(context.Background(), engineSuPool, tenantID, tenantID)).
+		To(Succeed(), "provision tenant")
+
+	tx, err := db.NewTenantPool(holdIntegPool).Begin(ctx)
+	Expect(err).NotTo(HaveOccurred(), "begin version chain seed tx")
+	defer func() { _ = tx.Rollback() }()
+	var prev any
+	for i, id := range ids {
+		Expect(tx.Exec(ctx,
+			`INSERT INTO catalogs (catalog_id, tenant_id, name, version, source_type, object_path,
+			                       document_slug, version_label, supersedes_catalog_id, link_method)
+			 VALUES ($1, $2, 'Versioned catalog', $3, 'oscal', 'catalogs/seed.json', $4, $3, $5, 'declared')`,
+			id, tenantID, fmt.Sprintf("v%d", i+1), slug, prev,
+		)).To(Succeed(), "insert version %s", id)
+		prev = id
+	}
+	Expect(tx.Exec(ctx,
+		`INSERT INTO catalog_documents (tenant_id, document_slug, current_catalog_id) VALUES ($1, $2, $3)`,
+		tenantID, slug, ids[len(ids)-1],
+	)).To(Succeed(), "insert document")
+	Expect(tx.Commit()).To(Succeed(), "commit version chain seed")
+}
+
+// integSupersedes returns the catalog catalogID supersedes for tenantID as
+// app_user, "" for none.
+func integSupersedes(tenantID, catalogID string) string {
+	ctx, err := tenant.WithTenant(context.Background(), tenantID)
+	Expect(err).NotTo(HaveOccurred())
+	tx, err := db.NewTenantPool(holdIntegPool).Begin(ctx)
+	Expect(err).NotTo(HaveOccurred())
+	defer func() { _ = tx.Rollback() }()
+	var id string
+	Expect(tx.QueryRow(ctx,
+		`SELECT COALESCE(supersedes_catalog_id, '') FROM catalogs WHERE catalog_id = $1`, catalogID).Scan(&id)).To(Succeed())
+	Expect(tx.Commit()).To(Succeed())
+	return id
+}
+
 // integSeedRunningJob provisions the tenant and inserts a running job as
 // app_user. A running job is not a retention candidate, and it is the only
 // status the result-cache tables accept records for.
@@ -503,7 +548,8 @@ var _ = Describe("Retention engine end-to-end", Ordered, func() {
 			ctx := context.Background()
 			for _, tenantID := range []string{
 				"ret-e2e-purge", "ret-e2e-hold", "ret-e2e-corrupt", "ret-e2e-iso-a",
-				"ret-e2e-children", "ret-e2e-catalog",
+				"ret-e2e-children", "ret-e2e-catalog", "ret-e2e-lineage", "ret-e2e-batch",
+				"ret-e2e-batch-mixed",
 			} {
 				stmt, err := dbtest.HardDeleteTenantSQL(tenantID)
 				Expect(err).NotTo(HaveOccurred())
@@ -675,6 +721,71 @@ var _ = Describe("Retention engine end-to-end", Ordered, func() {
 		Expect(hasEmbeddings).To(BeFalse(), "archive doc must omit embeddings (derived/regenerable, purge-only)")
 
 		Expect(kit.audit.actions()).To(ContainElements(retention.ActionArchive, retention.ActionPurge))
+	})
+
+	It("purges an expired superseded version, re-points its successor, and skips the document's current version", func() {
+		const tid = "ret-e2e-lineage"
+		kit := newIntegKit(tid, nil)
+		ctx, err := tenant.WithTenant(context.Background(), tid)
+		Expect(err).NotTo(HaveOccurred())
+
+		integSeedVersionChain(tid, "lineage-doc", "cat-lin-1", "cat-lin-2")
+
+		rep, err := kit.engine.Scan(ctx, retention.ScanOptions{Now: integScanTime()})
+		Expect(err).NotTo(HaveOccurred())
+		// The superseded version goes: the lineage foreign key no longer
+		// blocks it, and its successor now starts the chain.
+		Expect(integCatalogExists(tid, "cat-lin-1")).To(BeFalse(), "the superseded version must be purged")
+		Expect(integSupersedes(tid, "cat-lin-2")).To(BeEmpty(), "the successor must point at the purged version's predecessor (none)")
+		// The current version is protected: counted as held, never archived,
+		// audited as archived or reported as an error.
+		Expect(integCatalogExists(tid, "cat-lin-2")).To(BeTrue(), "the current version must not be purged")
+		Expect(rep.Errors).To(BeEmpty())
+		Expect(rep.PerClass[retention.ClassCatalogs].Held).To(Equal(1))
+		Expect(rep.PerClass[retention.ClassCatalogs].Archived).To(Equal(1))
+		Expect(rep.PerClass[retention.ClassCatalogs].Purged).To(Equal(1))
+		archived, err := kit.archive.Exists(ctx, fmt.Sprintf("db/%s/cat-lin-2.json", retention.ClassCatalogs))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(archived).To(BeFalse(), "the current version must not be archived")
+		for _, r := range kit.audit.records {
+			Expect(r.Detail).NotTo(Equal("cat-lin-2"), "no audit record may claim the current version was archived or purged")
+		}
+	})
+
+	It("purges a batch of versions in one transaction and keeps the chain intact", func() {
+		const tid = "ret-e2e-batch"
+		ctx := context.Background()
+		integSeedVersionChain(tid, "batch-doc", "cat-b-1", "cat-b-2", "cat-b-3", "cat-b-4")
+
+		purger := retention.NewPurger(enginePurgePool, nil)
+		Expect(purger.PurgeBatch(ctx, []retention.Candidate{
+			{Store: retention.StorePostgres, Class: retention.ClassCatalogs, ID: "cat-b-3", TenantID: tid},
+			{Store: retention.StorePostgres, Class: retention.ClassCatalogs, ID: "cat-b-2", TenantID: tid},
+		})).To(Succeed())
+
+		Expect(integCatalogExists(tid, "cat-b-2")).To(BeFalse())
+		Expect(integCatalogExists(tid, "cat-b-3")).To(BeFalse())
+		Expect(integSupersedes(tid, "cat-b-4")).To(Equal("cat-b-1"), "the chain must skip the retired versions")
+		Expect(integSupersedes(tid, "cat-b-1")).To(BeEmpty())
+	})
+
+	It("purges nothing from a batch that includes a document's current version", func() {
+		const tid = "ret-e2e-batch-mixed"
+		ctx := context.Background()
+		integSeedVersionChain(tid, "mixed-doc", "cat-m-1", "cat-m-2", "cat-m-3")
+
+		err := retention.NewPurger(enginePurgePool, nil).PurgeBatch(ctx, []retention.Candidate{
+			{Store: retention.StorePostgres, Class: retention.ClassCatalogs, ID: "cat-m-2", TenantID: tid},
+			{Store: retention.StorePostgres, Class: retention.ClassCatalogs, ID: "cat-m-3", TenantID: tid},
+		})
+		Expect(err).To(MatchError(retention.ErrCatalogIsCurrent))
+		Expect(err.Error()).To(ContainSubstring(`catalog cat-m-3 is the current version of document "mixed-doc"`))
+
+		for _, id := range []string{"cat-m-1", "cat-m-2", "cat-m-3"} {
+			Expect(integCatalogExists(tid, id)).To(BeTrue(), "no version may be deleted: %s", id)
+		}
+		Expect(integSupersedes(tid, "cat-m-3")).To(Equal("cat-m-2"), "the lineage must be unchanged")
+		Expect(integSupersedes(tid, "cat-m-2")).To(Equal("cat-m-1"), "the lineage must be unchanged")
 	})
 
 	It("retains expired data covered by an active hold", func() {

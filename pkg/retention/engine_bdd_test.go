@@ -62,6 +62,16 @@ func (f *engineFakePurger) Purge(_ context.Context, c retention.Candidate) error
 	return nil
 }
 
+// PurgeBatch records each candidate as Purge does; the engine never calls it.
+func (f *engineFakePurger) PurgeBatch(ctx context.Context, cs []retention.Candidate) error {
+	for _, c := range cs {
+		if err := f.Purge(ctx, c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // engineFakeAuditPublisher captures Publish calls. When failPublish is true
 // every Publish call returns an error (simulates a failing audit bus).
 type engineFakeAuditPublisher struct {
@@ -152,6 +162,31 @@ var _ = Describe("Engine.Scan", func() {
 		for _, r := range publisher.records {
 			Expect(r.Actor).To(Equal("retention-engine"))
 			Expect(r.TenantID).To(Equal("tenant1"))
+		}
+	})
+
+	It("skips a protected candidate like a held one: no archive, purge, audit record or error", func() {
+		current := retention.Candidate{
+			Store: retention.StorePostgres, Class: retention.ClassCatalogs,
+			ID: "cat-current", TenantID: "tenant1", Protected: true,
+		}
+		superseded := retention.Candidate{
+			Store: retention.StorePostgres, Class: retention.ClassCatalogs,
+			ID: "cat-old", TenantID: "tenant1",
+		}
+		collector.candidates = []retention.Candidate{current, superseded}
+
+		rep, err := eng.Scan(ctx, retention.ScanOptions{Now: now})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rep.Errors).To(BeEmpty())
+		Expect(rep.Scanned).To(Equal(2))
+		Expect(rep.Held).To(Equal(1))
+		Expect(rep.PerClass[retention.ClassCatalogs].Held).To(Equal(1))
+		Expect(archiver.calls).To(ConsistOf("cat-old"))
+		Expect(purger.calls).To(ConsistOf("cat-old"))
+		for _, r := range publisher.records {
+			Expect(r.Detail).NotTo(Equal("cat-current"))
 		}
 	})
 

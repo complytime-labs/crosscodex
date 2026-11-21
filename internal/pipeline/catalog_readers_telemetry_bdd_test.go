@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -92,7 +93,9 @@ var _ = Describe("Catalog reader telemetry", func() {
 			&dbtest.Tx{QueryFunc: func(context.Context, string, ...any) (db.Rows, error) { return nil, errRead }},
 			"pipeline.embeddings.similarity_matrix", "similarity_matrix", "pipeline.embeddings.similarity_matrix", "error", codes.Error),
 		Entry("catalog name read", catalogName,
-			&dbtest.Tx{QueryRowFunc: func(context.Context, string, ...any) db.Row { return dbtest.Row(nil, "CSF 2.0", "2.0") }},
+			&dbtest.Tx{QueryRowFunc: func(context.Context, string, ...any) db.Row {
+				return dbtest.Row(nil, "CSF 2.0", "2.0", "", "", time.Time{}, "", "")
+			}},
 			"pipeline.catalogs.name", "catalog_name", "pipeline.catalogs.name", "ok", codes.Ok),
 		Entry("catalog name not found", catalogName,
 			&dbtest.Tx{QueryRowFunc: func(context.Context, string, ...any) db.Row { return dbtest.Row(sql.ErrNoRows) }},

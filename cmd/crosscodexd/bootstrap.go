@@ -346,9 +346,11 @@ func checkDefaultTenant(ctx context.Context, role string, cfg *config.Config, po
 // attestation key pair (pipeline.NewAttestors, so a key pair that does not
 // load refuses startup) and stored in the same object storage. It holds no graph credentials; the
 // graph role projects Control nodes. Refuses a default tenant that
-// `crosscodexd migrate` has not provisioned or that is deleted. extra
-// appends role-specific backends (role all adds graph queries).
-func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, shared *sharedResources, pipelineBackend gateway.PipelineBackend, extra ...gateway.ServiceOption) (*gateway.Service, error) {
+// `crosscodexd migrate` has not provisioned or that is deleted. retire, when
+// non-nil, lets the catalog service retire catalog versions (role all with
+// database.purge_dsn); nil makes retire fail closed. extra appends
+// role-specific backends (role all adds graph queries).
+func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, shared *sharedResources, pipelineBackend gateway.PipelineBackend, retire *catalog.Retention, extra ...gateway.ServiceOption) (*gateway.Service, error) {
 	if cfg.Tenants.DefaultTenant == "" {
 		return nil, fmt.Errorf("%s role: tenants.default_tenant must be set", role)
 	}
@@ -397,7 +399,7 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 
 	oscalTracer, _ := telemetry.Instrumentation("pkg/oscal")
 	catalogTracer, catalogMeter := telemetry.Instrumentation("internal/catalog")
-	catalogSvc := catalog.NewService(
+	catalogOpts := []catalog.ServiceOption{
 		catalog.WithParser(oscal.NewParser("", oscal.WithParserTracer(oscalTracer),
 			oscal.WithRequirementPartNames(cfg.Catalog.RequirementPartNames))),
 		catalog.WithStore(catalog.NewPGStore(dbpkg.NewTenantPool(shared.appPool))),
@@ -406,7 +408,11 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 		catalog.WithLogger(slog.Default()),
 		catalog.WithTracer(catalogTracer),
 		catalog.WithMeter(catalogMeter),
-	)
+	}
+	if retire != nil {
+		catalogOpts = append(catalogOpts, catalog.WithRetention(*retire))
+	}
+	catalogSvc := catalog.NewService(catalogOpts...)
 	ingestion := backend.NewPassthroughIngestion(storageProvider)
 
 	resultsSvc := newMappingsBackend(shared)
@@ -442,7 +448,13 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 	if rt.graphService == nil {
 		return errors.New("attach gateway: graph service is not built; attachGraph must run before attachAllGateway so the gateway can serve graph queries")
 	}
-	gatewaySvc, err := buildIngestGateway(ctx, config.RoleAll, cfg, shared, backendPipeline,
+	wiring, err := buildRetentionWiring(ctx, cfg, shared, slog.Default())
+	if err != nil {
+		return fmt.Errorf("build retention wiring: %w", err)
+	}
+	rt.retentionPurgePool = wiring.purgePool
+
+	gatewaySvc, err := buildIngestGateway(ctx, config.RoleAll, cfg, shared, backendPipeline, wiring.retire,
 		gateway.WithGraphBackend(rt.graphService),
 		gateway.WithCrosswalkBackend(rt.graphService))
 	if err != nil {
@@ -456,11 +468,7 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 		return fmt.Errorf("provision tenant graph: %w", err)
 	}
 
-	adminSvc, purgePool, err := buildRetentionAdmin(ctx, cfg, shared, slog.Default())
-	if err != nil {
-		return fmt.Errorf("build retention admin: %w", err)
-	}
-	rt.retentionPurgePool = purgePool
+	adminSvc := buildRetentionAdmin(cfg, shared, wiring)
 
 	cleaningEngine, err := newCleaningEngine(cfg, shared, rt.pipelineService.CurrentStageRecord)
 	if err != nil {
@@ -545,15 +553,9 @@ func (disabledArchive) Stat(context.Context, string) (*storage.ObjectMetadata, e
 func (disabledArchive) Close() error { return nil }
 
 // buildRetentionAdmin constructs the AdminService handler for the all-in-one
-// role. It returns the handler plus a dedicated purge_user pool (nil when
-// PurgeDSN is unset, in which case the Purger reuses the app pool and fails
-// closed at the DB immutability trigger). The caller owns the returned pool and
-// must close it via runtime.close.
-func buildRetentionAdmin(ctx context.Context, cfg *config.Config, shared *sharedResources, logger *slog.Logger) (crosscodexv1connect.AdminServiceHandler, dbpkg.Pool, error) {
-	wiring, err := buildRetentionWiring(ctx, cfg, shared, logger)
-	if err != nil {
-		return nil, nil, err
-	}
+// role from wiring (see buildRetentionWiring, whose caller owns the purge_user
+// pool).
+func buildRetentionAdmin(cfg *config.Config, shared *sharedResources, wiring retentionWiring) crosscodexv1connect.AdminServiceHandler {
 	driftSource := func(ctx context.Context) ([]retention.StreamDrift, error) {
 		configured := natsbus.ConfiguredAuditRetention(cfg.NATS.Streams)
 		live, err := shared.natsClient.AuditStreamRetention(ctx)
@@ -562,7 +564,7 @@ func buildRetentionAdmin(ctx context.Context, cfg *config.Config, shared *shared
 		}
 		return retention.VerifyStreamRetention(configured, live), nil
 	}
-	return admin.NewService(wiring.engineFor, wiring.defaultPolicy, wiring.holds, driftSource), wiring.purgePool, nil
+	return admin.NewService(wiring.engineFor, wiring.defaultPolicy, wiring.holds, driftSource)
 }
 
 // retentionWiring bundles the shared retention resources both the gateway
@@ -574,6 +576,9 @@ type retentionWiring struct {
 	engineFor     func(tenantID string, policy retention.Policy) (*retention.Engine, error)
 	defaultPolicy retention.Policy
 	holds         retention.HoldStore
+	// retire is what the catalog service needs to retire catalog versions;
+	// nil when PurgeDSN is unset, so retire fails closed.
+	retire *catalog.Retention
 	// purgePool is the dedicated purge_user pool (nil when PurgeDSN is unset, in
 	// which case the Purger reuses the app pool and fails closed at the DB
 	// immutability trigger). The caller owns it and must Close it.
@@ -636,36 +641,59 @@ func buildRetentionWiring(ctx context.Context, cfg *config.Config, shared *share
 	holds := retention.NewPgHoldStore(tenantAppConn)
 	auditPublisher := retention.NewAuditPublisher(shared.natsClient)
 
-	engineFor := func(tenantID string, policy retention.Policy) (*retention.Engine, error) {
+	// backendsFor builds the tenant's primary store, archiver and purger,
+	// shared by the engine and by catalog retire.
+	backendsFor := func(tenantID string) (storage.Provider, retention.Archiver, retention.Purger, error) {
 		primary, err := storage.NewFromConfig(cfg.Storage.Objects, tenantID)
 		if err != nil {
-			return nil, fmt.Errorf("retention: build primary storage for tenant %q: %w", tenantID, err)
+			return nil, nil, nil, fmt.Errorf("retention: build primary storage for tenant %q: %w", tenantID, err)
 		}
 		archiveProvider, err := storage.NewArchiveFromConfig(cfg.Retention.Archive, tenantID)
 		if err != nil {
 			if !errors.Is(err, storage.ErrArchiveDisabled) {
-				return nil, fmt.Errorf("retention: build archive storage for tenant %q: %w", tenantID, err)
+				return nil, nil, nil, fmt.Errorf("retention: build archive storage for tenant %q: %w", tenantID, err)
 			}
 			logger.Warn("retention archive backend disabled; archive+purge will fail closed until retention.archive is configured (dry-run scans, stats, and legal holds remain available)")
 			archiveProvider = disabledArchive{}
+		}
+		return primary, retention.NewArchiver(shared.appPool, primary, archiveProvider), retention.NewPurger(purgeConn, primary), nil
+	}
+
+	engineFor := func(tenantID string, policy retention.Policy) (*retention.Engine, error) {
+		primary, archiver, purger, err := backendsFor(tenantID)
+		if err != nil {
+			return nil, err
 		}
 		collectors := []retention.Collector{
 			retention.NewDBCollector(tenantAppConn),
 			retention.NewCatalogCollector(tenantAppConn),
 			retention.NewObjectCollector(primary, retention.ClassAttestation, tenantID),
 		}
-		archiver := retention.NewArchiver(shared.appPool, primary, archiveProvider)
-		purger := retention.NewPurger(purgeConn, primary)
 		// Session advisory lock on the app database, shared with `admin backup
 		// run` (which takes it as backup_user on the same database).
 		scanLock := dbpkg.NewAdvisoryLocker(cfg.Database.DSN, dbpkg.BackupRetentionLockName)
 		return retention.NewEngine(collectors, holds, archiver, purger, auditPublisher, policy, scanLock), nil
 	}
 
+	// Catalog retire deletes through the purger directly, so it is offered
+	// only with a real purge_user pool; without one it fails closed.
+	var retire *catalog.Retention
+	if purgePool != nil {
+		retire = &catalog.Retention{
+			Holds: holds,
+			Backends: func(tenantID string) (retention.Archiver, retention.Purger, error) {
+				_, archiver, purger, err := backendsFor(tenantID)
+				return archiver, purger, err
+			},
+			Audit: auditPublisher,
+		}
+	}
+
 	return retentionWiring{
 		engineFor:     engineFor,
 		defaultPolicy: defaultPolicy,
 		holds:         holds,
+		retire:        retire,
 		purgePool:     purgePool,
 	}, nil
 }
@@ -1080,7 +1108,9 @@ func attachGateway(ctx context.Context, cfg *config.Config, shared *sharedResour
 		return fmt.Errorf("create graph backend: %w", err)
 	}
 
-	gatewaySvc, err := buildIngestGateway(ctx, config.RoleGateway, cfg, shared, pipelineBackend,
+	// No retention wiring: the standalone gateway role holds no purge_user
+	// connection, so catalog retire fails closed there.
+	gatewaySvc, err := buildIngestGateway(ctx, config.RoleGateway, cfg, shared, pipelineBackend, nil,
 		gateway.WithGraphBackend(graphBackend),
 		gateway.WithCrosswalkBackend(graphBackend))
 	if err != nil {

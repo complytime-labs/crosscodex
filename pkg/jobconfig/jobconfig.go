@@ -34,11 +34,15 @@ type Catalogs struct {
 }
 
 // Label is a catalog's name and version as recorded when the job was
-// created. Recorded is false when the config holds none.
+// created. VersionDisplay ("slug @ label (date · hash6)") and
+// SupersedesCatalogID are set for a version of a catalog document. Recorded
+// is false when the config holds none.
 type Label struct {
-	Name     string
-	Version  string
-	Recorded bool
+	Name                string
+	Version             string
+	VersionDisplay      string
+	SupersedesCatalogID string
+	Recorded            bool
 }
 
 // LabelOf returns the recorded label of catalogID, one of the job's
@@ -66,9 +70,11 @@ func (c Catalogs) CatalogIDs() []string {
 
 // snapshot is the stored form of a pb.CatalogSnapshot.
 type snapshot struct {
-	CatalogID string `json:"catalog_id"`
-	Name      string `json:"name"`
-	Version   string `json:"version"`
+	CatalogID           string `json:"catalog_id"`
+	Name                string `json:"name"`
+	Version             string `json:"version"`
+	VersionDisplay      string `json:"version_display"`
+	SupersedesCatalogID string `json:"supersedes_catalog_id"`
 }
 
 // label returns s as the label of catalogID: not Recorded when s is absent
@@ -77,7 +83,8 @@ func (s *snapshot) label(catalogID string) Label {
 	if s == nil || s.CatalogID != catalogID {
 		return Label{}
 	}
-	return Label{Name: s.Name, Version: s.Version, Recorded: true}
+	return Label{Name: s.Name, Version: s.Version, VersionDisplay: s.VersionDisplay,
+		SupersedesCatalogID: s.SupersedesCatalogID, Recorded: true}
 }
 
 // ExtractCatalogs reads a job's catalogs, direction, cache mode and

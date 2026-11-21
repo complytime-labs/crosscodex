@@ -86,11 +86,6 @@ var _ = Describe("Version label resolution", func() {
 	It("uses a short content hash as-is in the fallback", func() {
 		Expect(catalog.ResolveVersionLabel("", "", importedAt, "abc")).To(Equal("2026-03-10 · abc"))
 	})
-
-	It("formats slug, label, UTC date and hash prefix for display", func() {
-		Expect(catalog.FormatVersion("nist-800-53", "5.2.0", importedAt, hash)).
-			To(Equal("nist-800-53 @ 5.2.0 (2026-03-10 · 012345)"))
-	})
 })
 
 var _ = Describe("DiffControls", func() {

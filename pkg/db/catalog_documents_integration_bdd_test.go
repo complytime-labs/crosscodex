@@ -166,6 +166,47 @@ var _ = Describe("catalog documents schema (migration 002)", Ordered, func() {
 		Entry("ALTER TABLE", "ALTER TABLE catalog_documents DISABLE ROW LEVEL SECURITY"),
 		Entry("CREATE TRIGGER", "CREATE TRIGGER x BEFORE DELETE ON catalog_documents FOR EACH ROW EXECUTE FUNCTION prevent_classification_mutation()"),
 	)
+
+	// purge_user deletes catalogs for retention and catalog retire. Taking a
+	// version out of its chain needs it to read catalog_documents and to
+	// re-point catalogs.supersedes_catalog_id; it gets exactly that and no more.
+	DescribeTable("purge_user privileges on the version tables",
+		func(table, privilege string, want bool) {
+			var got bool
+			Expect(suPool.QueryRow(ctx,
+				`SELECT has_table_privilege('purge_user', $1, $2)`, "public."+table, privilege).Scan(&got)).To(Succeed())
+			Expect(got).To(Equal(want))
+		},
+		Entry("catalog_documents SELECT is granted", "catalog_documents", "SELECT", true),
+		Entry("catalog_documents INSERT is not", "catalog_documents", "INSERT", false),
+		Entry("catalog_documents UPDATE is not", "catalog_documents", "UPDATE", false),
+		Entry("catalog_documents DELETE is not", "catalog_documents", "DELETE", false),
+		Entry("catalog_documents TRUNCATE is not", "catalog_documents", "TRUNCATE", false),
+		Entry("catalog_documents TRIGGER is not", "catalog_documents", "TRIGGER", false),
+		Entry("catalogs SELECT is granted", "catalogs", "SELECT", true),
+		Entry("catalogs DELETE is granted", "catalogs", "DELETE", true),
+		Entry("catalogs INSERT is not", "catalogs", "INSERT", false),
+		Entry("catalogs table-wide UPDATE is not", "catalogs", "UPDATE", false),
+		Entry("catalogs TRUNCATE is not", "catalogs", "TRUNCATE", false),
+	)
+
+	It("lets purge_user update only catalogs.supersedes_catalog_id", func() {
+		var updatable []string
+		rows, err := suPool.Query(ctx, `
+			SELECT column_name FROM information_schema.columns
+			WHERE table_schema = 'public' AND table_name = 'catalogs'
+			  AND has_column_privilege('purge_user', 'public.catalogs', column_name, 'UPDATE')
+			ORDER BY column_name`)
+		Expect(err).NotTo(HaveOccurred())
+		defer rows.Close()
+		for rows.Next() {
+			var col string
+			Expect(rows.Scan(&col)).To(Succeed())
+			updatable = append(updatable, col)
+		}
+		Expect(rows.Err()).NotTo(HaveOccurred())
+		Expect(updatable).To(Equal([]string{"supersedes_catalog_id"}))
+	})
 })
 
 // probeAsTenant runs one statement as app_user scoped to tenantID inside a

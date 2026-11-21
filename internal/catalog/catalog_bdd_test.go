@@ -76,8 +76,9 @@ type mockStore struct {
 	catalogRecords   map[string]*catalog.CatalogRecord
 	controlRecords   map[string]*catalog.ControlRecord
 	containerRecords []catalog.ContainerRecord
-	currentByDoc     map[string]string // document slug -> current catalog ID
-	upsertErr        error             // returned by UpsertCatalogWithTree before it records anything
+	currentByDoc     map[string]string            // document slug -> current catalog ID
+	jobs             map[string]catalog.StoredJob // job ID -> stored job config and status
+	upsertErr        error                        // returned by UpsertCatalogWithTree before it records anything
 }
 
 func newMockStore() *mockStore {
@@ -85,6 +86,7 @@ func newMockStore() *mockStore {
 		catalogRecords: make(map[string]*catalog.CatalogRecord),
 		controlRecords: make(map[string]*catalog.ControlRecord),
 		currentByDoc:   make(map[string]string),
+		jobs:           make(map[string]catalog.StoredJob),
 	}
 }
 
@@ -163,6 +165,34 @@ func (m *mockStore) UpsertCatalogVersion(ctx context.Context, cat catalog.Catalo
 	stored.SupersedesCatalogID = m.currentByDoc[cat.DocumentSlug]
 	m.currentByDoc[cat.DocumentSlug] = cat.CatalogID
 	return nil
+}
+
+// ListDocumentVersions mirrors PGStore.ListDocumentVersions: the document's
+// versions oldest first, and its current version.
+func (m *mockStore) ListDocumentVersions(_ context.Context, slug string) ([]catalog.CatalogRecord, string, error) {
+	current, ok := m.currentByDoc[slug]
+	if !ok {
+		return nil, "", fmt.Errorf("%w: %s", catalog.ErrDocumentNotFound, slug)
+	}
+	var out []catalog.CatalogRecord
+	for _, rec := range m.catalogRecords {
+		if rec.DocumentSlug == slug {
+			out = append(out, *rec)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].CatalogID < out[j].CatalogID
+	})
+	return out, current, nil
+}
+
+// JobsUsingCatalogs mirrors PGStore.JobsUsingCatalogs over jobs.
+func (m *mockStore) JobsUsingCatalogs(_ context.Context, catalogIDs []string) (map[string][]catalog.JobUse, []string, error) {
+	uses, unreadable := catalog.JobsUsingCatalogsFromJobs(m.jobs, catalogIDs)
+	return uses, unreadable, nil
 }
 
 func (m *mockStore) GetControl(_ context.Context, controlID string) (*catalog.ControlRecord, error) {
@@ -570,6 +600,7 @@ var _ = Describe("Service", func() {
 				resp, err := importDoc("d1", docWithVersion("1.0"), "nist-800-53", "")
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.Version).To(MatchRegexp(`^nist-800-53 @ 1\.0 \(\d{4}-\d{2}-\d{2} · [0-9a-f]{6}\)$`))
+				Expect(resp.VersionLabel).To(Equal("1.0"))
 				Expect(resp.SupersededCatalogId).To(BeEmpty())
 				Expect(resp.ChangeReport).To(BeNil())
 				Expect(ms.currentByDoc).To(HaveKeyWithValue("nist-800-53", resp.CatalogId))
@@ -605,6 +636,36 @@ var _ = Describe("Service", func() {
 				Expect(again.Version).To(Equal(first.Version))
 				Expect(ms.currentByDoc["nist-800-53"]).To(Equal(first.CatalogId))
 			})
+
+			It("refuses an identical re-import with a different explicit label and changes nothing", func() {
+				first, err := importDoc("d1", docWithVersion("1.0"), "nist-800-53", "rev-1")
+				Expect(err).NotTo(HaveOccurred())
+				before := *ms.catalogRecords[first.CatalogId]
+
+				_, err = importDoc("d1", docWithVersion("1.0"), "nist-800-53", "rev-2")
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+				Expect(err).To(MatchError(catalog.ErrVersionLabelConflict))
+				Expect(err.Error()).To(ContainSubstring(`"rev-1"`))
+				Expect(err.Error()).To(ContainSubstring("relabelling is not supported"))
+				Expect(*ms.catalogRecords[first.CatalogId]).To(Equal(before))
+				Expect(ms.catalogRecords).To(HaveLen(1))
+				Expect(ms.currentByDoc["nist-800-53"]).To(Equal(first.CatalogId))
+			})
+
+			DescribeTable("keeps an identical re-import idempotent when the label is unchanged",
+				func(again string) {
+					first, err := importDoc("d1", docWithVersion("1.0"), "nist-800-53", "rev-1")
+					Expect(err).NotTo(HaveOccurred())
+					resp, err := importDoc("d1", docWithVersion("1.0"), "nist-800-53", again)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(resp.CatalogId).To(Equal(first.CatalogId))
+					Expect(resp.Version).To(Equal(first.Version))
+					Expect(ms.catalogRecords[first.CatalogId].VersionLabel).To(Equal("rev-1"))
+					Expect(resp.VersionLabel).To(Equal("rev-1"))
+				},
+				Entry("the same explicit label", "rev-1"),
+				Entry("no explicit label", ""),
+			)
 
 			It("keeps the newest version current when an older one is re-imported (A, B, A)", func() {
 				a, err := importDoc("d1", docWithVersion("1.0"), "nist-800-53", "")
@@ -669,6 +730,7 @@ var _ = Describe("Service", func() {
 				resp, err := importDoc("d1", docWithVersion("1.0"), "", "")
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resp.Version).To(BeEmpty())
+				Expect(resp.VersionLabel).To(BeEmpty())
 				Expect(resp.SupersededCatalogId).To(BeEmpty())
 				Expect(resp.ChangeReport).To(BeNil())
 				Expect(ms.currentByDoc).To(BeEmpty())
@@ -695,6 +757,7 @@ var _ = Describe("Service", func() {
 					Expect(err).NotTo(HaveOccurred())
 					Expect(resp.Version).To(MatchRegexp(`^nist-800-53 @ \d{4}-\d{2}-\d{2} · [0-9a-f]{6} \(`))
 					Expect(ms.catalogRecords[resp.CatalogId].VersionLabel).To(MatchRegexp(`^\d{4}-\d{2}-\d{2} · [0-9a-f]{6}$`))
+					Expect(resp.VersionLabel).To(Equal(ms.catalogRecords[resp.CatalogId].VersionLabel))
 				},
 				Entry("a bidi override", "v1\u202e2"),
 				Entry("an angle bracket", "<b>1</b>"),
