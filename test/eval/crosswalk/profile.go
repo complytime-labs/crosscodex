@@ -32,6 +32,9 @@ type Profile struct {
 	Target     string        `yaml:"target"`
 	Controls   []string      `yaml:"controls"`
 	References ReferenceSpec `yaml:"references"`
+	// BaseLevel is how far up the target's control tree a mapped control is
+	// rolled to count as a base match: parent, root (default) or none.
+	BaseLevel BaseLevel `yaml:"base_level"`
 	// Digest is the hex SHA-256 of the profile file bytes.
 	Digest string `yaml:"-"`
 }
@@ -108,6 +111,13 @@ func (p *Profile) validate() error {
 			return fmt.Errorf("controls[%d]: duplicate control %q", i, c)
 		}
 		seen[c] = true
+	}
+	switch p.BaseLevel {
+	case "":
+		p.BaseLevel = BaseRoot
+	case BaseParent, BaseRoot, BaseNone:
+	default:
+		return fmt.Errorf("base_level %q is unknown: use %s, %s or %s", p.BaseLevel, BaseParent, BaseRoot, BaseNone)
 	}
 	if (p.References.OSCALLinks == nil) == (p.References.CSV == "") {
 		return errors.New("references must set exactly one of references.oscal_links or references.csv")

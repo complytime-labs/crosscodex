@@ -85,6 +85,25 @@ var _ = Describe("ExtractReferences", func() {
 		Expect(err).To(MatchError(And(ContainSubstring("s-1"), ContainSubstring("#aaaaaaaa-0000-4000-8000-000000000001"))))
 	})
 
+	It("counts non-fragment links of the profile rel instead of dropping them silently", func() {
+		p := mustProfile("testdata/profiles/links_urls.yaml")
+		src := mustCatalog("testdata/source_urls.json")
+		raw, err := crosswalk.ExtractReferences(p, ".", src)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(raw).To(HaveLen(1))
+		Expect(crosswalk.CountSkippedLinks(p, src)).To(Equal(2))
+	})
+
+	It("counts no skipped links when every link is a fragment", func() {
+		p := mustProfile("testdata/profiles/links_in_text.yaml")
+		Expect(crosswalk.CountSkippedLinks(p, mustCatalog("testdata/source_a.json"))).To(BeZero())
+	})
+
+	It("counts no skipped links for a CSV profile", func() {
+		p := &crosswalk.Profile{Name: "csv", Controls: []string{"u-1"}, References: crosswalk.ReferenceSpec{CSV: "refs.csv"}}
+		Expect(crosswalk.CountSkippedLinks(p, mustCatalog("testdata/source_urls.json"))).To(BeZero())
+	})
+
 	Describe("CSV", func() {
 		Describe("CSVDigest", func() {
 			write := func(content string) (*crosswalk.Profile, string) {

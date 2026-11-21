@@ -1,0 +1,11 @@
+name: synth-links-urls
+source: test/eval/crosswalk/testdata/source_urls.json
+target: test/eval/crosswalk/testdata/synthetic_catalog.json
+controls: [u-1, u-2]
+references:
+  oscal_links:
+    rel: x_ref
+    resource:
+      title: '^SYNTHTARGET$'
+    identifier: link_text
+    separator: ','

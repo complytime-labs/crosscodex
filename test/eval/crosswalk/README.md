@@ -39,7 +39,12 @@ decoding, RE2 regexes with a length cap, paths confined to the repository
 root). `run.sh` validates `PROFILE` and `LABEL` against strict patterns before
 using them as path components and passes catalog text only to quoted arguments.
 Identifier handling is driven by the target catalog's own IDs and `label`
-props; the code contains no framework-specific syntax.
+props; the code contains no framework-specific syntax. Identifiers are
+NFKC-normalised and every Unicode decimal digit counts as its ASCII value
+(`AC-２` matches `AC-2`). Links of the profile's `rel` whose href is not a
+`#fragment` (for example an absolute URL) cannot be followed; the report counts
+them (`skipped_links`, and a "Skipped links" line in `report.md`) instead of
+dropping them silently.
 
 `run.sh` is tested by `test/tooling/eval-crosswalk.venom.yml` (run with
 `task test:tooling`), which swaps the CLI for `test/tooling/lib/fake-crosscodex.sh`
@@ -131,6 +136,16 @@ match `^[a-z0-9][a-z0-9.-]*$`.
    controls, 10 items, 100 candidates, 300 tasks). Classify and embedding also run over every control
    of both catalogs, which dominates a cold first run regardless of the
    profile and is reused from the result cache afterwards.
+   Optionally declare `base_level` (`parent`, `root` or `none`; default
+   `root`): how far up the target's control tree a mapped control is rolled
+   to count as a "base" match. An invalid value fails profile load. `none`
+   makes base recall equal exact recall. The level is part of the profile
+   digest and is printed in the report beside the base recall.
+
+   `Subset` keeps every listed control's ancestor controls with their params,
+   parts and props, so a control's text that refers to a parent's parameter
+   still resolves; unlisted siblings are dropped. Only listed controls carry
+   the `eval-scope: in` prop and are scored; the ancestors are context.
 5. Run `task eval:crosswalk PROFILE=<name>` against a smoke stack, record the
    resolved reference count in the profile's header comment (the
    `# references:` line that `profiles_bdd_test.go` checks) and add it to the

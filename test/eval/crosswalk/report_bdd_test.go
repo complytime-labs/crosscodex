@@ -106,6 +106,19 @@ var _ = Describe("Report", func() {
 			Expect(md).To(ContainSubstring(`| s-1 | A\|B | line1 line2 |  |`))
 		})
 
+		It("reports links skipped because their href is not a fragment", func() {
+			in := scoreInput([]crosswalk.Reference{ref("s-1", "ab-2")}, nil, nil)
+			in.Refs.SkippedLinks = 3
+			rep := mustScore(in)
+			Expect(rep.SkippedLinks).To(Equal(3))
+			Expect(rep.Markdown()).To(ContainSubstring("Skipped links: 3 links of the profile's rel had a non-fragment href"))
+		})
+
+		It("omits the skipped-links line when nothing was skipped", func() {
+			md := mustScore(scoreInput([]crosswalk.Reference{ref("s-1", "ab-2")}, nil, nil)).Markdown()
+			Expect(md).NotTo(ContainSubstring("Skipped links"))
+		})
+
 		It("says so when there is no baseline", func() {
 			md := mustScore(scoreInput([]crosswalk.Reference{ref("s-1", "ab-2")}, nil, nil)).Markdown()
 			Expect(md).To(ContainSubstring("No baseline"))

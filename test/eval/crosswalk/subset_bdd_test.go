@@ -28,16 +28,16 @@ var _ = Describe("Subset", func() {
 
 	BeforeEach(func() { src = mustCatalog(syntheticCatalog) })
 
-	It("moves listed nested controls under their top-level group without children", func() {
-		out, err := crosswalk.Subset(src, []string{"ab-2.3", "ab-2.3.1", "cd-9"})
+	It("keeps each listed control's ancestor chain and drops unlisted children", func() {
+		out, err := crosswalk.Subset(src, []string{"ab-2.3.1", "cd-9"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(*out.Groups).To(HaveLen(2))
 		ab := (*out.Groups)[0]
 		Expect(ab.ID).To(Equal("ab"))
-		Expect(ids(ab.Controls)).To(Equal([]string{"ab-2.3", "ab-2.3.1"}))
-		for _, c := range *ab.Controls {
-			Expect(c.Controls).To(BeNil())
-		}
+		Expect(ids(ab.Controls)).To(Equal([]string{"ab-2"}))
+		parent := (*ab.Controls)[0]
+		Expect(ids(parent.Controls)).To(Equal([]string{"ab-2.3"}))
+		Expect(ids((*parent.Controls)[0].Controls)).To(Equal([]string{"ab-2.3.1"}))
 		Expect(ids((*out.Groups)[1].Controls)).To(Equal([]string{"cd-9"}))
 	})
 
@@ -48,6 +48,90 @@ var _ = Describe("Subset", func() {
 		Expect((*out.Groups)[0].ID).To(Equal("cd"))
 		Expect(ids((*out.Groups)[0].Controls)).To(Equal([]string{"cd-1"}))
 		Expect(out.Controls).To(BeNil())
+	})
+
+	Describe("with a catalog whose controls have parents", func() {
+		var ssdf *crosswalk.Catalog
+
+		BeforeEach(func() { ssdf = mustCatalog(ssdfStyleCatalog) })
+
+		// control finds id anywhere under controls.
+		var control func(controls *[]oscalTypes.Control, id string) *oscalTypes.Control
+		control = func(controls *[]oscalTypes.Control, id string) *oscalTypes.Control {
+			if controls == nil {
+				return nil
+			}
+			for i, c := range *controls {
+				if c.ID == id {
+					return &(*controls)[i]
+				}
+				if found := control(c.Controls, id); found != nil {
+					return found
+				}
+			}
+			return nil
+		}
+
+		// find returns the control id anywhere under the groups' controls.
+		find := func(groups *[]oscalTypes.Group, id string) *oscalTypes.Control {
+			for _, g := range *groups {
+				if c := control(g.Controls, id); c != nil {
+					return c
+				}
+			}
+			return nil
+		}
+
+		It("keeps the parent of a listed control with its params, parts and labels", func() {
+			out, err := crosswalk.Subset(ssdf, []string{"PO.1.2"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(*out.Groups).To(HaveLen(1))
+			po := (*out.Groups)[0]
+			Expect(po.ID).To(Equal("PO"))
+			Expect(ids(po.Controls)).To(Equal([]string{"PO.1"}))
+			parent := (*po.Controls)[0]
+			Expect(parent.Params).NotTo(BeNil())
+			Expect(*parent.Params).To(HaveLen(1))
+			Expect((*parent.Params)[0].ID).To(Equal("PO.1_prm_1"))
+			Expect(parent.Parts).NotTo(BeNil())
+			Expect(parent.Props).NotTo(BeNil())
+			Expect(ids(parent.Controls)).To(Equal([]string{"PO.1.2"}))
+		})
+
+		It("marks only the listed controls as in scope", func() {
+			out, err := crosswalk.Subset(ssdf, []string{"PO.1.2", "PS.1"})
+			Expect(err).NotTo(HaveOccurred())
+			scoped := func(c *oscalTypes.Control) bool {
+				if c.Props == nil {
+					return false
+				}
+				for _, p := range *c.Props {
+					if p.Name == crosswalk.ScopeProp && p.Value == crosswalk.ScopeIn {
+						return true
+					}
+				}
+				return false
+			}
+			Expect(scoped(find(out.Groups, "PO.1.2"))).To(BeTrue())
+			Expect(scoped(find(out.Groups, "PS.1"))).To(BeTrue())
+			Expect(scoped(find(out.Groups, "PO.1"))).To(BeFalse())
+			// The unlisted sibling is dropped.
+			Expect(find(out.Groups, "PO.1.1")).To(BeNil())
+			Expect(find(out.Groups, "PO.2")).To(BeNil())
+		})
+
+		It("leaves the source catalog without scope marks", func() {
+			_, err := crosswalk.Subset(ssdf, []string{"PO.1.2"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ssdf.Doc).To(Equal(mustCatalog(ssdfStyleCatalog).Doc))
+		})
+
+		It("keeps a listed parent and a listed child together", func() {
+			out, err := crosswalk.Subset(ssdf, []string{"PO.1", "PO.1.1"})
+			Expect(err).NotTo(HaveOccurred())
+			parent := find(out.Groups, "PO.1")
+			Expect(ids(parent.Controls)).To(Equal([]string{"PO.1.1"}))
+		})
 	})
 
 	It("keeps a top-level control at the top level", func() {

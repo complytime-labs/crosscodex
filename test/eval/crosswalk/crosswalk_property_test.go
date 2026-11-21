@@ -3,6 +3,7 @@ package crosswalk_test
 import (
 	"encoding/json"
 	"fmt"
+	"unicode"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -18,6 +19,28 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			once := crosswalk.Canonical(s)
 			if twice := crosswalk.Canonical(once); twice != once {
 				t.Fatalf("Canonical(%q) = %q but Canonical of that = %q", s, once, twice)
+			}
+		})
+	})
+
+	It("Canonical is idempotent on identifiers rich in non-ASCII digits and compatibility forms", func() {
+		alphabet := []rune("aA-(). 0123456789\u0660\u0661\u0669\u06f5\u096d\uff10\uff12\uff21\u00b2\u2460\u212a\ufb01")
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			s := string(rapid.SliceOfN(rapid.SampledFrom(alphabet), 0, 16).Draw(t, "s"))
+			once := crosswalk.Canonical(s)
+			if twice := crosswalk.Canonical(once); twice != once {
+				t.Fatalf("Canonical(%q) = %q but Canonical of that = %q", s, once, twice)
+			}
+		})
+	})
+
+	It("Canonical output contains only lowercase letters, ASCII digits and dots", func() {
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			s := rapid.String().Draw(t, "s")
+			for _, r := range crosswalk.Canonical(s) {
+				if r != '.' && (r < '0' || r > '9') && !unicode.IsLetter(r) {
+					t.Fatalf("Canonical(%q) contains %q", s, r)
+				}
 			}
 		})
 	})

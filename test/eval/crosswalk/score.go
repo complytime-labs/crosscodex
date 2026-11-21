@@ -84,7 +84,30 @@ func Score(in ScoreInput) (*Report, error) {
 		}
 		return Pair{SourceID: owner, TargetID: idx.Owner(pr.TargetID)}, nil
 	}
-	base := func(pr Pair) Pair { return Pair{SourceID: pr.SourceID, TargetID: idx.Base(pr.TargetID)} }
+	level := p.BaseLevel
+	if level == "" {
+		level = BaseRoot
+	}
+	// base rolls the target up to the profile's base level. BaseNone leaves it
+	// as is, so base recall equals exact recall.
+	base := func(pr Pair) Pair {
+		target := idx.Base(pr.TargetID, level)
+		if level == BaseNone {
+			target = pr.TargetID
+		}
+		return Pair{SourceID: pr.SourceID, TargetID: target}
+	}
+
+	// The subset keeps the listed controls' ancestors as context (see Subset),
+	// and the analyzers map them too. They are not part of the yardstick, so
+	// their candidates and mappings are left out of every figure. A source
+	// the subset does not hold at all is still rejected by check.
+	isContext := func(source string) bool {
+		owner := srcIdx.Owner(source)
+		return owner != "" && !inScope[owner]
+	}
+	candidates := slices.DeleteFunc(slices.Clone(in.Run.Candidates), func(c Candidate) bool { return isContext(c.SourceID) })
+	mappings := slices.DeleteFunc(slices.Clone(in.Run.Mappings), func(m Mapping) bool { return isContext(m.SourceID) })
 
 	for _, r := range in.Refs.Resolved {
 		if _, err := check("reference", Pair{r.SourceID, r.TargetID}); err != nil {
@@ -96,7 +119,7 @@ func Score(in ScoreInput) (*Report, error) {
 	// candidate holds the pairs as exported, for the found ⊆ candidates check.
 	reachable, reachableBase, candidate := pairSet{}, pairSet{}, pairSet{}
 	byGenerator := map[string][2]pairSet{}
-	for _, c := range in.Run.Candidates {
+	for _, c := range candidates {
 		raw := Pair{c.SourceID, c.TargetID}
 		pr, err := check("candidate", raw)
 		if err != nil {
@@ -119,7 +142,7 @@ func Score(in ScoreInput) (*Report, error) {
 	}
 
 	seen := map[Pair]int{}
-	for _, m := range in.Run.Mappings {
+	for _, m := range mappings {
 		seen[Pair{m.SourceID, m.TargetID}]++
 	}
 	found, foundBase := pairSet{}, pairSet{}
@@ -129,7 +152,7 @@ func Score(in ScoreInput) (*Report, error) {
 		refExact[Pair{r.SourceID, r.TargetID}] = true
 		refBase[base(Pair{r.SourceID, r.TargetID})] = true
 	}
-	for _, m := range in.Run.Mappings {
+	for _, m := range mappings {
 		raw := Pair{m.SourceID, m.TargetID}
 		pr, err := check("mapping", raw)
 		if err != nil {
@@ -153,7 +176,7 @@ func Score(in ScoreInput) (*Report, error) {
 		Provenance: Provenance{
 			Label: in.Label, Commit: in.Commit, JobID: in.Run.JobID,
 			SourceCatalogID: sourceCatalogID, TargetCatalogID: targetCatalogID,
-			Profile:      ProfileIdentity{Name: p.Name, Digest: p.Digest, Controls: slices.Clone(p.Controls), CSVDigest: in.CSVDigest},
+			Profile:      ProfileIdentity{Name: p.Name, Digest: p.Digest, Controls: slices.Clone(p.Controls), CSVDigest: in.CSVDigest, BaseLevel: level},
 			SourceDigest: in.Source.Digest, SubsetDigest: in.Subset.Digest, TargetDigest: in.Target.Digest, LabelsDigest: in.LabelsDigest,
 		},
 		Cost: stageCosts(in.Run.Stages),
@@ -169,6 +192,7 @@ func Score(in ScoreInput) (*Report, error) {
 		})
 	}
 	resolved := len(distinctRaw(in.Refs.ResolvedRaw))
+	rep.SkippedLinks = in.Refs.SkippedLinks
 	rep.Resolution = newRate(resolved, resolved+len(rep.Unresolved)+len(rep.Ambiguous))
 
 	var fe, fb, re, rb int
@@ -216,7 +240,7 @@ func Score(in ScoreInput) (*Report, error) {
 		}
 	}
 
-	rep.Related = slices.Clone(in.Run.Mappings)
+	rep.Related = slices.Clone(mappings)
 	slices.SortFunc(rep.Related, func(a, b Mapping) int {
 		return comparePairs(Pair{a.SourceID, a.TargetID}, Pair{b.SourceID, b.TargetID})
 	})

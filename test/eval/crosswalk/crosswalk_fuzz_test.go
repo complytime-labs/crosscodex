@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/complytime-labs/crosscodex/test/eval/crosswalk"
 )
@@ -59,6 +60,29 @@ func FuzzSplitLinkText(f *testing.F) {
 		for _, id := range crosswalk.SplitLinkText(text, sep) {
 			if id == "" || id != strings.TrimSpace(id) {
 				t.Fatalf("SplitLinkText(%q, %q) produced %q", text, sep, id)
+			}
+		}
+	})
+}
+
+// FuzzCanonical checks that Canonical is idempotent and emits only lowercase
+// letters, ASCII digits and single interior dots, whatever Unicode it is given.
+func FuzzCanonical(f *testing.F) {
+	f.Add("SA-15(07)")
+	f.Add("AC-\uff12")
+	f.Add("AC-\u0660\u0662")
+	f.Add("\u0130\u212a\ufb01-\u00b2")
+	f.Add("x\u0661\uff12 3")
+	f.Add("\xff\x00")
+	f.Add("")
+	f.Fuzz(func(t *testing.T, id string) {
+		out := crosswalk.Canonical(id)
+		if again := crosswalk.Canonical(out); again != out {
+			t.Fatalf("Canonical(%q) = %q but Canonical of that = %q", id, out, again)
+		}
+		for _, r := range out {
+			if r > unicode.MaxASCII && !unicode.IsLetter(r) || r <= unicode.MaxASCII && r != '.' && !unicode.IsLower(r) && (r < '0' || r > '9') {
+				t.Fatalf("Canonical(%q) = %q contains %q", id, out, r)
 			}
 		}
 	})

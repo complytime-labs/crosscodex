@@ -110,14 +110,38 @@ func (x *TargetIndex) Resolve(identifier string) Resolution {
 	}
 }
 
-// Base returns the outermost ancestor control of controlID (the control itself
-// at top level), or "" when controlID is unknown. An item's ancestors are its
-// section items and then its control.
-func (x *TargetIndex) Base(controlID string) string {
-	parent, ok := x.lookup(controlID)
-	if !ok {
+// BaseLevel says how far up its control tree a target control is rolled to
+// find the control a mapping is credited to as "base".
+type BaseLevel string
+
+const (
+	// BaseParent rolls a control up to its immediate parent control.
+	BaseParent BaseLevel = "parent"
+	// BaseRoot rolls a control up to its outermost ancestor control. It is the
+	// default, and the meaning of the zero value.
+	BaseRoot BaseLevel = "root"
+	// BaseNone does not roll up: Base returns "" and only exact matches count.
+	BaseNone BaseLevel = "none"
+)
+
+// Base returns the control controlID rolls up to at level: the immediate
+// parent control (BaseParent) or the outermost ancestor control (BaseRoot).
+// A top-level control is its own base at either level. Base returns "" for
+// BaseNone and when controlID is unknown. An item's ancestors are its section
+// items and then its control, and it rolls up from that control, so at
+// BaseParent an item of an enhancement rolls up to the enhancement's parent.
+func (x *TargetIndex) Base(controlID string, level BaseLevel) string {
+	if level == BaseNone || !x.Has(controlID) {
 		return ""
 	}
+	if level == BaseParent {
+		owner := x.Owner(controlID)
+		if parent := x.parent[owner]; parent != "" {
+			return parent
+		}
+		return owner
+	}
+	parent, _ := x.lookup(controlID)
 	for parent != "" {
 		controlID = parent
 		parent, _ = x.lookup(controlID)

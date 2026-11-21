@@ -120,6 +120,50 @@ var _ = Describe("Score", func() {
 		})
 	})
 
+	Describe("the declared base level", func() {
+		DescribeTable("decides which mappings count as base",
+			func(level crosswalk.BaseLevel, refTarget, mappedTarget string, foundBase int) {
+				ms := []crosswalk.Mapping{mapping("s-1", mappedTarget, equivalent, 0.8)}
+				in := scoreInput([]crosswalk.Reference{ref("s-1", refTarget)}, ms, candidatesFor(ms))
+				in.Profile.BaseLevel = level
+				r := mustScore(in)
+				Expect(r.Recall.FoundBase).To(Equal(rate(foundBase, 1)))
+				Expect(r.Recall.ReachableBase).To(Equal(rate(foundBase, 1)))
+			},
+			Entry("root credits a cousin in the same tree", crosswalk.BaseRoot, "ab-2.3.1", "ab-2", 1),
+			Entry("parent credits a child and its parent", crosswalk.BaseParent, "ab-2.3", "ab-2", 1),
+			Entry("parent does not credit the grandparent", crosswalk.BaseParent, "ab-2.3.1", "ab-2", 0),
+			Entry("none does not credit a related control", crosswalk.BaseNone, "ab-2.3", "ab-2", 0),
+			Entry("none still credits the exact control", crosswalk.BaseNone, "ab-2.3", "ab-2.3", 1),
+		)
+
+		It("records the level in provenance and prints it beside base recall", func() {
+			in := scoreInput([]crosswalk.Reference{ref("s-1", "ab-2")}, nil, nil)
+			in.Profile.BaseLevel = crosswalk.BaseParent
+			r := mustScore(in)
+			Expect(r.Provenance.Profile.BaseLevel).To(Equal(crosswalk.BaseParent))
+			Expect(r.Markdown()).To(ContainSubstring("Base level: parent"))
+		})
+
+		It("treats an unset level as root", func() {
+			r := mustScore(scoreInput([]crosswalk.Reference{ref("s-1", "ab-2")}, nil, nil))
+			Expect(r.Provenance.Profile.BaseLevel).To(Equal(crosswalk.BaseRoot))
+			Expect(r.Markdown()).To(ContainSubstring("Base level: root"))
+		})
+	})
+
+	Describe("ancestor controls kept in the subset as context", func() {
+		It("leaves candidates and mappings of a control outside the profile out of every figure", func() {
+			ms := []crosswalk.Mapping{mapping("s-1", "ab-2", equivalent, 0.8), mapping("s-2", "cd-1", equivalent, 0.9)}
+			in := scoreInput([]crosswalk.Reference{ref("s-1", "ab-2")}, ms, candidatesFor(ms))
+			in.Profile.Controls = []string{"s-1"}
+			r := mustScore(in)
+			Expect(r.Related).To(Equal([]crosswalk.Mapping{ms[0]}))
+			Expect(r.Recall.ReachableExact).To(Equal(rate(1, 1)))
+			Expect(r.Distribution.Types).To(Equal(map[string]int{equivalent: 1}))
+		})
+	})
+
 	Describe("statement items as sources", func() {
 		itemInput := func(refTarget string, ms []crosswalk.Mapping, cs []crosswalk.Candidate) crosswalk.ScoreInput {
 			in := scoreInput([]crosswalk.Reference{ref("s-1", refTarget)}, ms, cs)
@@ -180,7 +224,7 @@ var _ = Describe("Score", func() {
 				Expect(err).To(MatchError(And(ContainSubstring(`"`+source+`"`), ContainSubstring("statement item"), ContainSubstring("synth"))))
 			},
 			Entry("an item of a control outside the profile", "s-9.a"),
-			Entry("a control outside the profile", "s-9"),
+			Entry("a control the subset does not hold", "zz-9"),
 			Entry("an item the source does not have", "s-1.z"),
 			Entry("a part id with its _smt suffix stripped", "s-1.a"),
 		)
@@ -433,9 +477,9 @@ var _ = Describe("Score", func() {
 				_, err := crosswalk.Score(scoreInput([]crosswalk.Reference{ref("s-1", "ab-2")}, ms, cs))
 				Expect(err).To(MatchError(And(ContainSubstring(want), ContainSubstring("synth"))))
 			},
-			Entry("mapping source", []crosswalk.Mapping{mapping("s-3", "ab-2", equivalent, 0.5)},
-				[]crosswalk.Candidate{cand("s-3", "ab-2")}, `"s-3"`),
-			Entry("candidate source", nil, []crosswalk.Candidate{cand("s-9", "ab-2")}, `"s-9"`),
+			Entry("mapping source", []crosswalk.Mapping{mapping("zz-3", "ab-2", equivalent, 0.5)},
+				[]crosswalk.Candidate{cand("zz-3", "ab-2")}, `"zz-3"`),
+			Entry("candidate source", nil, []crosswalk.Candidate{cand("zz-9", "ab-2")}, `"zz-9"`),
 		)
 
 		DescribeTable("rejects a mapping or candidate whose target is not in the target catalog",
@@ -484,7 +528,7 @@ var _ = Describe("Score", func() {
 		Expect(r.Provenance).To(Equal(crosswalk.Provenance{
 			Label: "nightly", Commit: "abc123", JobID: "job-1",
 			SourceCatalogID: "cat-src", TargetCatalogID: "cat-tgt",
-			Profile:      crosswalk.ProfileIdentity{Name: "synth", Digest: "digest-1", Controls: []string{"s-1", "s-2"}},
+			Profile:      crosswalk.ProfileIdentity{Name: "synth", Digest: "digest-1", Controls: []string{"s-1", "s-2"}, BaseLevel: crosswalk.BaseRoot},
 			SourceDigest: in.Source.Digest, SubsetDigest: in.Subset.Digest, TargetDigest: in.Target.Digest,
 		}))
 	})

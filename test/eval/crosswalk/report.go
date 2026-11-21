@@ -39,6 +39,9 @@ type Report struct {
 	// those resolving to exactly one target control, out of all of them
 	// (resolved, unresolved and ambiguous).
 	Resolution Rate `json:"resolution"`
+	// SkippedLinks counts the profile's rel links that were not read because
+	// their href is not a "#fragment" (see References.SkippedLinks).
+	SkippedLinks int `json:"skipped_links"`
 	// References are the resolved references, the recall denominators, in
 	// input order.
 	References   []ScoredReference     `json:"references"`
@@ -98,6 +101,9 @@ type ProfileIdentity struct {
 	Name     string   `json:"name"`
 	Digest   string   `json:"digest"`
 	Controls []string `json:"controls"`
+	// BaseLevel is the profile's base level (parent, root or none): what
+	// "Base" means in the recall figures.
+	BaseLevel BaseLevel `json:"base_level"`
 	// CSVDigest is the hex SHA-256 of the references.csv the profile names;
 	// empty when the profile uses oscal_links.
 	CSVDigest string `json:"csv_digest,omitempty"`
@@ -287,8 +293,11 @@ func (r *Report) Markdown() string {
 	p := r.Provenance
 	fmt.Fprintf(&b, "# Crosswalk eval: %s\n\n", cell(p.Profile.Name))
 	fmt.Fprintf(&b, "Resolution: %s of distinct (source control, identifier) references resolve to exactly one target control.\n\n", r.Resolution)
+	if r.SkippedLinks > 0 {
+		fmt.Fprintf(&b, "Skipped links: %d links of the profile's rel had a non-fragment href (for example an absolute URL) and were not read.\n\n", r.SkippedLinks)
+	}
 
-	b.WriteString("## Recall\n\n| | Exact | Base |\n|---|---|---|\n")
+	fmt.Fprintf(&b, "## Recall\n\nBase level: %s\n\n| | Exact | Base |\n|---|---|---|\n", p.Profile.BaseLevel)
 	fmt.Fprintf(&b, "| Found | %s | %s |\n", r.Recall.FoundExact, r.Recall.FoundBase)
 	fmt.Fprintf(&b, "| Reachable | %s | %s |\n", r.Recall.ReachableExact, r.Recall.ReachableBase)
 	for _, g := range slices.Sorted(maps.Keys(r.Recall.ByGenerator)) {
