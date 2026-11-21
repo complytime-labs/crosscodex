@@ -1,9 +1,10 @@
 //go:build ignore
 
 // Command gen generates and verifies the production TLS PKI for the compose
-// deployment. One shared server cert (SANs cover every compose service name)
-// plus one client cert plus the CA, written as PEM files with a fingerprint,
-// plus the in-toto attestation signing keypair.
+// deployment. One shared server cert (SANs cover every compose service name,
+// serverAuth only) plus one client cert (clientAuth only) plus the CA, written
+// as PEM files with a fingerprint, plus the in-toto attestation signing
+// keypair.
 //
 // Usage:
 //
@@ -17,11 +18,13 @@
 // anything else in it. A regeneration mints a new CA and attestation key.
 //
 // With --verify, checks everything Ensure requires to keep a set: the TLS
-// chain, key/cert matches, the compose SANs below, the fingerprint, at least
-// a day of validity left, and a matching attestation keypair.
+// chain, key/cert matches, the compose SANs below, a serverAuth-only server
+// cert, the fingerprint, at least a day of validity left, and a matching
+// attestation keypair.
 package main
 
 import (
+	"crypto/x509"
 	"fmt"
 	"net"
 	"os"
@@ -45,7 +48,12 @@ func main() {
 			IPs:                ips,
 			MinRemaining:       24 * time.Hour,
 			RequireFingerprint: true,
-			VerifyExtra:        testcerts.VerifyAttestationKeypair,
+			// db, nats and the LLM gateway hold server-key.pem; a server cert
+			// that also permits clientAuth would let any of them connect to
+			// nats or db as a CA-trusted client. Older dual-use sets fail
+			// here, so deploy:certs:generate replaces them.
+			ServerAuthOnly: true,
+			VerifyExtra:    testcerts.VerifyAttestationKeypair,
 		},
 		Generate:   generate,
 		WriteExtra: testcerts.WriteAttestationKeypair,
@@ -83,6 +91,7 @@ func generate() (*testcerts.PKI, error) {
 		pki.WithValidDuration(3650*24*time.Hour),
 		pki.WithDNSNames(dnsNames...),
 		pki.WithIPs(ips...),
+		pki.WithExtKeyUsage(x509.ExtKeyUsageServerAuth),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("generate PKI: %w", err)

@@ -139,6 +139,12 @@ type VerifyOptions struct {
 	MinRemaining time.Duration
 	// RequireFingerprint requires .fingerprint to exist and match the PEM files.
 	RequireFingerprint bool
+	// ServerAuthOnly requires server.pem to permit server authentication only.
+	// A server cert that also permits clientAuth (directly, through
+	// anyExtendedKeyUsage, or by listing no extended key usage) lets every
+	// service holding server-key.pem connect to the others as a CA-trusted
+	// client.
+	ServerAuthOnly bool
 	// VerifyExtra checks caller-owned files in the directory (e.g. the deploy
 	// attestation keypair). Nil skips it.
 	VerifyExtra func(dir string) error
@@ -202,6 +208,11 @@ func verifyDir(dir string, opts VerifyOptions) error {
 	if len(missing) > 0 {
 		return fmt.Errorf("server.pem does not cover required SANs: %s", strings.Join(missing, ", "))
 	}
+	if opts.ServerAuthOnly {
+		if err := checkServerAuthOnly(serverCert); err != nil {
+			return err
+		}
+	}
 
 	if opts.RequireFingerprint {
 		stored, err := ReadFingerprint(dir)
@@ -223,6 +234,27 @@ func verifyDir(dir string, opts VerifyOptions) error {
 	if opts.VerifyExtra != nil {
 		if err := opts.VerifyExtra(dir); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// checkServerAuthOnly fails when cert can also be used for client
+// authentication, naming the extended key usage that permits it.
+func checkServerAuthOnly(cert *x509.Certificate) error {
+	const msg = "server.pem permits client authentication (%s), so any service holding server-key.pem can connect to the others as a client; it must be serverAuth-only"
+	if len(cert.ExtKeyUsage) == 0 && len(cert.UnknownExtKeyUsage) == 0 {
+		return fmt.Errorf(msg, "no extended key usage, which permits every use")
+	}
+	if !slices.Contains(cert.ExtKeyUsage, x509.ExtKeyUsageServerAuth) {
+		return fmt.Errorf(msg, "no serverAuth extended key usage, only unrecognised ones")
+	}
+	for _, usage := range cert.ExtKeyUsage {
+		switch usage {
+		case x509.ExtKeyUsageClientAuth:
+			return fmt.Errorf(msg, "extended key usage clientAuth")
+		case x509.ExtKeyUsageAny:
+			return fmt.Errorf(msg, "extended key usage any")
 		}
 	}
 	return nil

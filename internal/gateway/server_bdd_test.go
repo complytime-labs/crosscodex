@@ -154,6 +154,13 @@ var _ = Describe("Server", func() {
 			}
 		})
 
+		It("returns 503 naming an extra dependency whose check fails", func() {
+			natsDown := gateway.DependencyCheck{Name: "nats", Check: func(context.Context) error { return errors.New("not connected") }}
+			code, body := getHealthz(gateway.NewPoolAdminBackend(&fakeHealthPool{status: &db.HealthStatus{Connected: true}}, natsDown))
+			Expect(code).To(Equal(http.StatusServiceUnavailable))
+			Expect(body).To(ContainSubstring("nats unreachable"))
+		})
+
 		It("returns 503 through PoolAdminBackend when the pool reports not connected", func() {
 			code, body := getHealthz(gateway.NewPoolAdminBackend(&fakeHealthPool{status: &db.HealthStatus{Connected: false}}))
 			Expect(code).To(Equal(http.StatusServiceUnavailable))

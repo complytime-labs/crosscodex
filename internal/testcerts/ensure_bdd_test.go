@@ -1,7 +1,13 @@
 package testcerts_test
 
 import (
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"net"
 	"os"
 	"os/exec"
@@ -106,8 +112,72 @@ var _ = Describe("VerifyDirWith", func() {
 		Entry("a caller-owned file check fails", func(string) {},
 			testcerts.VerifyOptions{VerifyExtra: func(string) error { return errors.New("attestation-key.pem: missing") }},
 			"attestation-key.pem: missing"),
+		Entry("the server cert also permits client authentication", func(string) {},
+			testcerts.VerifyOptions{ServerAuthOnly: true},
+			"server.pem permits client authentication (extended key usage clientAuth), so any service holding server-key.pem can connect to the others as a client; it must be serverAuth-only"),
+		Entry("the server cert permits any extended key usage", func(dir string) {
+			writeSet(generateWith(pkigen.WithExtKeyUsage(x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageAny)), dir)
+		}, testcerts.VerifyOptions{ServerAuthOnly: true},
+			"server.pem permits client authentication (extended key usage any)"),
+		Entry("the server cert lists no extended key usage, which permits every use", func(dir string) {
+			writeSet(generateWith(pkigen.WithExtKeyUsage()), dir)
+		}, testcerts.VerifyOptions{ServerAuthOnly: true},
+			"server.pem permits client authentication (no extended key usage, which permits every use)"),
+		Entry("the server cert lists only an unrecognised extended key usage, so it does not assert serverAuth", resignServerWithUnknownEKU,
+			testcerts.VerifyOptions{ServerAuthOnly: true}, "server.pem"),
 	)
+
+	It("accepts a serverAuth-only server cert under ServerAuthOnly while the client cert keeps clientAuth", func() {
+		writeSet(generateWith(pkigen.WithExtKeyUsage(x509.ExtKeyUsageServerAuth)), dir)
+		Expect(testcerts.VerifyDirWith(dir, testcerts.VerifyOptions{ServerAuthOnly: true, RequireFingerprint: true})).To(Succeed())
+		Expect(readCertFile(dir, "server.pem").ExtKeyUsage).To(Equal([]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}))
+		Expect(readCertFile(dir, "client.pem").ExtKeyUsage).To(Equal([]x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}))
+	})
+
+	It("accepts a dual-use server cert when ServerAuthOnly is not required", func() {
+		Expect(readCertFile(dir, "server.pem").ExtKeyUsage).To(ContainElement(x509.ExtKeyUsageClientAuth))
+		Expect(testcerts.VerifyDirWith(dir, testcerts.VerifyOptions{})).To(Succeed())
+	})
 })
+
+// readCertFile parses the PEM certificate dir/name.
+// resignServerWithUnknownEKU replaces dir/server.pem with a CA-signed cert for
+// the same key whose only extended key usage is an OID Go does not recognise.
+func resignServerWithUnknownEKU(dir string) {
+	caCert := readCertFile(dir, "ca.pem")
+	keyPEM, err := os.ReadFile(filepath.Join(dir, "ca-key.pem"))
+	Expect(err).NotTo(HaveOccurred())
+	block, _ := pem.Decode(keyPEM)
+	Expect(block).NotTo(BeNil())
+	caKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		caKey, err = x509.ParseECPrivateKey(block.Bytes)
+	}
+	Expect(err).NotTo(HaveOccurred())
+	old := readCertFile(dir, "server.pem")
+	ekuValue, err := asn1.Marshal([]asn1.ObjectIdentifier{{1, 3, 6, 1, 4, 1, 99999, 1}})
+	Expect(err).NotTo(HaveOccurred())
+	tmpl := &x509.Certificate{
+		SerialNumber:    big.NewInt(4242),
+		Subject:         old.Subject,
+		NotBefore:       old.NotBefore,
+		NotAfter:        old.NotAfter,
+		KeyUsage:        old.KeyUsage,
+		DNSNames:        old.DNSNames,
+		IPAddresses:     old.IPAddresses,
+		ExtraExtensions: []pkix.Extension{{Id: asn1.ObjectIdentifier{2, 5, 29, 37}, Value: ekuValue}},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, old.PublicKey, caKey)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(os.WriteFile(filepath.Join(dir, "server.pem"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644)).To(Succeed())
+	Expect(testcerts.WriteFingerprint(dir)).To(Succeed())
+}
+
+func readCertFile(dir, name string) *x509.Certificate {
+	data, err := os.ReadFile(filepath.Join(dir, name))
+	Expect(err).NotTo(HaveOccurred())
+	return parseCert(data)
+}
 
 // ensureHelperDirEnv makes the suite binary run one Ensure against the named
 // directory and exit (see TestTestCertsBDD), so specs can race real processes.
@@ -261,6 +331,28 @@ var _ = Describe("Ensure", func() {
 			ContainSubstring("fix the generator options"))))
 		Expect(storedFingerprint(dir)).To(Equal(before))
 		Expect(dirEntries(filepath.Dir(dir))).To(ConsistOf("certs", ".certs.lock"))
+	})
+
+	It("replaces a dual-use server cert with a serverAuth-only set when ServerAuthOnly is required", func() {
+		p, err := testcerts.Generate()
+		Expect(err).NotTo(HaveOccurred())
+		writeSet(p, dir)
+		before := storedFingerprint(dir)
+
+		opts := strictEnsure
+		opts.Verify.ServerAuthOnly = true
+		opts.Generate = func() (*testcerts.PKI, error) {
+			return generateWith(
+				pkigen.WithDNSNames("localhost", "db", "nats"),
+				pkigen.WithIPs(net.IPv4(127, 0, 0, 1)),
+				pkigen.WithExtKeyUsage(x509.ExtKeyUsageServerAuth),
+			), nil
+		}
+		generated, err := testcerts.Ensure(dir, opts)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(generated).To(BeTrue())
+		Expect(storedFingerprint(dir)).NotTo(Equal(before))
+		Expect(testcerts.VerifyDirWith(dir, opts.Verify)).To(Succeed())
 	})
 
 	It("installs the directory with DirMode when set", func() {

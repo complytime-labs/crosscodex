@@ -2,9 +2,12 @@
 # check-praxis-compose.sh — Refuse the Praxis LLM gateway on a compose tool that
 # ignores volume subpath.
 #
-# compose.gateway-praxis.yaml narrows the cert volume to three files with
-# subpath. podman-compose 1.0.6 through 1.5.0 silently drop it and mount the
-# whole volume, CA key included, into the third-party Praxis image. Only
+# compose.gateway-praxis.yaml narrows the server cert volume to three files
+# with subpath. podman-compose 1.0.6 through 1.5.0 silently drop it and mount
+# the whole volume into the third-party Praxis image. That volume holds only
+# those three files today (the client and attestation keys live in separate
+# volumes Praxis never mounts), so the check keeps Praxis pinned to exactly the
+# files it needs should the volume ever gain one. Only
 # podman-compose 1.6.0 or later (a final release, not a pre-release) is
 # verified to honour it, so anything else is refused.
 #
@@ -17,7 +20,7 @@
 set -euo pipefail
 
 compose="${1:?Usage: check-praxis-compose.sh <compose-cmd>}"
-why="Praxis must receive only ca.pem, server.pem and server-key.pem; a compose tool that ignores volume subpath mounts the whole cert volume, exposing the CA private key (ca-key.pem) to the third-party Praxis container."
+why="Praxis must receive only ca.pem, server.pem and server-key.pem; a compose tool that ignores volume subpath mounts the whole server cert volume (crosscodex-certs) instead, exposing to the third-party Praxis container any file added to that volume beyond those three."
 
 if [ "$compose" != podman-compose ]; then
 	echo "Refusing LLM_GATEWAY=praxis: the compose tool is '$compose', but the Praxis gateway is verified only with podman-compose 1.6.0 or later. $why Install podman-compose 1.6.0+ (pip install --user --upgrade podman-compose) and use CONTAINER_ENGINE=podman, or deploy with LLM_GATEWAY=litellm." >&2

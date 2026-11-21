@@ -1,0 +1,42 @@
+name: deploy:certs strips keys an older release left in the wrong volume
+
+vars:
+  root: "."
+
+testcases:
+  - name: The original single shared volume is split into exactly the three allowlists
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/certs-load-upgrade.sh {{.root}} original
+        timeout: 300
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "seeded_server=[.fingerprint attestation-key.pem attestation-pub.pem ca-key.pem ca.pem client-key.pem client.pem server-key.pem server.pem ]"
+          - result.systemout ShouldContainSubstring "server=[.fingerprint ca.pem server-key.pem server.pem ]"
+          - result.systemout ShouldContainSubstring "client=[.fingerprint ca.pem client-key.pem client.pem ]"
+          - result.systemout ShouldContainSubstring "attestation=[.fingerprint attestation-key.pem attestation-pub.pem ]"
+          - result.systemout ShouldContainSubstring "reloads=3"
+
+  - name: A client volume that still holds the attestation keypair is stripped
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/certs-load-upgrade.sh {{.root}} split2
+        timeout: 300
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "server=[.fingerprint ca.pem server-key.pem server.pem ]"
+          - result.systemout ShouldContainSubstring "client=[.fingerprint ca.pem client-key.pem client.pem ]"
+          - result.systemout ShouldContainSubstring "attestation=[.fingerprint attestation-key.pem attestation-pub.pem ]"
+          - result.systemout ShouldContainSubstring "reloads=2"
+
+  - name: Volumes already holding exactly their allowlists are not reloaded
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/certs-load-upgrade.sh {{.root}} current
+        timeout: 300
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring "server=[.fingerprint ca.pem server-key.pem server.pem ]"
+          - result.systemout ShouldContainSubstring "client=[.fingerprint ca.pem client-key.pem client.pem ]"
+          - result.systemout ShouldContainSubstring "attestation=[.fingerprint attestation-key.pem attestation-pub.pem ]"
+          - result.systemout ShouldContainSubstring "reloads=0"

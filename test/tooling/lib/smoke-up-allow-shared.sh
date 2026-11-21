@@ -7,7 +7,8 @@ set -u
 root="${1:?Usage: smoke-up-allow-shared.sh <repo-root>}"
 d=$(mktemp -d)
 trap 'rm -rf "$d"' EXIT
-mkdir -p "$d/scripts" "$d/deploy/litellm" "$d/bin"
+mkdir -p "$d/scripts" "$d/test/deploy" "$d/deploy/litellm" "$d/bin"
+cp "${root}/test/deploy/podman_env.sh" "$d/test/deploy/"
 cp "${root}/scripts/in-container.sh" "${root}/scripts/generate-llm-gateway-config.sh" \
 	"${root}/scripts/check-openai-compat-models.sh" "$d/scripts/"
 cp "${root}"/deploy/litellm/*.tmpl "$d/deploy/litellm/"

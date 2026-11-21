@@ -10,12 +10,14 @@
 # Isolation (so the smoke stack can run alongside a real production stack):
 #   * COMPOSE_PROJECT_NAME    — separate project → own pod/containers/network
 #                               and own (auto-namespaced) data volumes.
-#   * CROSSCODEX_CERTS_VOLUME — own PKI volume, generated fresh.
+#   * CROSSCODEX_CERTS_VOLUME — own server PKI volume, generated fresh.
+#   * CROSSCODEX_CLIENT_CERTS_VOLUME — own client key volume.
+#   * CROSSCODEX_ATTESTATION_KEYS_VOLUME — own attestation key volume.
 #   * CROSSCODEX_GATEWAY_PORT — own published host port (production keeps 50051).
 #   * CERTS_DIR               — throwaway host dir for the smoke PKI.
 #   * SMOKE_PRAXIS_PORT       — host-loopback port for Praxis's mTLS listener
 #                               (LLM_GATEWAY=praxis only).
-# All five are consumed by deploy/compose.yaml plus the LLM gateway fragment
+# All seven are consumed by deploy/compose.yaml plus the LLM gateway fragment
 # (compose.gateway-<LLM_GATEWAY>.yaml) and by the deploy:* tasks; the
 # defaults reproduce the production stack, so only the smoke test overrides them.
 # The `deploy:smoke:*` tasks export these from the SMOKE_* taskfile vars; the
@@ -27,14 +29,9 @@ OUT_DIR="${ROOT_DIR}/.test-output/deploy-smoke"
 FIXTURE="${ROOT_DIR}/cmd/crosscodexd/testdata/oscal/e2e-minimal-catalog.json"
 mkdir -p "${OUT_DIR}"
 
-# Podman overlay workaround: point buildah temp to a workspace subdir to avoid
-# "mounting an overlay over build context directory" errors. Applies only inside
-# a container (docker or podman); see in-container.sh for the markers checked.
-if bash "${ROOT_DIR}/scripts/in-container.sh"; then
-	export TMPDIR="${TMPDIR:-${ROOT_DIR}/.test-output/buildtmp}"
-	export STORAGE_DRIVER="${STORAGE_DRIVER:-vfs}"
-	mkdir -p "${TMPDIR}"
-fi
+# Shared with deploy:smoke:down so both act on the same podman runtime view.
+# shellcheck source=test/deploy/podman_env.sh
+source "${ROOT_DIR}/test/deploy/podman_env.sh"
 
 # Isolate this stack from any production stack sharing the same host. The values
 # come from the environment (set by the deploy:smoke:* tasks); the defaults keep
@@ -43,10 +40,12 @@ fi
 # same PKI dir in a separate task invocation.
 : "${COMPOSE_PROJECT_NAME:=crosscodex-smoke}"
 : "${CROSSCODEX_CERTS_VOLUME:=crosscodex-smoke-certs}"
+: "${CROSSCODEX_CLIENT_CERTS_VOLUME:=crosscodex-smoke-client-certs}"
+: "${CROSSCODEX_ATTESTATION_KEYS_VOLUME:=crosscodex-smoke-attestation-keys}"
 : "${CROSSCODEX_GATEWAY_PORT:=50151}"
 : "${CERTS_DIR:=${OUT_DIR}/certs}"
 : "${SMOKE_PRAXIS_PORT:=54443}"
-export COMPOSE_PROJECT_NAME CROSSCODEX_CERTS_VOLUME CROSSCODEX_GATEWAY_PORT CERTS_DIR SMOKE_PRAXIS_PORT
+export COMPOSE_PROJECT_NAME CROSSCODEX_CERTS_VOLUME CROSSCODEX_CLIENT_CERTS_VOLUME CROSSCODEX_ATTESTATION_KEYS_VOLUME CROSSCODEX_GATEWAY_PORT CERTS_DIR SMOKE_PRAXIS_PORT
 
 # LLM gateway under test (litellm default, or praxis). Exported so the child
 # `task deploy:up` loads the matching compose.gateway-<gw>.yaml fragment: the
@@ -63,6 +62,15 @@ litellm | praxis) ;;
 	;;
 esac
 export LLM_GATEWAY PRAXIS_MODELS_ENDPOINT
+
+# Seconds to wait for the analysis job to finish. 120 suits a GPU or remote
+# model; CPU-only inference on the baked Ollama model needs more (several
+# minutes). Checked here, before bring-up, so a typo fails in seconds.
+: "${SMOKE_JOB_TIMEOUT:=120}"
+if ! [[ "${SMOKE_JOB_TIMEOUT}" =~ ^[1-9][0-9]{0,5}$ ]]; then
+	echo "ERROR: SMOKE_JOB_TIMEOUT=${SMOKE_JOB_TIMEOUT} is not a whole number of seconds from 1 to 999999. Set it to how long the analysis job may take, e.g. SMOKE_JOB_TIMEOUT=600 for CPU-only inference (default 120)." >&2
+	exit 1
+fi
 
 # Offline LLM provider: back the smoke stack with a local model server instead
 # of a real OpenAI key. Two kinds are supported:
@@ -204,6 +212,278 @@ bash "${ROOT_DIR}/scripts/generate-llm-gateway-config.sh" all \
 	"${render_host}" "${provider_chat_model}" "${provider_embed_model}"
 
 task deploy:up
+
+# Hardening baseline (issue #236): every running container of this project must
+# have dropped all capabilities except its service's allowlist, run with
+# no-new-privileges, and carry memory and pids limits; read-only services must
+# have a read-only root filesystem. Capabilities and no-new-privileges are read
+# from the kernel (/proc/<pid>/status of the container's PID 1), not from the
+# engine's config: CapBnd is the bounding set cap_drop empties, and it is the
+# meaningful check for non-root services, whose effective set is empty anyway.
+# A service missing from the table fails, so a new service needs a decision.
+# Values: "<read-only rootfs: ro|rw> <comma-separated allowed caps or ->".
+declare -A hardening=(
+	[db]="ro -" [nats]="ro -" [migrate]="ro -" [crosscodexd]="ro -"
+	[litellm]="ro -" ["litellm-tls"]="ro -" [praxis]="ro -" [ollama]="ro -"
+	["backup-init"]="ro CHOWN,DAC_OVERRIDE,FOWNER,FSETID" ["db-restore"]="rw -"
+)
+# Bit numbers from linux/capability.h for the caps the table may allow.
+declare -A cap_bit=([CHOWN]=0 [DAC_OVERRIDE]=1 [DAC_READ_SEARCH]=2 [FOWNER]=3 [FSETID]=4)
+engine="${CONTAINER_ENGINE:-podman}"
+hardening_failures=0
+hardening_fail() {
+	echo "FAIL: hardening: service $1: $2" >&2
+	hardening_failures=$((hardening_failures + 1))
+}
+mapfile -t smoke_containers < <("${engine}" ps --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" --format '{{.ID}}')
+if [ "${#smoke_containers[@]}" -eq 0 ]; then
+	echo "FAIL: hardening: no running containers found for project ${COMPOSE_PROJECT_NAME}." >&2
+	exit 1
+fi
+for cid in "${smoke_containers[@]}"; do
+	if ! info="$("${engine}" inspect --format \
+		'{{index .Config.Labels "com.docker.compose.service"}} {{.State.Pid}} {{json .HostConfig.Memory}} {{json .HostConfig.PidsLimit}} {{json .HostConfig.ReadonlyRootfs}}' "${cid}")"; then
+		echo "FAIL: hardening: '${engine} inspect ${cid}' failed (error above)." >&2
+		exit 1
+	fi
+	read -r svc pid mem pids ro <<<"${info}"
+	if [ -z "${svc}" ]; then
+		hardening_fail "container ${cid}" "has no com.docker.compose.service label"
+		continue
+	fi
+	if [ -z "${hardening[${svc}]+set}" ]; then
+		hardening_fail "${svc}" "no expected hardening in test/deploy/smoke_up.sh; add the service to the hardening table"
+		continue
+	fi
+	read -r want_ro want_caps <<<"${hardening[${svc}]}"
+	allowed=0
+	if [ "${want_caps}" != "-" ]; then
+		IFS=, read -r -a names <<<"${want_caps}"
+		for name in "${names[@]}"; do
+			if [ -z "${cap_bit[${name}]+set}" ]; then
+				echo "FAIL: hardening table allows ${name} for ${svc}, which cap_bit does not map; add its bit number." >&2
+				exit 1
+			fi
+			allowed=$((allowed | (1 << cap_bit[${name}])))
+		done
+	fi
+	status_file="/proc/${pid}/status"
+	if ! cap_bnd="$(sed -n 's/^CapBnd:[[:space:]]*//p' "${status_file}")" || [ -z "${cap_bnd}" ]; then
+		hardening_fail "${svc}" "cannot read CapBnd from ${status_file} (container PID ${pid})"
+	elif ((0x${cap_bnd} & ~allowed)); then
+		hardening_fail "${svc}" "capabilities beyond its allowlist: bounding set 0x${cap_bnd}, allowed $(printf '0x%x' "${allowed}") (${want_caps}); add cap_drop: [ALL] and cap_add only the allowed caps"
+	fi
+	if [ "$(sed -n 's/^NoNewPrivs:[[:space:]]*//p' "${status_file}")" != "1" ]; then
+		hardening_fail "${svc}" "no-new-privileges not set; add security_opt: [no-new-privileges:true]"
+	fi
+	if ! [ "${mem}" -gt 0 ] 2>/dev/null; then
+		hardening_fail "${svc}" "no memory limit (HostConfig.Memory=${mem}); add mem_limit"
+	fi
+	# podman gives every container a pids limit of 2048 by default, so only a
+	# lower value shows that compose set one.
+	if ! [ "${pids}" -gt 0 ] 2>/dev/null || [ "${pids}" -ge 2048 ]; then
+		hardening_fail "${svc}" "no pids limit below the engine default 2048 (HostConfig.PidsLimit=${pids}); add pids_limit"
+	fi
+	if [ "${want_ro}" = "ro" ] && [ "${ro}" != "true" ]; then
+		hardening_fail "${svc}" "root filesystem is writable; add read_only: true and a tmpfs for each path it writes"
+	fi
+done
+if [ "${hardening_failures}" -gt 0 ]; then
+	echo "FAIL: ${hardening_failures} hardening check(s) failed for project ${COMPOSE_PROJECT_NAME}." >&2
+	exit 1
+fi
+echo "Hardening checks passed for ${#smoke_containers[@]} running container(s)."
+
+# Key separation (issue #236). Each key volume holds only its own files: the
+# server volume (db, nats, the LLM gateway) no CA, client or attestation key;
+# the client volume (migrate, crosscodexd) no CA or attestation key; the
+# attestation volume (crosscodexd) no CA or client key. Only migrate and
+# crosscodexd may mount the client volume, only crosscodexd the attestation one.
+#
+# key_absent <what> <path> <command...> runs `<command...> test -e <path>`.
+# test(1) exits 1 for an absent file; 0 (present) and any other status (no
+# test binary, exec or run failure: nothing was checked) fail the smoke test.
+key_absent() {
+	local what="$1" path="$2" rc=0
+	shift 2
+	"$@" test -e "${path}" || rc=$?
+	case "${rc}" in
+	1) ;;
+	0)
+		echo "FAIL: certs volume: ${what} holds ${path}; the certs:load task in .taskfiles/deploy.yml must load only that volume's files into it." >&2
+		exit 1
+		;;
+	*)
+		echo "FAIL: certs volume: could not check ${path} in ${what} ('test -e' exited ${rc}; error above, if any)." >&2
+		exit 1
+		;;
+	esac
+}
+project_filter="label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}"
+db_cid="$("${engine}" ps --filter "${project_filter}" \
+	--filter "label=com.docker.compose.service=db" --format '{{.ID}}' | head -n1)"
+if [ -z "${db_cid}" ]; then
+	echo "FAIL: certs volume: no running db container in project ${COMPOSE_PROJECT_NAME} to inspect /certs through." >&2
+	exit 1
+fi
+if ! "${engine}" exec "${db_cid}" test -r /certs/ca.pem; then
+	echo "FAIL: certs volume: cannot read /certs/ca.pem in db (error above, if any)." >&2
+	exit 1
+fi
+for key in ca-key.pem client-key.pem attestation-key.pem; do
+	key_absent "${CROSSCODEX_CERTS_VOLUME} (seen from db)" "/certs/${key}" "${engine}" exec "${db_cid}"
+done
+# env as the entrypoint so key_absent's `test -e <path>` runs as the command.
+helper=("${engine}" run --rm --entrypoint env)
+image="crosscodex-db:${TAG:-latest}"
+for key in ca-key.pem attestation-key.pem; do
+	key_absent "${CROSSCODEX_CLIENT_CERTS_VOLUME}" "/v/${key}" "${helper[@]}" -v "${CROSSCODEX_CLIENT_CERTS_VOLUME}:/v:ro,z" "${image}"
+done
+for key in ca-key.pem client-key.pem; do
+	key_absent "${CROSSCODEX_ATTESTATION_KEYS_VOLUME}" "/v/${key}" "${helper[@]}" -v "${CROSSCODEX_ATTESTATION_KEYS_VOLUME}:/v:ro,z" "${image}"
+done
+# The services that mount the server volume must not reach the client or
+# attestation key at the old /certs path either.
+key_services=(db nats litellm-tls)
+if [ "${LLM_GATEWAY}" = "praxis" ]; then
+	key_services=(db nats praxis)
+fi
+for svc in "${key_services[@]}"; do
+	cid="$("${engine}" ps --filter "${project_filter}" \
+		--filter "label=com.docker.compose.service=${svc}" --format '{{.ID}}' | head -n1)"
+	if [ -z "${cid}" ]; then
+		echo "FAIL: certs volume: no running ${svc} container in project ${COMPOSE_PROJECT_NAME} to check key access in." >&2
+		exit 1
+	fi
+	for key in client-key.pem attestation-key.pem; do
+		key_absent "service ${svc}" "/certs/${key}" "${engine}" exec "${cid}"
+	done
+done
+# Mounts of every container in the project, exited ones included, so the
+# one-shot migrate is checked too.
+# Capture the list first: a failing ps inside a process substitution would not
+# trip set -e and would leave the loop silently empty.
+if ! container_ids="$("${engine}" ps -a --filter "${project_filter}" --format '{{.ID}}')"; then
+	echo "FAIL: certs volume: '${engine} ps -a' failed for project ${COMPOSE_PROJECT_NAME} (error above)." >&2
+	exit 1
+fi
+mapfile -t all_containers <<<"${container_ids}"
+seen_migrate=0
+seen_crosscodexd=0
+for cid in "${all_containers[@]}"; do
+	[ -n "${cid}" ] || continue
+	if ! mounts="$("${engine}" inspect --format \
+		'{{index .Config.Labels "com.docker.compose.service"}}{{range .Mounts}} {{.Name}}{{end}}' "${cid}")"; then
+		echo "FAIL: certs volume: '${engine} inspect ${cid}' failed (error above)." >&2
+		exit 1
+	fi
+	read -r svc names <<<"${mounts}"
+	case "${svc}" in
+	migrate) seen_migrate=1 ;;
+	crosscodexd) seen_crosscodexd=1 ;;
+	*) ;;
+	esac
+	for name in ${names}; do
+		if [ "${name}" = "${CROSSCODEX_CLIENT_CERTS_VOLUME}" ] && [ "${svc}" != migrate ] && [ "${svc}" != crosscodexd ]; then
+			echo "FAIL: certs volume: service ${svc} mounts ${CROSSCODEX_CLIENT_CERTS_VOLUME}; only migrate and crosscodexd may hold the client key." >&2
+			exit 1
+		fi
+		if [ "${name}" = "${CROSSCODEX_ATTESTATION_KEYS_VOLUME}" ] && [ "${svc}" != crosscodexd ]; then
+			echo "FAIL: certs volume: service ${svc} mounts ${CROSSCODEX_ATTESTATION_KEYS_VOLUME}; only crosscodexd may hold the attestation key." >&2
+			exit 1
+		fi
+	done
+done
+# The expected services must have been inspected, so the check cannot pass
+# on an empty or partial container list.
+if [ "${seen_migrate}" -ne 1 ] || [ "${seen_crosscodexd}" -ne 1 ]; then
+	echo "FAIL: certs volume: mount check did not see both migrate (seen=${seen_migrate}) and crosscodexd (seen=${seen_crosscodexd}) in project ${COMPOSE_PROJECT_NAME}; cannot prove which services mount the client and attestation key volumes." >&2
+	exit 1
+fi
+echo "Key volumes hold only their own files; only migrate and crosscodexd mount the client key, only crosscodexd the attestation key."
+
+# server.pem must not be a client identity (issue #236): db, nats and the LLM
+# gateway can read server-key.pem, and nats accepts any CA-signed client cert.
+# Present each cert to nats as a TLS client from a sibling container that holds
+# what those services hold: the server volume and GID 10001 (compose.yaml
+# group_add). server.pem must get a TLS alert; client.pem, the positive control,
+# must get PONG, so the check cannot pass on a broken probe. nats sends a
+# plaintext INFO line before the TLS handshake, so `openssl s_client` cannot
+# speak it; python3 (from the apache/age base of crosscodex-db, the image the
+# volume checks above already use) can. Exit codes: 0 accepted, 3 refused by a
+# TLS alert from nats, anything else means nothing was proven.
+nats_probe='
+import socket, ssl, sys
+host, port, ca, cert, key = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
+def done(rc, msg):
+    print(msg)
+    sys.exit(rc)
+try:
+    ctx = ssl.create_default_context(cafile=ca)
+    ctx.load_cert_chain(cert, key)
+    raw = socket.create_connection((host, port), timeout=15)
+    info = raw.makefile("rb").readline()
+except Exception as e:
+    done(2, "setup failed: %r" % e)
+if not info.startswith(b"INFO "):
+    done(2, "no NATS INFO line from %s:%d: %r" % (host, port, info[:80]))
+buf = b""
+try:
+    tls = ctx.wrap_socket(raw, server_hostname=host)
+    tls.sendall(b"CONNECT {\"verbose\":false,\"pedantic\":false,\"tls_required\":true}\r\nPING\r\n")
+    while not any(l.startswith((b"PONG", b"-ERR")) for l in buf.split(b"\r\n")[:-1]):
+        chunk = tls.recv(4096)
+        if not chunk:
+            done(2, "connection closed without PONG, -ERR or a TLS alert: %r" % buf[:200])
+        buf += chunk
+except ssl.SSLError as e:
+    if "ALERT" in (e.reason or ""):
+        done(3, "refused by TLS alert %s" % e.reason)
+    done(2, "TLS error not sent by nats: %r" % e)
+except Exception as e:
+    done(2, "probe failed: %r" % e)
+if any(l.startswith(b"PONG") for l in buf.split(b"\r\n")):
+    done(0, "accepted (PONG)")
+done(2, "nats answered with an error, not a TLS refusal: %r" % buf[:200])
+'
+nats_cid="$("${engine}" ps --filter "${project_filter}" \
+	--filter "label=com.docker.compose.service=nats" --format '{{.ID}}' | head -n1)"
+if [ -z "${nats_cid}" ]; then
+	echo "FAIL: client identity: no running nats container in project ${COMPOSE_PROJECT_NAME} to probe." >&2
+	exit 1
+fi
+# shellcheck disable=SC2016 # $name is a Go template variable, not shell.
+if ! nats_network="$("${engine}" inspect --format '{{range $name, $net := .NetworkSettings.Networks}}{{$name}} {{end}}' "${nats_cid}")" ||
+	[ -z "${nats_network// /}" ]; then
+	echo "FAIL: client identity: cannot read the network of nats container ${nats_cid} (error above, if any)." >&2
+	exit 1
+fi
+read -r nats_network _ <<<"${nats_network}"
+# nats_presents <volume> <cert-base> sets probe_out (the probe's stdout; engine
+# errors go to stderr) and probe_rc.
+nats_presents() {
+	probe_out="$("${engine}" run --rm --network "${nats_network}" --group-add 10001 \
+		-v "$1:/v:ro,z" --entrypoint python3 "${image}" \
+		-I -c "${nats_probe}" nats 4222 /v/ca.pem "/v/$2.pem" "/v/$2-key.pem")" && probe_rc=0 || probe_rc=$?
+}
+nats_presents "${CROSSCODEX_CLIENT_CERTS_VOLUME}" client
+if [ "${probe_rc}" -ne 0 ]; then
+	echo "FAIL: client identity: nats did not accept client.pem (probe exit ${probe_rc}: ${probe_out}); the probe cannot prove server.pem is refused." >&2
+	exit 1
+fi
+nats_presents "${CROSSCODEX_CERTS_VOLUME}" server
+case "${probe_rc}" in
+3) ;;
+0)
+	echo "FAIL: client identity: nats accepted server.pem as a client cert; the deploy server cert must be serverAuth-only (deploy/certgen/gen.go) so db, nats and the LLM gateway cannot act as NATS clients." >&2
+	exit 1
+	;;
+*)
+	echo "FAIL: client identity: could not check whether nats refuses server.pem (probe exit ${probe_rc}: ${probe_out})." >&2
+	exit 1
+	;;
+esac
+echo "nats accepts client.pem and refuses server.pem as a client cert (${probe_out})."
 
 # Reach the daemon exactly as deploy:up's health check does: a host process
 # dialing the published gateway port over mTLS. In this rootless, nested-podman
@@ -351,10 +631,12 @@ fi
 
 # Poll the job to a terminal state: pass on COMPLETED, fail FAST on FAILED
 # (printing the daemon's error so a broken LLM path is diagnosed here, not left
-# to a misleading title-timeout). 60 x 2s = 120s, ample for a 3-control catalog's
-# embedding + candidate pass on a freshly started stack.
-echo "Waiting for analysis job ${JOB_ID} to reach a terminal state ..."
-for i in $(seq 1 60); do
+# to a misleading title-timeout). One attempt every 2s for SMOKE_JOB_TIMEOUT
+# seconds; the default 120s is ample for a 3-control catalog's embedding +
+# candidate pass on a GPU or remote model.
+attempts=$(((SMOKE_JOB_TIMEOUT + 1) / 2))
+echo "Waiting up to ${SMOKE_JOB_TIMEOUT}s for analysis job ${JOB_ID} to reach a terminal state ..."
+for i in $(seq 1 "${attempts}"); do
 	# Tolerate a transient CLI error mid-poll: an empty/garbled read yields no
 	# Status line, so it is treated as not-ready and retried; the timeout below
 	# governs give-up, and the last captured output is dumped for triage.
@@ -388,10 +670,10 @@ for i in $(seq 1 60); do
 		exit 1
 		;;
 	esac
-	# Progress so a slow job does not look hung (attempt N/60, ~2s apart).
-	echo "  job ${status:-not-ready} (attempt ${i}/60); retrying in 2s ..."
+	# Progress so a slow job does not look hung (attempt N/attempts, ~2s apart).
+	echo "  job ${status:-not-ready} (attempt ${i}/${attempts}); retrying in 2s ..."
 	sleep 2
 done
-echo "Analysis job ${JOB_ID} did not reach a terminal state within 120s; last status:" >&2
+echo "Analysis job ${JOB_ID} did not reach a terminal state within ${SMOKE_JOB_TIMEOUT}s (raise SMOKE_JOB_TIMEOUT for slow inference); last status:" >&2
 cat "${OUT_DIR}/job.log" >&2
 exit 1

@@ -152,7 +152,8 @@ func GenerateCert(ca *CertKeyPair, opts ...Option) (*CertKeyPair, error) {
 
 // GenerateDevPKI creates a complete PKI bundle: self-signed CA, server certificate
 // (with localhost SANs), and client certificate. If WithOutputDir is specified,
-// PEM files are written to disk.
+// PEM files are written to disk. WithExtKeyUsage applies to the server
+// certificate only; the client certificate is always ClientAuth-only.
 func GenerateDevPKI(opts ...Option) (*PKIBundle, error) {
 	o := defaultOptions()
 	for _, fn := range opts {
@@ -172,6 +173,7 @@ func GenerateDevPKI(opts ...Option) (*PKIBundle, error) {
 		WithValidDuration(o.validDuration),
 		WithDNSNames(o.dnsNames...),
 		WithIPs(o.ips...),
+		WithExtKeyUsage(o.extKeyUsage...),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("generate dev server cert: %w", err)

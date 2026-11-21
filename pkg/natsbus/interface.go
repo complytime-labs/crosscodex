@@ -106,6 +106,13 @@ type Client interface {
 	// "AUDIT_EVENTS"). It is used to detect drift from the configured retention.
 	AuditStreamRetention(ctx context.Context) (map[string]time.Duration, error)
 
+	// Connected reports whether the connection to the NATS server is up right
+	// now. It is false while the client is reconnecting (see nats.reconnect_wait
+	// and nats.max_reconnects) and after Close. It reads local connection state
+	// and sends nothing to the server, so it is cheap enough for every health
+	// probe.
+	Connected() bool
+
 	// Close drains the connection, stops the embedded server if applicable,
 	// and releases all resources. Safe to call multiple times.
 	Close() error

@@ -1,8 +1,18 @@
 # Single-host production stack for CrossCodex (role: all) over full mTLS.
 # Populate the cert volume first: task deploy:certs
 #
-# Cert keys in the shared crosscodex-certs volume are owned root:10001, mode
-# 0640 (group-read only). Every service that mounts the volume joins GID 10001
+# Keys live in three volumes, so a service gets only the keys it uses:
+#   crosscodex-certs             ca.pem, server.pem, server-key.pem. Mounted at
+#                                /certs by db, nats and the LLM gateway, and at
+#                                /server-certs by crosscodexd (HTTPS listener).
+#   crosscodex-client-certs      ca.pem, client.pem, client-key.pem (the
+#                                daemon's identity to db, nats and the
+#                                gateway). Mounted at /certs by migrate and
+#                                crosscodexd only.
+#   crosscodex-attestation-keys  attestation-key.pem, attestation-pub.pem.
+#                                Mounted at /attestation by crosscodexd only.
+# The CA private key is in none of them. Keys are owned root:10001, mode 0640
+# (group-read only). Every service that mounts a cert volume joins GID 10001
 # via group_add so it can read the keys despite running as a different user
 # (postgres, nats=root, stunnel=nobody, praxis=praxis, crosscodexd=nonroot).
 # This GID MUST match CERT_GID in .taskfiles/deploy.yml (the deploy:certs task).
@@ -19,6 +29,17 @@
 # password in that role's DSN below. Only `db` and `migrate` ever receive
 # POSTGRES_PASSWORD. The db's pg_hba.conf requires a scram-sha-256 password
 # and a valid client cert for every TCP login.
+#
+# Hardening baseline (issue #236), on every service in every compose file:
+# cap_drop ALL (each cap_add names the cap it needs and why),
+# no-new-privileges, a memory limit overridable from .env
+# (CROSSCODEX_*_MEM_LIMIT; README.md "Container hardening and resource
+# limits") and a fixed pids limit. Every service except db-restore also runs
+# with a read-only root filesystem plus a tmpfs for each path it writes at
+# runtime. /tmp is declared even where nothing needs it: podman mounts one on
+# read-only containers by itself, docker does not, so declaring it keeps both
+# engines identical. test/deploy/smoke_up.sh asserts these settings on the
+# smoke stack.
 
 # Restricted-role DSNs shared by `migrate` (which sets the passwords) and
 # `crosscodexd` (which logs in with them). The tenant_admin and backup_user
@@ -34,12 +55,23 @@ services:
     image: crosscodex-db:${TAG:-latest}
     restart: unless-stopped
     group_add: ["10001"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: ${CROSSCODEX_DB_MEM_LIMIT:-2g}
+    # One process per connection plus background workers.
+    pids_limit: 256
+    read_only: true
+    # /run/postgresql (the image's /var/run/postgresql; /var/run is a symlink
+    # to /run) holds the socket and its lock file. The entrypoint's chmod of it
+    # fails on the tmpfs and is ignored (`|| :`); the dir stays world-writable
+    # with the sticky bit, which is all postgres needs.
+    tmpfs: [/tmp, /run/postgresql]
     environment:
       POSTGRES_USER: crosscodex
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
       POSTGRES_DB: crosscodex
     volumes:
-      - crosscodex-certs:/certs
+      - crosscodex-certs:/certs:ro
       - crosscodex-pgdata:/var/lib/postgresql/data
     command: >
       postgres
@@ -59,8 +91,23 @@ services:
     image: docker.io/nats:2.11.17-alpine
     restart: unless-stopped
     group_add: ["10001"]
+    # Stays root (uid 0): existing jetstream volumes hold root-owned files, and
+    # a non-root nats could not read them. With every capability dropped, root
+    # cannot bypass file permissions, chown, or regain capabilities, but it
+    # still owns every root-owned file it can reach. In /certs that is every
+    # file (deploy:certs chowns them to 0:10001), including server-key.pem:
+    # nats can read them, as any GID 10001 member can, and only the read-only
+    # mount stops it rewriting them. /certs is the server volume, so the CA
+    # key, the daemon's client key and the attestation key are not there. It
+    # can write only /data and /tmp; the root filesystem is read-only.
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: ${CROSSCODEX_NATS_MEM_LIMIT:-512m}
+    pids_limit: 256
+    read_only: true
+    tmpfs: [/tmp]
     volumes:
-      - crosscodex-certs:/certs
+      - crosscodex-certs:/certs:ro
       - crosscodex-jetstream:/data
     command: >
       --tls
@@ -84,12 +131,19 @@ services:
     image: crosscodexd:${TAG:-latest}
     restart: "no"
     group_add: ["10001"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: ${CROSSCODEX_MIGRATE_MEM_LIMIT:-256m}
+    pids_limit: 128
+    read_only: true
+    tmpfs: [/tmp]
     command: ["migrate"]
     environment:
       <<: *role-dsns
       CROSSCODEX_DATABASE_MIGRATION_DSN: postgres://crosscodex:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}@db:5432/crosscodex?sslmode=verify-full&sslrootcert=/certs/ca.pem&sslcert=/certs/client.pem&sslkey=/certs/client-key.pem
     volumes:
-      - crosscodex-certs:/certs:ro
+      # Client identity for the DSNs above; no server or attestation key.
+      - crosscodex-client-certs:/certs:ro
       - ./config.yaml:/etc/crosscodex/config.yaml:ro
     depends_on:
       db:
@@ -99,6 +153,14 @@ services:
     image: crosscodexd:${TAG:-latest}
     restart: unless-stopped
     group_add: ["10001"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: ${CROSSCODEX_DAEMON_MEM_LIMIT:-2g}
+    pids_limit: 256
+    read_only: true
+    # tmpfs pages count against mem_limit. compose.backup.yaml points TMPDIR
+    # at the backup volume, so backup spool files never land here.
+    tmpfs: [/tmp]
     # No env_file: the daemon gets only what it reads, never POSTGRES_PASSWORD.
     environment:
       <<: *role-dsns
@@ -114,7 +176,12 @@ services:
       # The in-container port stays 50051.
       - "${CROSSCODEX_GATEWAY_PORT:-50051}:50051"
     volumes:
-      - crosscodex-certs:/certs:ro
+      # Client identity at /certs; the server cert for the gateway listener
+      # (tls.targets.gateway-server in config.yaml) at /server-certs; the
+      # attestation keypair (attestation.* in config.yaml) at /attestation.
+      - crosscodex-client-certs:/certs:ro
+      - crosscodex-certs:/server-certs:ro
+      - crosscodex-attestation-keys:/attestation:ro
       - ./config.yaml:/etc/crosscodex/config.yaml:ro
       - crosscodex-objects:/var/lib/crosscodex/objects
     depends_on:
@@ -144,3 +211,11 @@ volumes:
     # Overridable so an isolated stack (e.g. the ephemeral smoke stack) mounts
     # its own PKI volume instead of the production one.
     name: ${CROSSCODEX_CERTS_VOLUME:-crosscodex-certs}
+  crosscodex-client-certs:
+    external: true
+    # Overridable for the same reason as crosscodex-certs.
+    name: ${CROSSCODEX_CLIENT_CERTS_VOLUME:-crosscodex-client-certs}
+  crosscodex-attestation-keys:
+    external: true
+    # Overridable for the same reason as crosscodex-certs.
+    name: ${CROSSCODEX_ATTESTATION_KEYS_VOLUME:-crosscodex-attestation-keys}

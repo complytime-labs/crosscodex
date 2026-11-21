@@ -15,6 +15,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/complytime-labs/crosscodex/internal/testcerts"
+	"github.com/complytime-labs/crosscodex/pkg/config"
 )
 
 var _ = Describe("runHealthcheck", func() {
@@ -73,14 +74,14 @@ var _ = Describe("runHealthcheck", func() {
 		srv := startHealthServer(http.StatusOK)
 		defer srv.Close()
 		writeConfig(fmt.Sprintf("server:\n  addr: \":%d\"\n%s", portOf(srv), tlsBlock()))
-		Expect(runHealthcheck()).To(Equal(0))
+		Expect(runHealthcheck("")).To(Equal(0))
 	})
 
 	It("returns 1 when the gateway reports unhealthy", func() {
 		srv := startHealthServer(http.StatusServiceUnavailable)
 		defer srv.Close()
 		writeConfig(fmt.Sprintf("server:\n  addr: \":%d\"\n%s", portOf(srv), tlsBlock()))
-		Expect(runHealthcheck()).To(Equal(1))
+		Expect(runHealthcheck("")).To(Equal(1))
 	})
 
 	It("returns 1 when the gateway is unreachable", func() {
@@ -88,7 +89,7 @@ var _ = Describe("runHealthcheck", func() {
 		port := portOf(srv)
 		srv.Close() // nothing listens on port now -> probe dial fails
 		writeConfig(fmt.Sprintf("server:\n  addr: \":%d\"\n%s", port, tlsBlock()))
-		Expect(runHealthcheck()).To(Equal(1))
+		Expect(runHealthcheck("")).To(Equal(1))
 	})
 
 	It("returns 1 when the TLS material cannot be loaded", func() {
@@ -96,11 +97,81 @@ var _ = Describe("runHealthcheck", func() {
 			filepath.Join(certDir, "ca.pem"),
 			filepath.Join(certDir, "missing.pem"),
 			filepath.Join(certDir, "client-key.pem")))
-		Expect(runHealthcheck()).To(Equal(1))
+		Expect(runHealthcheck("")).To(Equal(1))
+	})
+
+	// startPlainHealthServer stands in for a split role's dedicated health
+	// listener, which serves plain HTTP.
+	startPlainHealthServer := func(status int) *httptest.Server {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(status)
+		}))
+		DeferCleanup(srv.Close)
+		return srv
+	}
+
+	DescribeTable("probes a split role's plain-HTTP health.addr, not server.addr",
+		func(role string, status, want int) {
+			srv := startPlainHealthServer(status)
+			// server.addr points at nothing: probing it would fail.
+			writeConfig(fmt.Sprintf("role: %s\nserver:\n  addr: \":1\"\nhealth:\n  addr: \":%d\"\n", role, portOf(srv)))
+			Expect(runHealthcheck("")).To(Equal(want))
+		},
+		Entry("graph healthy", config.RoleGraph, http.StatusOK, 0),
+		Entry("pipeline healthy", config.RolePipeline, http.StatusOK, 0),
+		Entry("worker healthy", config.RoleWorker, http.StatusOK, 0),
+		Entry("worker unhealthy", config.RoleWorker, http.StatusServiceUnavailable, 1),
+	)
+
+	DescribeTable("fails a split role's invalid health.addr with the daemon's actionable message before probing",
+		func(role, addr string) {
+			writeConfig(fmt.Sprintf("role: %s\nhealth:\n  addr: %q\n", role, addr))
+			code, stderr := captureStderr(func() int { return runHealthcheck("") })
+			Expect(code).To(Equal(1))
+			Expect(stderr).To(ContainSubstring("needs health.addr"))
+			Expect(stderr).To(ContainSubstring("CROSSCODEX_HEALTH_ADDR"))
+		},
+		Entry("graph with empty addr", config.RoleGraph, ""),
+		Entry("pipeline with empty addr", config.RolePipeline, ""),
+		Entry("worker with empty addr", config.RoleWorker, ""),
+		Entry("worker with host but no port", config.RoleWorker, "localhost"),
+		Entry("graph with bare port number", config.RoleGraph, "9091"),
+	)
+
+	It("validates health.addr against the --role flag, not the configured role", func() {
+		writeConfig("role: all\nhealth:\n  addr: \"\"\n")
+		code, stderr := captureStderr(func() int { return runHealthcheck(config.RoleWorker) })
+		Expect(code).To(Equal(1))
+		Expect(stderr).To(ContainSubstring("needs health.addr"))
+	})
+
+	It("returns 1 for a split role whose health listener is down, even with a healthy gateway on server.addr", func() {
+		gw := startHealthServer(http.StatusOK)
+		defer gw.Close()
+		down := startPlainHealthServer(http.StatusOK)
+		port := portOf(down)
+		down.Close()
+		writeConfig(fmt.Sprintf("role: worker\nserver:\n  addr: \":%d\"\nhealth:\n  addr: \":%d\"\n%s", portOf(gw), port, tlsBlock()))
+		Expect(runHealthcheck("")).To(Equal(1))
+	})
+
+	It("follows the --role flag over the configured role", func() {
+		srv := startPlainHealthServer(http.StatusOK)
+		writeConfig(fmt.Sprintf("role: all\nserver:\n  addr: \":1\"\nhealth:\n  addr: \":%d\"\n", portOf(srv)))
+		Expect(runHealthcheck(config.RoleWorker)).To(Equal(0))
+	})
+
+	It("returns 1 for an unknown --role, even with a healthy gateway on server.addr", func() {
+		srv := startHealthServer(http.StatusOK)
+		defer srv.Close()
+		writeConfig(fmt.Sprintf("role: all\nserver:\n  addr: \":%d\"\n%s", portOf(srv), tlsBlock()))
+		// Without the flag the probe succeeds, so the 1 below comes from --role.
+		Expect(runHealthcheck("")).To(Equal(0))
+		Expect(runHealthcheck("not-a-role")).To(Equal(1))
 	})
 
 	It("returns 1 when the config is invalid", func() {
 		writeConfig("tls:\n  mode: not-a-real-mode\n")
-		Expect(runHealthcheck()).To(Equal(1))
+		Expect(runHealthcheck("")).To(Equal(1))
 	})
 })

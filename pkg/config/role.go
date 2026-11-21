@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"strings"
 )
 
@@ -71,4 +72,26 @@ func RequireSharedNATS(role, natsURL string) error {
 		"Set nats.url (CROSSCODEX_NATS_URL) to the shared server, "+
 		"or set the role to all (--role all or CROSSCODEX_ROLE=all) for a single-process deployment: %w",
 		role, ErrInvalidConfig)
+}
+
+// RequireHealthAddr rejects a graph, pipeline or worker role whose
+// health.addr is not host:port. Those roles bind their own plain-HTTP health
+// listener on it (gateway and all serve /healthz on server.addr and ignore
+// it), and an empty value binds an ephemeral port that no healthcheck can
+// find. Validation matches graph.addr: net.SplitHostPort with a non-empty
+// port.
+//
+// role must be canonical (see ResolveRole). Like RequireSharedNATS,
+// crosscodexd calls this once on its effective role (the --role flag can
+// differ from the configured role), before bootstrap.
+func RequireHealthAddr(role, addr string) error {
+	if role != RoleGraph && role != RolePipeline && role != RoleWorker {
+		return nil
+	}
+	if _, port, err := net.SplitHostPort(addr); err == nil && port != "" {
+		return nil
+	}
+	return fmt.Errorf("role %q needs health.addr %q to be host:port for its health listener: "+
+		"set health.addr (CROSSCODEX_HEALTH_ADDR) to the address to bind, for example :9091: %w",
+		role, addr, ErrInvalidConfig)
 }

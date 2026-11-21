@@ -11,6 +11,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/complytime-labs/crosscodex/internal/gateway"
+	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
 )
 
@@ -26,13 +27,23 @@ type activeTenants struct{}
 
 func (activeTenants) TenantActive(context.Context, string) (bool, error) { return true, nil }
 
-var _ = Describe("healthcheckAddr", func() {
-	It("builds an https localhost URL from a bare port", func() {
-		Expect(healthcheckAddr(":50051")).To(Equal("https://127.0.0.1:50051/healthz"))
-	})
-	It("preserves an explicit host", func() {
-		Expect(healthcheckAddr("0.0.0.0:50051")).To(Equal("https://127.0.0.1:50051/healthz"))
-	})
+var _ = Describe("healthcheckURL", func() {
+	DescribeTable("probes the address and scheme the role serves /healthz on",
+		func(role, serverAddr, healthAddr, want string) {
+			Expect(healthcheckURL(role, serverAddr, healthAddr)).To(Equal(want))
+		},
+		Entry("all: HTTPS on server.addr", config.RoleAll, ":50051", ":9091", "https://127.0.0.1:50051/healthz"),
+		Entry("gateway: HTTPS on server.addr", config.RoleGateway, ":50051", ":9091", "https://127.0.0.1:50051/healthz"),
+		Entry("graph: HTTP on health.addr", config.RoleGraph, ":50051", ":9091", "http://127.0.0.1:9091/healthz"),
+		Entry("pipeline: HTTP on health.addr", config.RolePipeline, ":50051", ":9092", "http://127.0.0.1:9092/healthz"),
+		Entry("worker: HTTP on health.addr", config.RoleWorker, ":50051", ":9093", "http://127.0.0.1:9093/healthz"),
+		Entry("gateway: loopback in place of an explicit server.addr host", config.RoleGateway, "0.0.0.0:50051", ":9091", "https://127.0.0.1:50051/healthz"),
+		Entry("worker: loopback in place of an explicit health.addr host", config.RoleWorker, ":50051", "0.0.0.0:9093", "http://127.0.0.1:9093/healthz"),
+		Entry("worker: bracketed IPv6 wildcard health.addr", config.RoleWorker, ":50051", "[::]:9091", "http://127.0.0.1:9091/healthz"),
+		Entry("worker: bracketed IPv6 loopback health.addr", config.RoleWorker, ":50051", "[::1]:9091", "http://127.0.0.1:9091/healthz"),
+		Entry("gateway: bracketed IPv6 wildcard server.addr", config.RoleGateway, "[::]:50051", ":9091", "https://127.0.0.1:50051/healthz"),
+		Entry("gateway: bracketed IPv6 loopback server.addr", config.RoleGateway, "[::1]:50051", ":9091", "https://127.0.0.1:50051/healthz"),
+	)
 })
 
 var _ = Describe("probeHealthURL", func() {

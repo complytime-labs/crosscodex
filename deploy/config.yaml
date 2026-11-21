@@ -3,6 +3,8 @@ logging:
   level: info
   format: json
 # health.addr is inert in the `all` role (gateway serves /healthz on server.addr).
+# Split roles (graph, pipeline, worker) serve plain-HTTP /healthz there; give
+# each role on one host its own address or the second one refuses to start.
 health:
   addr: ":9091"
 server:
@@ -34,9 +36,11 @@ tls:
     # the daemon's CLIENT identity for its outbound mTLS to db/nats/llm; without
     # this override the listener would serve client.pem (ClientAuth-only, SAN
     # DNS:client), which every client rejects during verification.
+    # compose.yaml mounts the server cert volume at /server-certs; /certs holds
+    # the client identity.
     gateway-server:
-      cert: /certs/server.pem
-      key: /certs/server-key.pem
+      cert: /server-certs/server.pem
+      key: /server-certs/server-key.pem
     llm:
       mode: mutual
       ca: /certs/ca.pem
@@ -51,13 +55,14 @@ storage:
   objects:
     backend: local
     base_path: /var/lib/crosscodex/objects
-# in-toto attestation signing keypair (ECDSA P-256), provisioned into the
-# shared cert volume by `task deploy:certs` alongside the TLS PKI. Required by
+# in-toto attestation signing keypair (ECDSA P-256), provisioned by
+# `task deploy:certs` into the crosscodex-attestation-keys volume, which only
+# crosscodexd mounts (at /attestation). Required by
 # the pipeline, which role `all` builds in-process; `enabled` and
 # `expiry_duration` inherit the config defaults.
 attestation:
-  private_key_path: /certs/attestation-key.pem
-  public_key_path: /certs/attestation-pub.pem
+  private_key_path: /attestation/attestation-key.pem
+  public_key_path: /attestation/attestation-pub.pem
 tenants:
   enabled: false
   default_tenant: default

@@ -241,6 +241,20 @@ var _ = Describe("PKI Certificate Generation", Ordered, func() {
 			})
 		})
 
+		DescribeTable("issues the server cert with the requested extended key usage and the client cert clientAuth-only",
+			func(opts []pki.Option, wantServer []x509.ExtKeyUsage) {
+				bundle, err := pki.GenerateDevPKI(opts...)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(bundle.Server.Cert.ExtKeyUsage).To(Equal(wantServer))
+				Expect(bundle.Client.Cert.ExtKeyUsage).To(Equal([]x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}))
+			},
+			Entry("serverAuth and clientAuth by default", nil,
+				[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}),
+			Entry("serverAuth only with WithExtKeyUsage(ServerAuth)",
+				[]pki.Option{pki.WithExtKeyUsage(x509.ExtKeyUsageServerAuth)},
+				[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}),
+		)
+
 		Context("with output directory", func() {
 			It("writes PEM files to disk with correct permissions", func() {
 				dir := GinkgoT().TempDir()

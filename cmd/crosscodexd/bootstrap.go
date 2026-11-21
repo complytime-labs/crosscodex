@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"net"
 	"net/http"
 	"slices"
 
@@ -112,8 +113,16 @@ func (rt *runtime) start(ctx context.Context) error {
 		}
 	}
 	if rt.healthServer != nil {
+		// Bind here, not in the goroutine, so a taken port fails startup
+		// instead of leaving a role running with no health endpoint.
+		ln, err := net.Listen("tcp", rt.healthServer.Addr)
+		if err != nil {
+			return fmt.Errorf("start health listener on health.addr %s: %w. "+
+				"Split roles all default to :9091; if another role on this host already listens there, "+
+				"give each role on one host a distinct health.addr (CROSSCODEX_HEALTH_ADDR)", rt.healthServer.Addr, err)
+		}
 		go func() {
-			if err := rt.healthServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if err := rt.healthServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				fmt.Printf("health server error: %v\n", err)
 			}
 		}()
@@ -226,10 +235,11 @@ func bootstrap(ctx context.Context, cfg *config.Config, opts ...ResourceOption) 
 			rt.close()
 			return nil, err
 		}
-		// The gateway role's own /healthz already covers process liveness
-		// for every co-located service; drop the dedicated listener
-		// attachGraph/attachWorker each set so "all" doesn't bind
-		// cfg.Health.Addr twice or leave a second, redundant listener up.
+		// The gateway's own /healthz on server.addr already carries this
+		// role's dependency checks (roleHealthChecks via buildIngestGateway);
+		// drop the dedicated listener attachGraph/attachWorker each set so
+		// "all" doesn't bind cfg.Health.Addr twice or leave a second,
+		// redundant listener up.
 		rt.healthServer = nil
 	default:
 		rt.close()
@@ -409,7 +419,8 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 		gateway.WithPipelineBackend(pipelineBackend),
 		gateway.WithMappingsBackend(resultsSvc),
 		gateway.WithCandidatesBackend(resultsSvc),
-		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(shared.appPool)),
+		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(shared.appPool,
+			roleHealthChecks(role, shared.appPool, shared.natsClient, shared.graphDB)...)),
 		gateway.WithAttestor(func(tenantID string) attestation.Generator {
 			if att := attestors.ForTenant(tenantID); att != nil {
 				return att.Generator
@@ -668,7 +679,7 @@ func attachWorker(cfg *config.Config, shared *sharedResources, rt *runtime) erro
 	rt.workerService = worker.New(shared.natsClient, shared.llmClient, workerCfg,
 		worker.WithTelemetry(otel.GetTracerProvider(), otel.GetMeterProvider()),
 		worker.WithAbandonTTL(cfg.Pipeline.StageTimeout))
-	rt.healthServer = newHealthServer(cfg.Health.Addr)
+	rt.healthServer = newHealthServer(cfg.Health.Addr, roleHealthChecks(cfg.Role, shared.appPool, shared.natsClient, shared.graphDB)...)
 	return nil
 }
 
@@ -686,7 +697,7 @@ func attachGraph(cfg *config.Config, shared *sharedResources, rt *runtime) error
 		graph.WithMaxSimilarityLimit(cfg.Graph.MaxSimilarityLimit),
 		graph.WithMaterializeConfig(cfg.NATS.Materialize),
 		graph.WithControlsReader(graph.NewPGControlsReader(tenantConn, graph.WithPGControlsReaderTelemetry(tp, mp))))
-	rt.healthServer = newHealthServer(cfg.Health.Addr, dbPingCheck(shared.appPool))
+	rt.healthServer = newHealthServer(cfg.Health.Addr, roleHealthChecks(cfg.Role, shared.appPool, shared.natsClient, shared.graphDB)...)
 	return nil
 }
 
@@ -767,9 +778,9 @@ func attachGraphListener(ctx context.Context, cfg *config.Config, shared *shared
 	return nil
 }
 
-// dbPingCheck returns a health check reporting whether pool is connected,
-// shared by every role with a dedicated health listener backed by the app
-// database pool (graph, pipeline).
+// dbPingCheck returns a health check reporting whether pool is connected:
+// the "database" dependency of roleHealthChecks for the split roles that use
+// the app database (graph, pipeline).
 func dbPingCheck(pool dbpkg.Pool) func(context.Context) error {
 	return func(ctx context.Context) error {
 		status, err := pool.Health(ctx)
@@ -1015,7 +1026,7 @@ func attachPipeline(ctx context.Context, cfg *config.Config, shared *sharedResou
 	}
 	rt.pipelineServer = server
 
-	rt.healthServer = newHealthServer(cfg.Health.Addr, dbPingCheck(shared.appPool))
+	rt.healthServer = newHealthServer(cfg.Health.Addr, roleHealthChecks(cfg.Role, shared.appPool, shared.natsClient, shared.graphDB)...)
 	return nil
 }
 

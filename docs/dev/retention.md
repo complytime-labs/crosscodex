@@ -211,5 +211,5 @@ to tenant B.
 - Integration specs (`//go:build integration`, real PostgreSQL + on-disk
   stores): `pkg/retention/engine_integration_bdd_test.go` and
   `pkg/retention/hold_store_integration_bdd_test.go`. Run with
-  `task test:integration:db` (see the memory note on `TMPDIR`/`STORAGE_DRIVER`
-  for local podman).
+  `task test:integration:db` (see [podman-dev-container.md](podman-dev-container.md) for the
+  `TMPDIR`/`STORAGE_DRIVER` setup under local podman).

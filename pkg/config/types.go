@@ -328,9 +328,11 @@ type ServerConfig struct {
 	MaxUploadSize int    `yaml:"max_upload_size" json:"max_upload_size"`
 }
 
-// HealthConfig configures the dedicated health-check listener used by the
-// worker and graph roles (the gateway and all roles already serve /healthz
-// via internal/gateway.Server).
+// HealthConfig configures the dedicated plain-HTTP health-check listener
+// used by the graph, pipeline and worker roles (the gateway and all roles
+// serve /healthz via internal/gateway.Server on server.addr). Addr must be
+// free: a role that cannot bind it refuses to start, so split roles sharing a
+// host need distinct values.
 type HealthConfig struct {
 	Addr string `yaml:"addr" json:"addr"`
 }

@@ -13,6 +13,15 @@ services:
     # smoke_up.sh for the local (default) path.
     image: crosscodex-test-ollama:latest
     restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    # llama3.2:1b plus the embedding model, loaded together.
+    mem_limit: ${CROSSCODEX_OLLAMA_MEM_LIMIT:-4g}
+    pids_limit: 512
+    # Models are baked into the image; Ollama only logs a warning that it
+    # cannot persist its model-recommendations cache under /root/.ollama.
+    read_only: true
+    tmpfs: [/tmp]
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/11434'"]
       interval: 5s

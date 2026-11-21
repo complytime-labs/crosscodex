@@ -43,7 +43,7 @@ podman-compose waits for `migrate` to exit but does not check its exit code. If 
 
 ### 2. Generate TLS certificates
 
-The production stack enforces mutual TLS across all services (PostgreSQL, NATS, the LLM gateway, and the CrossCodex gateway). Generate the PKI and load it into the `crosscodex-certs` volume:
+The production stack enforces mutual TLS across all services (PostgreSQL, NATS, the LLM gateway, and the CrossCodex gateway). Generate the PKI and load it into the `crosscodex-certs`, `crosscodex-client-certs` and `crosscodex-attestation-keys` volumes:
 
 ```bash
 task deploy:certs
@@ -51,15 +51,31 @@ task deploy:certs
 
 This creates:
 - `deploy/certs/ca.pem` — Certificate Authority root
-- `deploy/certs/client.pem` + `deploy/certs/client-key.pem` — client certificate and key
-- `deploy/certs/server.pem` + `deploy/certs/server-key.pem` — server certificate and key
+- `deploy/certs/client.pem` + `deploy/certs/client-key.pem` — client certificate and key (client authentication only)
+- `deploy/certs/server.pem` + `deploy/certs/server-key.pem` — server certificate and key (server authentication only)
 - `deploy/certs/attestation-key.pem` + `deploy/certs/attestation-pub.pem` — ECDSA P-256 keypair the pipeline uses to sign in-toto attestations
 
-The server certificate's Subject Alternative Name (SAN) covers `localhost` and `127.0.0.1`, so host-to-localhost connections work.
+The server certificate's Subject Alternative Names (SANs) cover the DNS names `localhost`, `db`, `nats`, `litellm`, `praxis`, and `crosscodexd`, and the IP `127.0.0.1`, so host-to-localhost connections work and services reach each other by compose name. The list is `dnsNames` and `ips` in `deploy/certgen/gen.go`.
 
-`deploy/certs/` holds only generated material: when the set fails verification (a file missing, a key that doesn't match its certificate, a missing SAN, or less than a day of validity left) the next `task deploy:certs` replaces the whole directory, and anything else in it is lost. A valid set is kept. Concurrent runs are safe: one generates, the rest reuse its set.
+`deploy/certs/` holds only generated material: when the set fails verification (a file missing, a key that doesn't match its certificate, a missing SAN, a server certificate that also permits client authentication, or less than a day of validity left) the next `task deploy:certs` replaces the whole directory, and anything else in it is lost. A valid set is kept. Concurrent runs are safe: one generates, the rest reuse its set.
 
-Certificates are copied into the `crosscodex-certs` docker/podman volume with shared-group ownership (GID 10001) so every service can read the keys despite running as different users (postgres, nats=root, stunnel=nobody, crosscodexd=nonroot).
+A regeneration mints a new CA, so the whole set changes:
+- **New client certificates.** `client.pem` and `client-key.pem` are reissued under the new CA, and the old pair is rejected. Point the CLI at the new files (`--tls-cert`/`--tls-key`, or `crosscodex config set tls.cert` and `tls.key`), and replace any copies of the old ones.
+- **New attestation keypair.** Attestations signed with the old key do not verify against the new `attestation-pub.pem`. Regeneration is automatic (`task deploy:up` runs it), so before upgrading, and before running `task deploy:up` after an upgrade, back up `deploy/certs/` (at least `attestation-pub.pem`) if you need to verify attestations signed earlier.
+
+A SAN missing after an upgrade triggers this: a release that adds a compose service name to `dnsNames` makes the existing set fail verification, and `task deploy:up` (which depends on `certs`) regenerates it. Sets from releases that issued `server.pem` for client authentication too fail verification the same way, so the first `task deploy:up` after upgrading from one regenerates the set.
+
+The files are split across three docker/podman volumes so each service can read only the keys it uses:
+
+| Volume | Files | Mounted by |
+|---|---|---|
+| `crosscodex-certs` | `ca.pem`, `server.pem`, `server-key.pem` | `db`, `nats`, `litellm-tls` or `praxis` (at `/certs`); `crosscodexd` (at `/server-certs`, for its HTTPS listener) |
+| `crosscodex-client-certs` | `ca.pem`, `client.pem`, `client-key.pem` | `migrate` and `crosscodexd` (at `/certs`) |
+| `crosscodex-attestation-keys` | `attestation-key.pem`, `attestation-pub.pem` | `crosscodexd` (at `/attestation`) |
+
+The CA private key `ca-key.pem` is in none of them; it stays in `deploy/certs/`. A compromised `db`, `nats` or LLM gateway container therefore cannot connect to PostgreSQL or NATS as a client: the daemon's client key is not in its volume, and `server.pem` is issued for server authentication only, so PostgreSQL and NATS refuse it as a client certificate. Nor can it sign attestations, and `migrate` cannot sign attestations either. It still holds the server key all four servers share (`db`, `nats`, the LLM gateway and the `crosscodexd` listener), so it could pose as one of the others to a client whose traffic it can redirect. Each volume holds exactly its listed files plus a `.fingerprint` of the host set: `task deploy:certs` (run by `task deploy:up`) reloads a volume when the fingerprint differs or the volume holds anything else, removing files an older release loaded. Files are owned by root, group 10001 (keys mode 0640), so every service can read them despite running as different users (postgres, nats=root with every capability dropped, stunnel=nobody, praxis=praxis, crosscodexd=nonroot; see [Container hardening and resource limits](#container-hardening-and-resource-limits)). Set `CROSSCODEX_CERTS_VOLUME`, `CROSSCODEX_CLIENT_CERTS_VOLUME` or `CROSSCODEX_ATTESTATION_KEYS_VOLUME` to use other volume names.
+
+**Rotate the keys if `db`, `nats` or the LLM gateway may have been compromised.** Before this release those services could read `client-key.pem` and `attestation-key.pem` (Praxis too, if a compose tool that ignores `subpath`, such as podman-compose before 1.6.0, started it), and `server.pem` was also a valid client certificate. Removing the files from the volume does not revoke copies taken earlier. Upgrading to this release rotates once, because the older set fails verification (above). To rotate later, back up `deploy/certs/attestation-pub.pem` (it verifies attestations signed so far), remove `deploy/certs/`, and run `task deploy:up` with no analysis jobs running (a job still running when the attestation key changes fails when it resumes): that mints a new CA, server and client certificates and attestation keypair and reloads every volume.
 
 ## Bring up the stack
 
@@ -154,7 +170,39 @@ The production stack runs all inter-service communication over mutual TLS:
 - **Praxis gateway** (`LLM_GATEWAY=praxis`): Praxis requires the client certificate on its own listener (`praxis:4443`), so it needs no sidecar.
 - **CrossCodex gateway**: Serves mTLS at `:50051`, published as `localhost:50051` on the host
 
-All services share the same PKI (loaded from the `crosscodex-certs` volume).
+All services share the same PKI, split across the `crosscodex-certs`, `crosscodex-client-certs` and `crosscodex-attestation-keys` volumes (see [Generate TLS certificates](#2-generate-tls-certificates)).
+
+## Container hardening and resource limits
+
+Every compose service, in every compose file, runs with:
+
+- `cap_drop: [ALL]`. Only `backup-init` (backups, `compose.backup.yaml`) adds capabilities back: `CHOWN`, `DAC_OVERRIDE`, `FOWNER` and `FSETID`, the minimum its one-time `chown`/`chmod` of the backup volume needs (without `FSETID` the kernel silently drops the setgid bit on `/backup`). The `certs` task's copy container keeps only `CHOWN` and `DAC_READ_SEARCH`.
+- `security_opt: [no-new-privileges:true]`.
+- A memory limit (overridable, below) and a fixed pids limit.
+- A read-only root filesystem with a tmpfs at `/tmp` (and at `/run/postgresql`, the socket directory, for `db`), except `db-restore`, which keeps a writable root filesystem.
+
+`nats` still runs as root because existing JetStream volumes hold root-owned files. Without capabilities, root cannot bypass file permissions, change ownership or regain privileges, but it still owns every root-owned file it can reach. Every file in the certs volume it mounts (`crosscodex-certs`) is owned by root (group 10001), so `nats` can read all of them, including `server-key.pem`, just as every service in group 10001 can. That volume holds no client or attestation key: those are in `crosscodex-client-certs` (mounted only by `migrate` and `crosscodexd`) and `crosscodex-attestation-keys` (mounted only by `crosscodexd`). The CA private key (`ca-key.pem`) stays in `deploy/certs/` on the host and is never copied into a volume, so no container can mint certificates. Every service mounts its certs volumes read-only, so none can change the PKI; `nats` can write only its JetStream volume and `/tmp`.
+
+Set any of these in `deploy/.env` to change a memory limit (compose size syntax, e.g. `512m`, `4g`):
+
+| Variable                            | Service                              | Default |
+|-------------------------------------|--------------------------------------|---------|
+| `CROSSCODEX_DB_MEM_LIMIT`           | `db`                                 | `2g`    |
+| `CROSSCODEX_NATS_MEM_LIMIT`         | `nats`                               | `512m`  |
+| `CROSSCODEX_MIGRATE_MEM_LIMIT`      | `migrate`                            | `256m`  |
+| `CROSSCODEX_DAEMON_MEM_LIMIT`       | `crosscodexd`                        | `2g`    |
+| `CROSSCODEX_LITELLM_MEM_LIMIT`      | `litellm`                            | `2g`    |
+| `CROSSCODEX_LITELLM_TLS_MEM_LIMIT`  | `litellm-tls`                        | `64m`   |
+| `CROSSCODEX_PRAXIS_MEM_LIMIT`       | `praxis`                             | `512m`  |
+| `CROSSCODEX_BACKUP_INIT_MEM_LIMIT`  | `backup-init`                        | `64m`   |
+| `CROSSCODEX_DB_RESTORE_MEM_LIMIT`   | `db-restore`                         | `1g`    |
+| `CROSSCODEX_OLLAMA_MEM_LIMIT`       | `ollama` (smoke test only)           | `4g`    |
+
+Files written to a tmpfs count against the service's memory limit. Backups therefore do not use `crosscodexd`'s `/tmp`: `compose.backup.yaml` sets its `TMPDIR` to `/backup/tmp` on the backup volume, where each object and the JetStream snapshot are spooled on disk.
+
+Limits need a container engine that can apply cgroup limits: a rootless podman host needs cgroup v2 with the `memory` and `pids` controllers delegated to the user. `podman inspect` shows the configured value even where the engine cannot apply it; `cat /sys/fs/cgroup/memory.max` inside the container shows whether it is in force.
+
+`task deploy:smoke` checks this baseline on every running container of the smoke stack and fails naming the service and the missing setting.
 
 ## LLM gateway (`LLM_GATEWAY`)
 
@@ -187,13 +235,13 @@ Switching to Praxis may regenerate the certificates (see below).
 Praxis AI support is a spike: Praxis is alpha software (v0.8.0, configuration may change before v1.0). Known differences from LiteLLM:
 
 - `CROSSCODEX_LLM_API_KEY` is sent but not checked (Praxis has no stable bearer-key filter); the client certificate is the only credential. The value is replaced with `OPENAI_API_KEY` before the provider hop.
-- Compose requirement: `LLM_GATEWAY=praxis` needs podman-compose 1.6.0 or later. `deploy:up` refuses older versions and other compose tools, and says why. Praxis is a third-party image, so it mounts only `ca.pem`, `server.pem` and `server-key.pem` from the certs volume (compose `subpath` mounts), never the CA key or the daemon's client key. A compose tool that ignores `subpath` would expose the whole volume, which is why the check exists. Upgrade with `pip install --user --upgrade podman-compose`, or use `LLM_GATEWAY=litellm`.
+- Compose requirement: `LLM_GATEWAY=praxis` needs podman-compose 1.6.0 or later. `deploy:up` refuses older versions and other compose tools, and says why. Praxis is a third-party image, so it mounts only `ca.pem`, `server.pem` and `server-key.pem` from the `crosscodex-certs` volume (compose `subpath` mounts). The daemon's client key and the attestation signing key are in `crosscodex-client-certs` and `crosscodex-attestation-keys`, which Praxis never mounts. A compose tool that ignores `subpath` would mount the whole `crosscodex-certs` volume, which holds only those three files today; the check keeps Praxis pinned to exactly them if the volume ever gains a file. Upgrade with `pip install --user --upgrade podman-compose`, or use `LLM_GATEWAY=litellm`.
 - Only `POST` reaches the provider. Any other method gets 405, including `GET /v1/models` unless the opt-in below is on.
 - Client headers `OpenAI-*`, `X-Forwarded-*`, `Forwarded`, `Cookie`, `X-Real-IP`, `x-api-key` and `api-key` are stripped before the provider hop. This is a denylist, so any other client header is forwarded.
 - `GET /v1/models` is off by default. `PRAXIS_MODELS_ENDPOINT=true` turns it on: for example, `task deploy:up LLM_GATEWAY=praxis PRAXIS_MODELS_ENDPOINT=true` (or set both in `deploy/.env`, and pass the same values to `deploy:logs` if you don't). Praxis then starts on `praxis/config.models.yaml`. The endpoint drops query strings and refuses (HTTP 400) a request that carries a body. To serve `/v1/models` there, that config disables Praxis's startup check for conflicting cluster selectors (`insecure_options.skip_pipeline_checks.conflicting_cluster_selectors`), so a later config edit that introduces a real conflict won't be caught at startup. Keep `config.models.yaml` in sync with `config.yaml`. The flag has no effect with `litellm` (which always serves the endpoint) or with `deploy:smoke`.
 - Retries and double billing: `retry_policy` retries only 429, 503 and connection failures before the request was sent, with jittered backoff (up to 1 s, then up to 2 s); it does not retry resets or other 5xx, and it ignores `Retry-After`. Praxis does still replay a request that fails on a stale pooled upstream connection, so a POST can be billed twice. `idle_timeout_ms: 1` in `praxis/config.yaml` narrows that window at the cost of about one TLS handshake per request, but under concurrent load a replay (and a second charge) remains possible. The daemon's analysis engine also re-dispatches failed tasks (`analysis.engine.max_retries`), which multiplies upstream attempts (tracked in issue #237). The comments in `praxis/config.yaml` are the source of truth for the proxy side.
 - A request for a model not in the Praxis config fails with an empty HTTP 500 (LiteLLM returns a 4xx). See [Troubleshooting](#empty-http-500-from-praxis).
-- The server certificate must name `praxis`. Certificates generated before Praxis support don't; `deploy:up` detects that and regenerates them, so run `task deploy:down`, then `task deploy:up LLM_GATEWAY=praxis`. Data volumes are kept. The regeneration mints a new CA, new client certificates for the CLI and a new attestation keypair, so keep a copy of the old `deploy/certs/attestation-pub.pem` if you need to verify attestations signed before the change.
+- The server certificate must name `praxis`. Certificates generated before Praxis support don't; `deploy:up` detects that and regenerates them, so run `task deploy:down`, then `task deploy:up LLM_GATEWAY=praxis`. Data volumes are kept. The consequences of a regeneration (new CA, new client certificates, new attestation keypair) are described under [Generate TLS certificates](#2-generate-tls-certificates).
 - The smoke test on Praxis supports only the local baked Ollama (no `OLLAMA_HOST` override). It also probes the Praxis listener directly, published on `127.0.0.1:${SMOKE_PRAXIS_PORT}` (default 54443): a trusted client certificate must be served, and no certificate, an untrusted-CA certificate and an unmapped model must all be refused. The unmapped-model probe sends a model that Ollama serves but Praxis doesn't map, so a pass-through regression would fail the smoke.
 - The image is amd64 only.
 
@@ -227,7 +275,11 @@ Container-driven end-to-end smoke test (bring up the stack, import a catalog and
 task deploy:smoke
 ```
 
+Running inside a container with no systemd (an agent or CI sandbox)? See [Running the smoke stack in a systemd-less dev container](../docs/dev/podman-dev-container.md) for healthcheck, `TMPDIR`/`STORAGE_DRIVER` and shared-network fixes.
+
 **Offline by default — no API key required.** Unlike `deploy:up` (which routes the gateway to real OpenAI), the smoke test backs the stack with a local Ollama provider so it runs self-contained. It builds a baked-model image (`llama3.2:1b` + `granite-embedding:30m`, reused from the integration stack), renders a smoke-only gateway config that points the `default`/`embed` aliases at Ollama, and layers an offline overlay onto `compose.yaml` plus the gateway fragment (`deploy/compose.offline.yaml` for LiteLLM, `deploy/compose.offline-praxis.yaml` for Praxis). Production `deploy/compose.yaml` is untouched and stays OpenAI-backed. Your `deploy/.env` still needs `CROSSCODEX_LLM_DEFAULT_MODEL=default` and `CROSSCODEX_LLM_EMBEDDING_MODEL=embed`, but `OPENAI_API_KEY` / `CROSSCODEX_LLM_API_KEY` may be any non-empty placeholder (Ollama ignores them). Without deploy/.env, deploy:smoke stops before building or starting anything and prints the copy instruction.
+
+The smoke test waits up to `SMOKE_JOB_TIMEOUT` seconds (default `120`) for the analysis job to finish, which suits a GPU or remote model. CPU-only inference on the baked model takes several minutes, so raise it there, for example `task deploy:smoke SMOKE_JOB_TIMEOUT=600`. A value that is not a whole number of seconds from 1 to 999999 is rejected before anything starts.
 
 To point the smoke test at an existing Ollama instead of the baked container, pass `OLLAMA_HOST` (and optionally the model names):
 
@@ -328,10 +380,10 @@ The other analyzers keep the fast `default` alias. A larger `max_tokens` also co
 
 The smoke test is fully isolated and ephemeral, so it can run alongside a live production stack:
 
-- It runs under its own compose project (`crosscodex-smoke`), with its own data volumes, its own PKI volume (`crosscodex-smoke-certs`) generated from a throwaway host cert dir, and its own published gateway port (`50151`, leaving production's `50051` untouched).
-- Everything — containers, data volumes, the cert volume, and the temporary PKI dir — is torn down on exit, whether the test passes, fails, or is interrupted. Nothing survives the run.
+- It runs under its own compose project (`crosscodex-smoke`), with its own data volumes, its own key volumes (`crosscodex-smoke-certs`, `crosscodex-smoke-client-certs` and `crosscodex-smoke-attestation-keys`) generated from a throwaway host cert dir, and its own published gateway port (`50151`, leaving production's `50051` untouched).
+- Everything — containers, data volumes, all three key volumes, and the temporary PKI dir — is torn down on exit, whether the test passes, fails, or is interrupted. Nothing survives the run.
 
-The isolation is driven entirely by environment variables (`COMPOSE_PROJECT_NAME`, `CROSSCODEX_CERTS_VOLUME`, `CROSSCODEX_GATEWAY_PORT`, `CERTS_DIR`) that the same `deploy:*` tasks and `compose.yaml` read; their defaults reproduce the production stack.
+The isolation is driven entirely by environment variables (`COMPOSE_PROJECT_NAME`, `CROSSCODEX_CERTS_VOLUME`, `CROSSCODEX_CLIENT_CERTS_VOLUME`, `CROSSCODEX_ATTESTATION_KEYS_VOLUME`, `CROSSCODEX_GATEWAY_PORT`, `CERTS_DIR`) that the same `deploy:*` tasks and `compose.yaml` read; their defaults reproduce the production stack.
 
 `deploy:smoke` is a thin wrapper over two tasks you can also run on their own to debug a failing run:
 
@@ -420,11 +472,13 @@ There is no in-daemon scheduler yet (sub-project 2 of issue #36); run `backup ru
 
    For point-in-time recovery, pick a target time `T` and use the newest point whose objects/NATS capture windows end at or before `T` (Postgres itself recovers to the exact time `T` via `--target-time` below).
 
-3. Recreate an empty pgdata volume:
+3. Recreate an empty pgdata volume. podman-compose has no `rm` command, so remove the containers with the engine, selected by their compose labels (`<project>` is the compose project: `deploy` for `task deploy:up`, or `COMPOSE_PROJECT_NAME`). Podman refuses to remove `db` while the containers that depend on it exist, so `crosscodexd` and `migrate` go too; step 7 recreates them. With podman, replace `docker` with `podman`:
 
    ```bash
    docker compose -f compose.yaml -f compose.gateway-litellm.yaml -f compose.backup.yaml stop db
-   docker compose -f compose.yaml -f compose.gateway-litellm.yaml -f compose.backup.yaml rm -f db
+   for svc in crosscodexd migrate db; do
+     docker ps -aq --filter label=com.docker.compose.project=<project> --filter label=com.docker.compose.service=$svc | xargs -r docker rm -f
+   done
    docker volume rm <project>_crosscodex-pgdata
    ```
 
@@ -523,10 +577,10 @@ The single-host compose stack is suitable for evaluation and small-scale product
 If `task deploy:up` times out waiting for `/healthz`:
 
 1. Check recent logs: `task deploy:logs -- crosscodexd`
-   `/healthz` returns 503 until every dependency the gateway reports (currently the database) is healthy. In the JSON body `status` fields are numeric enum values; `services.database.message` carries the reason (`database unreachable`). To read it, run `curl -s --cacert deploy/certs/ca.pem https://localhost:50051/healthz`.
+   `/healthz` returns 503 until every dependency the gateway reports (the database, NATS and the graph database) is healthy. In the JSON body `status` fields are numeric enum values; each `services.<name>.message` carries the reason (e.g. `database unreachable`, `nats unreachable`). To read it, run `curl -s --cacert deploy/certs/ca.pem https://localhost:50051/healthz`.
 2. Verify the `.env` file is populated (especially `POSTGRES_PASSWORD`, `APP_USER_PASSWORD`, `GRAPH_USER_PASSWORD` and `CROSSCODEX_LLM_API_KEY`), and that `migrate` succeeded: `task deploy:logs -- migrate`
 3. Ensure no other service is bound to port 50051 on the host: `ss -lntp | grep 50051`
-4. Verify the certs volume exists and is populated: `podman volume inspect crosscodex-certs` (or `docker volume inspect`)
+4. Verify the certs volumes exist and are populated: `podman volume inspect crosscodex-certs crosscodex-client-certs crosscodex-attestation-keys` (or `docker volume inspect`)
 
 ### CLI connection refused
 
