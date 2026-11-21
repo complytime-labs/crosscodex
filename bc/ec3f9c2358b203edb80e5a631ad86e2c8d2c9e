@@ -1,0 +1,24 @@
+test/tooling/smoke-up-hardening.venom.yml
+  s_8923db9c123f3f::t_7f4b0e67391f64 7,26,38,49,60,71,82,93
+  s_8923db9c123f3f::t_bcc8e7a4b853a8 15-16
+  s_8923db9c123f3f::t_572e28b09b081e 1-6,8-14,17-25,27-37,39-48,50-59,61-70,72-81,83-92,94
+test/tooling/lib/smoke-up-hardening.sh
+  s_8923db9c123f3f::t_0b7696e2e68f52 60
+  s_8923db9c123f3f::t_572e28b09b081e 1-59,61-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "bcec3f9c2358b203edb80e5a631ad86e2c8d2c9e",
+  "prompts": {},
+  "sessions": {
+    "s_8923db9c123f3f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "296221a8-92e2-467b-93ca-cab4e7da5942",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
