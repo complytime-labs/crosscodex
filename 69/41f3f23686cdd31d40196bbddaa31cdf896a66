@@ -1,0 +1,37 @@
+pkg/retention/purge_bdd_test.go
+  s_8dad1ed5ebd844::t_8afda3843c15cd 5,12,29-56,106-107,109-115,117-122,125-129,138-195
+  s_8dad1ed5ebd844::t_e7595e92454f58 196
+pkg/db/migrations/002_catalog_documents.up.sql
+  s_8dad1ed5ebd844::t_dfcafe5a2cc7a6 48-56
+docs/dev/migrations.md
+  s_8dad1ed5ebd844::t_5efaa5cddcfc0a 16,20,31
+pkg/db/catalog_documents_integration_bdd_test.go
+  s_8dad1ed5ebd844::t_f66d4d5aa6424b 169-209
+pkg/retention/purge.go
+  s_8dad1ed5ebd844::t_8448846d2ece24 5-6,13-18,22-26,123-145,155,159,164-179,188-215,217
+  s_8dad1ed5ebd844::t_6b3c1397ea5db8 160-163
+  s_8dad1ed5ebd844::t_5fe79bfd7173d3 216
+pkg/retention/engine_integration_bdd_test.go
+  s_8dad1ed5ebd844::t_f66d4d5aa6424b 410-454,551-552,726-782
+  s_8dad1ed5ebd844::t_4965b2e603a1d6 783
+pkg/db/migrations/002_catalog_documents.down.sql
+  s_8dad1ed5ebd844::t_dfcafe5a2cc7a6 4
+pkg/retention/engine_bdd_test.go
+  s_8dad1ed5ebd844::t_8afda3843c15cd 65-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "6941f3f23686cdd31d40196bbddaa31cdf896a66",
+  "prompts": {},
+  "sessions": {
+    "s_8dad1ed5ebd844": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04da376b-50a2-402d-ab80-36096cc27a2d",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
