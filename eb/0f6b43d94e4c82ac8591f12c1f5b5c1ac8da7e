@@ -1,0 +1,48 @@
+internal/feedback/service_property_test.go
+  s_ae096a3447705c::t_53772bdedd3dea 1-42
+internal/feedback/doc.go
+  s_ae096a3447705c::t_8848bae5136be3 31-39
+internal/feedback/reproject_bdd_test.go
+  s_ae096a3447705c::t_28cd01e4f0c578 1-272
+internal/feedback/determine.go
+  s_ae096a3447705c::t_4ae4f007727351 1-269
+internal/feedback/reproject.go
+  s_ae096a3447705c::t_641786e5a1f2f3 1-274
+internal/feedback/telemetry.go
+  s_ae096a3447705c::t_0e2da902ba7096 1-89
+internal/feedback/export_test.go
+  s_ae096a3447705c::t_5c378d4b6378cb 14-17
+internal/feedback/queue.go
+  s_ae096a3447705c::t_868b8fcc872baf 1-180
+internal/feedback/service.go
+  s_ae096a3447705c::t_012a2d4cf3f6a1 308-311
+  s_ae096a3447705c::t_03ac3f7f2cc1ce 302
+  s_ae096a3447705c::t_1f60eb7cda6691 1-11,14-265,267-301,303-307,312-352
+  s_ae096a3447705c::t_2312859141753a 12-13
+  s_ae096a3447705c::t_9bd1994e188b91 266
+internal/feedback/service_bdd_test.go
+  s_ae096a3447705c::t_0b18f8c4cc40b5 1-502
+  s_ae096a3447705c::t_22e4f2b78a0cb0 503-504
+internal/feedback/determine_bdd_test.go
+  s_ae096a3447705c::t_c08e9e7e0f23e3 1-354
+internal/feedback/types.go
+  s_ae096a3447705c::t_20de59e5ea7f7b 296-300,302-311,315
+internal/feedback/aggregate.go
+  s_ae096a3447705c::t_5e0a3d343b2ff5 1-119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "eb0f6b43d94e4c82ac8591f12c1f5b5c1ac8da7e",
+  "prompts": {},
+  "sessions": {
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
