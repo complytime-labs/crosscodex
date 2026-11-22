@@ -1,0 +1,22 @@
+cmd/crosscodexd/graph_role_integration_test.go
+  s_6aac903a0a86f2::t_011c8966cf9c76 233,299-316,318-319
+  s_6aac903a0a86f2::t_0de6a7e81e12bd 317
+  s_6aac903a0a86f2::t_32dffe7727822e 320-322
+  s_6aac903a0a86f2::t_ddefdcd200adc5 124-127,323-330
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "fdd6f218e8930ec3a4fec7f0e9370acd31b1d8c7",
+  "prompts": {},
+  "sessions": {
+    "s_6aac903a0a86f2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1daeff3c-b8b0-4294-9580-269db5efd1ea",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
