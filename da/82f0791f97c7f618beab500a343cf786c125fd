@@ -1,0 +1,204 @@
+pkg/config/feedback_bdd_test.go
+  s_ae096a3447705c::t_cc60ed2237cd21 1-69
+pkg/cleaning/engine.go
+  s_ae096a3447705c::t_80b30b736b5cd4 62-65
+pkg/cleaning/engine_verdict_bdd_test.go
+  s_ae096a3447705c::t_c33c8f5b3afb20 39
+  s_ae096a3447705c::t_61dd8cc3e46af8 1-38,40-141
+pkg/config/validate.go
+  s_ae096a3447705c::t_2fb4a651db2252 63
+  s_ae096a3447705c::t_de44697e8c99fd 672-688
+internal/feedback/reproject.go
+  s_ae096a3447705c::t_35491d620f33db 108
+  s_ae096a3447705c::t_6a54e884234812 203-213,218
+  s_ae096a3447705c::t_641786e5a1f2f3 1-63,69,72-107,109-202,214-217,219-289
+  s_ae096a3447705c::t_040aa98d264b0d 64-68,70-71
+internal/feedback/service.go
+  s_ae096a3447705c::t_012a2d4cf3f6a1 317-320
+  s_ae096a3447705c::t_2b01c0a2ec66e7 48-53
+  s_ae096a3447705c::t_1f60eb7cda6691 1-11,14-37,41-47,54-95,97-273,275-298,300-303,306-310,312-316,321-361
+  s_ae096a3447705c::t_31f672fbcbb120 96,304-305
+  s_ae096a3447705c::t_03ac3f7f2cc1ce 311
+  s_ae096a3447705c::t_3f6bfb7216539c 38-40,299
+  s_ae096a3447705c::t_9bd1994e188b91 274
+  s_ae096a3447705c::t_2312859141753a 12-13
+internal/feedback/store_pg.go
+  s_ae096a3447705c::t_33ce919176bd7f 152-155,179,205-207,240-241,437-438,443-445,520-522,583,585,587-589,591,594-602
+  s_ae096a3447705c::t_87285416e41287 1-151,156-178,180-204,208-239,242-436,439-442,446-519,523-582,584,586,590,592-593,603-608
+pkg/db/role_check_integration_bdd_test.go
+  s_ae096a3447705c::t_726df08b97c8ae 38
+pkg/cleaning/graphops_integration_bdd_test.go
+  s_ae096a3447705c::t_1433880d197bd1 172-180
+internal/feedback/determine.go
+  s_ae096a3447705c::t_cf522dea570d9e 93
+  s_ae096a3447705c::t_bd24a6c2e85055 142,166-176
+  s_ae096a3447705c::t_4ae4f007727351 1-92,94-141,143-165,177-279
+pkg/cleaning/cleaningtest/fake.go
+  s_ae096a3447705c::t_65c1831a1c45d8 351-353,393-430
+  s_ae096a3447705c::t_c68a65ef785464 51-53,431-461
+  s_ae096a3447705c::t_17765be77a0132 54-56
+pkg/cleaning/engine_reproject_bdd_test.go
+  s_ae096a3447705c::t_5a38def378f159 1-15,17-21,23-63,90-91,99-101,104,108,110-120,126,129-130,137-139,147-157,162,164-360,362-366,553-556
+  s_ae096a3447705c::t_4a369efe416c3b 16,22,64-89,92-98,102-103,105-107,109,121-125,127-128,131-136,140-146,158-161,163,361,367-405,407-416,418-422,426-428,465-552
+  s_ae096a3447705c::t_5026f8be957753 557-567
+  s_ae096a3447705c::t_c579aecb9fd146 406,417,423-425,429-459,461-464
+  s_ae096a3447705c::t_d511f019f04b1b 460
+pkg/cleaning/engine_verdict.go
+  s_ae096a3447705c::t_fb9de7977c4dcd 1-63
+pkg/cleaning/store.go
+  s_ae096a3447705c::t_e642d090aaff18 60-63,66-73,80-81,228,230-236,265,361-362,364-370
+  s_ae096a3447705c::t_ab4a9a430fe1a8 237-244
+api/proto/crosscodex/v1/cleaning.proto
+  s_ae096a3447705c::t_b1cadb3fd156b2 252-256,314-315,339-341,344-345,371
+pkg/config/types.go
+  s_ae096a3447705c::t_4cce157b4a0afa 37
+  s_ae096a3447705c::t_cec239ea6acb2f 1395-1408
+internal/feedback/reproject_bdd_test.go
+  s_ae096a3447705c::t_5f211cd4faf2e3 270-367,369-463
+  s_ae096a3447705c::t_8cdc986b6341c8 247-248,252-255,258,261-265,269
+  s_ae096a3447705c::t_28cd01e4f0c578 1-196,210-246,249-251,256-257,259-260,266-268,466-476
+  s_ae096a3447705c::t_6fbbe66914b292 197-209
+  s_ae096a3447705c::t_29877f755990d3 464-465
+  s_ae096a3447705c::t_dd68d98e972818 368
+internal/feedback/feedback_suite_test.go
+  s_ae096a3447705c::t_cec953a97b21f9 1-13
+internal/feedback/aggregate.go
+  s_ae096a3447705c::t_5e0a3d343b2ff5 1-119
+internal/feedback/telemetry.go
+  s_ae096a3447705c::t_0e2da902ba7096 1-89
+pkg/cleaning/graphops_bdd_test.go
+  s_ae096a3447705c::t_ce00552d0d214f 373
+  s_ae096a3447705c::t_fbce06d293a2eb 347-372,374-405,414-431
+  s_ae096a3447705c::t_6fc6c5177b5b59 255-346,407-413
+internal/feedback/fake_test.go
+  s_ae096a3447705c::t_bc391fe230cdf9 23-24,26,48,87,91
+  s_ae096a3447705c::t_c2d2c573931f7a 25
+  s_ae096a3447705c::t_2de9148297b5ec 1-22,27-36,39-47,49-77,82,84-86,88-90,92-94,97-111,113-149,151-241,245-259,261-300,304-356,361-367,370,373-391
+  s_ae096a3447705c::t_793454056717b2 37-38,78-81,83,95-96,112,150,242-244,260,301-303,357-360,368-369,371-372
+pkg/config/defaults.go
+  s_ae096a3447705c::t_ff4aa2382e3dec 225-227
+pkg/cleaning/plan_bdd_test.go
+  s_ae096a3447705c::t_13cddf8f5a12aa 168-169
+  s_ae096a3447705c::t_ff1eadaae5a4eb 128-133
+pkg/graphdb/interface.go
+  s_ae096a3447705c::t_8ab84e20e9ae4a 103-104
+pkg/cleaning/store_integration_bdd_test.go
+  s_ae096a3447705c::t_51bd6147d19a70 293-315
+  s_ae096a3447705c::t_10e88b274c9db4 331-373
+api/proto/crosscodex/v1/synthesis.proto
+  s_ae096a3447705c::t_e19f35f834b229 6,136-157
+internal/feedback/service_bdd_test.go
+  s_ae096a3447705c::t_ffa4c7304da75f 445-448
+  s_ae096a3447705c::t_0b18f8c4cc40b5 1-444,449-506
+  s_ae096a3447705c::t_22e4f2b78a0cb0 507-508
+internal/feedback/store_bdd_test.go
+  s_ae096a3447705c::t_48508a6524b03a 267-278,280-287,289-294,296-308
+  s_ae096a3447705c::t_09fce4117ee103 17,91-94,97-107,144-160,199-206,369
+  s_ae096a3447705c::t_5906814630ba63 1-16,18-90,95-96,108-143,161-198,207-266,279,288,295,309-368,370-372
+internal/feedback/types.go
+  s_ae096a3447705c::t_54eebce29fd881 369
+  s_ae096a3447705c::t_9e521eba2da7ae 1-12,14-23,33-34,45-70,74-75,104-230,237-247,251-266,268-269,271-284,289-295,312-314,316-321,324-339,341-342,344-368
+  s_ae096a3447705c::t_a473ac83393e17 13,24-32,35-44,71-73,76-103,231-236,248-250,267,270,285-288,322-323,340,343
+  s_ae096a3447705c::t_20de59e5ea7f7b 296-311,315
+.taskfiles/test/integration.yml
+  s_ae096a3447705c::t_ce568d327f63c3 123,241,261-278
+pkg/cleaning/engine_reproject.go
+  s_ae096a3447705c::t_165af4d7b5e0f8 316-322,327-329,331
+  s_ae096a3447705c::t_2ef536e37e9481 90-97
+  s_ae096a3447705c::t_6d9c75d6abd8e9 1-7,9-15,17-73,75,86,98-101,106-123,125,137,139,144-149,156,159-176,206-210,212-221,224-235,260,271-273,287,311,313-315,330,333-337,340-344,346-347,349-351,354,356-398
+  s_ae096a3447705c::t_d0ae84dc6a7203 323-326
+  s_ae096a3447705c::t_10536c0df7cf0c 8,16,74,76-85,87-89,102-105,124,126-136,138,140-143,150-155,157-158,177-205,211,222-223,236-259,261-270,274-286,288-310,312,332,338-339,345,348,352-353,355
+pkg/cleaning/cleaning_property_test.go
+  s_ae096a3447705c::t_29216181df6c89 350-407
+pkg/cleaning/graphops.go
+  s_ae096a3447705c::t_5f8df8f7fec109 68-114
+  s_ae096a3447705c::t_6cab72d8caa9d0 11
+  s_ae096a3447705c::t_3ef3113e00f9cf 115-155
+internal/feedback/contract_test.go
+  s_ae096a3447705c::t_4bba5dc6eac509 171-175,222,255-275,395,564,576,602,628,632-682
+  s_ae096a3447705c::t_d5fbe0369cbbad 631,684-685
+  s_ae096a3447705c::t_4ff97c2a2eeb00 1-170,176-221,223-254,276-394,396-563,565-575,577-601,603-627,629-630,683
+pkg/cleaning/engine_bdd_test.go
+  s_ae096a3447705c::t_e12f00cae0f5e0 316
+internal/graph/server_bdd_test.go
+  s_ae096a3447705c::t_f395050ed318f6 36-45,92,262-269
+  s_ae096a3447705c::t_5c30710aacb24b 284-293
+pkg/cleaning/engine_decide.go
+  s_ae096a3447705c::t_54b6435fce70b1 158-161
+pkg/db/migrations/003_mapping_feedback.up.sql
+  s_ae096a3447705c::t_2bd6a8a91bd6ae 1-155,158-164,168-173,175-192
+  s_ae096a3447705c::t_a66f686f8a161c 156-157,165-167,174
+pkg/cleaning/engine_project.go
+  s_ae096a3447705c::t_e1491bf6d5e67d 13-14,78
+internal/feedback/store.go
+  s_ae096a3447705c::t_dd8ea8be128fe3 1-2,7-13,20-21,23-36,38-41,45-54,59-68,76-77,88-89,92-93,130
+  s_ae096a3447705c::t_f1f5c944055634 3-6
+  s_ae096a3447705c::t_0b84ae69ab8f7a 14-19,22,37,42-44,55-58,69-75
+  s_ae096a3447705c::t_6121e72823f6d2 78-87,90-91,94-127,129
+  s_ae096a3447705c::t_893547618b6f40 128
+internal/feedback/store_integration_bdd_test.go
+  s_ae096a3447705c::t_b457e3c61a27ff 164-165,297-325
+  s_ae096a3447705c::t_f324c7c11374c5 1-163,166-296,326-348
+pkg/db/migrations/003_mapping_feedback.down.sql
+  s_ae096a3447705c::t_8278efe7a87189 1-22
+internal/feedback/doc.go
+  s_ae096a3447705c::t_576b6f9ba1ba80 1-30,40
+  s_ae096a3447705c::t_8848bae5136be3 31-39
+internal/feedback/export_test.go
+  s_ae096a3447705c::t_2f2c1293c17f8e 26-36
+  s_ae096a3447705c::t_5c378d4b6378cb 14-17
+  s_ae096a3447705c::t_014894c1423613 1-10,12
+  s_ae096a3447705c::t_3989292cc55405 11,13,18-25
+internal/feedback/service_property_test.go
+  s_ae096a3447705c::t_53772bdedd3dea 1-42
+internal/testspecs/graphdb_contract.go
+  s_ae096a3447705c::t_3cf3e08f3ac111 1743-1753
+pkg/cleaning/cleaningtest/doc.go
+  s_ae096a3447705c::t_05944313ed27c1 39-42
+  s_ae096a3447705c::t_1d59cd18822d0c 28,34-38,46-48
+api/proto/crosscodex/v1/feedback.proto
+  s_ae096a3447705c::t_1f780a08941546 45,48-51,53-54,56-59,121-123,125-128,155,157-159,161-162,164-165,167-168,170-173,179-180
+internal/cleaning/service_bdd_test.go
+  s_ae096a3447705c::t_c92c0d51be32be 573,583-599
+internal/feedback/queue.go
+  s_ae096a3447705c::t_868b8fcc872baf 1-180
+internal/graph/server.go
+  s_ae096a3447705c::t_c17a801a2b55a3 36-41,60-61,91-93
+pkg/cleaning/cleaningtest/contract.go
+  s_ae096a3447705c::t_81215e34589824 166-169,293-295,761-803
+  s_ae096a3447705c::t_fe19a88e43562d 159,161-165,251-257,296-298,539-540,674-681,693-760
+internal/feedback/determine_bdd_test.go
+  s_ae096a3447705c::t_c08e9e7e0f23e3 1-10,12-60,107-333,335-342,344-384,468-484
+  s_ae096a3447705c::t_9e15a5ed712df0 11,61-106,343,385-467
+  s_ae096a3447705c::t_5804ad9afba7fd 334
+pkg/cleaning/plan.go
+  s_ae096a3447705c::t_7354b471f9a616 41,61,258,387
+api/proto/crosscodex/v1/gateway.proto
+  s_ae096a3447705c::t_28d673dc489852 192
+  s_ae096a3447705c::t_6de3b06a2a0c97 189-191,193-200
+  s_ae096a3447705c::t_39ece9c5cbc1cd 186-188
+pkg/cleaning/store_pg.go
+  s_ae096a3447705c::t_6acf4e969a986c 629-642,686-711
+  s_ae096a3447705c::t_9ab1fbe22ecf39 584-586,643-685
+internal/feedback/feedback_fuzz_test.go
+  s_ae096a3447705c::t_e88b0d240a655d 1-3,5-64
+  s_ae096a3447705c::t_bad33cd08f8595 66-108
+  s_ae096a3447705c::t_78dbc3fd30a57b 65
+  s_ae096a3447705c::t_2a5f86ea784528 4,109-137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "da82f0791f97c7f618beab500a343cf786c125fd",
+  "prompts": {},
+  "sessions": {
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
