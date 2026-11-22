@@ -1,0 +1,30 @@
+pkg/cleaning/engine.go
+  s_ae096a3447705c::t_80b30b736b5cd4 62-65
+pkg/cleaning/graphops_bdd_test.go
+  s_ae096a3447705c::t_6fc6c5177b5b59 255-346,348-354
+pkg/cleaning/engine_verdict.go
+  s_ae096a3447705c::t_fb9de7977c4dcd 1-63
+pkg/cleaning/graphops.go
+  s_ae096a3447705c::t_5f8df8f7fec109 67-113
+pkg/cleaning/cleaning_property_test.go
+  s_ae096a3447705c::t_29216181df6c89 350-407
+pkg/cleaning/engine_verdict_bdd_test.go
+  s_ae096a3447705c::t_c33c8f5b3afb20 39
+  s_ae096a3447705c::t_61dd8cc3e46af8 1-38,40-141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "951e9c3ff963557213945c049aa8dcba57200099",
+  "prompts": {},
+  "sessions": {
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
