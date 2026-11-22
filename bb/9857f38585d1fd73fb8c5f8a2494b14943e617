@@ -1,0 +1,57 @@
+docs/dev/feedback.md
+  s_ae096a3447705c::t_848f17e0bc6900 124,128-140
+pkg/cleaning/graphops_bdd_test.go
+  s_ae096a3447705c::t_fbce06d293a2eb 347-372,374-405,414-431
+  s_ae096a3447705c::t_ce00552d0d214f 373
+docs/dev/feedback-cleaning-results-spec.md
+  s_ae096a3447705c::t_0f60aba0f9b942 158-162
+pkg/cleaning/graphops_integration_bdd_test.go
+  s_ae096a3447705c::t_1433880d197bd1 172-180
+internal/testspecs/graphdb_contract.go
+  s_ae096a3447705c::t_3cf3e08f3ac111 1743-1753
+pkg/cleaning/engine_reproject_bdd_test.go
+  s_ae096a3447705c::t_c579aecb9fd146 406,417,423-425,429-459,461-464
+  s_ae096a3447705c::t_d511f019f04b1b 460
+pkg/cleaning/cleaningtest/fake.go
+  s_ae096a3447705c::t_17765be77a0132 54-56
+pkg/cleaning/engine_reproject.go
+  s_ae096a3447705c::t_d0ae84dc6a7203 323-326
+  s_ae096a3447705c::t_165af4d7b5e0f8 316-322,327-329,331
+  s_ae096a3447705c::t_2ef536e37e9481 90-97
+pkg/cleaning/graphops.go
+  s_ae096a3447705c::t_3ef3113e00f9cf 115-155
+  s_ae096a3447705c::t_6cab72d8caa9d0 11
+pkg/graphdb/interface.go
+  s_ae096a3447705c::t_8ab84e20e9ae4a 103-104
+internal/feedback/reproject_bdd_test.go
+  s_ae096a3447705c::t_dd68d98e972818 368
+  s_ae096a3447705c::t_6fbbe66914b292 197-209
+  s_ae096a3447705c::t_5f211cd4faf2e3 271-289,293-367,369-463
+  s_ae096a3447705c::t_29877f755990d3 464-465
+internal/feedback/reproject.go
+  s_ae096a3447705c::t_040aa98d264b0d 64-68,70-71
+  s_ae096a3447705c::t_6a54e884234812 203-213,218
+README.md
+  s_ae096a3447705c::t_daf75b1fbb0c3d 1348
+  s_ae096a3447705c::t_e7445a46f57c45 1347,1349
+docs/dev/cleaning.md
+  s_ae096a3447705c::t_30f4420f536bb6 351-352,357-369
+  s_ae096a3447705c::t_f6548df0161b4d 452-457
+  s_ae096a3447705c::t_7d06bd8bfc2412 370
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "bb9857f38585d1fd73fb8c5f8a2494b14943e617",
+  "prompts": {},
+  "sessions": {
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
