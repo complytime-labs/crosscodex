@@ -1,0 +1,23 @@
+cmd/crosscodex/embedded_bdd_test.go
+  s_ae096a3447705c::t_a7f3b72354f979 75-121
+cmd/crosscodex/embedded.go
+  s_ae096a3447705c::t_24c0195e82775b 71-74,76-79,88
+cmd/crosscodexd/bootstrap_integration_test.go
+  s_ae096a3447705c::t_4df1f802586800 71-76,78-84,86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "e4805eeece664d4f8a60fd3270c047dbfc9008e4",
+  "prompts": {},
+  "sessions": {
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
