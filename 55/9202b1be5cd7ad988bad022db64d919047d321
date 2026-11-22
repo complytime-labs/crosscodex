@@ -1,0 +1,25 @@
+test/deploy/tls_name_probe.py
+  s_ae096a3447705c::t_8d6427b981bf11 1-68
+test/deploy/smoke_up.sh
+  s_ae096a3447705c::t_da680362bd392a 13-14,298-308,330-349,351-372,374-390,392-394,396-397,399,401-405,408-409,412,414-416,419-438,444,454-458,460-461,464-470,472-482,539,542-600,616
+test/tooling/lib/smoke-up-hardening.sh
+  s_ae096a3447705c::t_98d31faae7c3f1 11-17,30-32,34,37-64,95-96,98-107
+test/tooling/smoke-up-hardening.venom.yml
+  s_ae096a3447705c::t_e76c89500a8b3e 14,56,60,63-96,104-115,122,126,133-144,148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "559202b1be5cd7ad988bad022db64d919047d321",
+  "prompts": {},
+  "sessions": {
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
