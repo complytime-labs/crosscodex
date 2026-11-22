@@ -1,0 +1,21 @@
+pkg/cleaning/store_integration_bdd_test.go
+  s_ae096a3447705c::t_10e88b274c9db4 308-350
+pkg/db/migrations/003_mapping_feedback.up.sql
+  s_ae096a3447705c::t_a66f686f8a161c 156-157,165-167,174
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "2d1b1716802f1a9e6fd61bcd67c8327ebf6bfe69",
+  "prompts": {},
+  "sessions": {
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
