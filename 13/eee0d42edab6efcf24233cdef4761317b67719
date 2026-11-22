@@ -1,0 +1,51 @@
+pkg/cleaning/plan_bdd_test.go
+  s_ae096a3447705c::t_13cddf8f5a12aa 168-169
+  s_ae096a3447705c::t_ff1eadaae5a4eb 128-133
+pkg/cleaning/engine_reproject.go
+  s_ae096a3447705c::t_6d9c75d6abd8e9 1-268
+pkg/cleaning/engine_reproject_bdd_test.go
+  s_ae096a3447705c::t_5a38def378f159 1-315
+  s_ae096a3447705c::t_5026f8be957753 316-326
+pkg/cleaning/store_integration_bdd_test.go
+  s_ae096a3447705c::t_51bd6147d19a70 293-315
+api/proto/crosscodex/v1/cleaning.proto
+  s_ae096a3447705c::t_b1cadb3fd156b2 252-256,314-315,339-341,344-345,371
+docs/dev/cleaning.md
+  s_ae096a3447705c::t_ab041f0568dc5d 14-15,144,175,185,220-224,284,306-371,446-447,462-465,560-561,571-574
+internal/cleaning/service_bdd_test.go
+  s_ae096a3447705c::t_c92c0d51be32be 573,583-599
+pkg/cleaning/cleaningtest/contract.go
+  s_ae096a3447705c::t_fe19a88e43562d 159,161-165,247-253,289-291,532-533,667-674,686-753
+pkg/cleaning/cleaningtest/doc.go
+  s_ae096a3447705c::t_1d59cd18822d0c 28,34-38,42-44
+pkg/cleaning/cleaningtest/fake.go
+  s_ae096a3447705c::t_65c1831a1c45d8 51-53,348-350,390-427
+pkg/cleaning/engine_bdd_test.go
+  s_ae096a3447705c::t_e12f00cae0f5e0 316
+pkg/cleaning/engine_decide.go
+  s_ae096a3447705c::t_54b6435fce70b1 158-161
+pkg/cleaning/engine_project.go
+  s_ae096a3447705c::t_e1491bf6d5e67d 13-14,78
+pkg/cleaning/plan.go
+  s_ae096a3447705c::t_7354b471f9a616 41,61,258,387
+pkg/cleaning/store.go
+  s_ae096a3447705c::t_e642d090aaff18 60-63,66-73,80-81,228,230-236,257,353-354,356-362
+pkg/cleaning/store_pg.go
+  s_ae096a3447705c::t_9ab1fbe22ecf39 584-586,629-671
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "13eee0d42edab6efcf24233cdef4761317b67719",
+  "prompts": {},
+  "sessions": {
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
