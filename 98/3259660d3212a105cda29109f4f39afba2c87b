@@ -1,0 +1,35 @@
+internal/feedback/contract_test.go
+  s_ae096a3447705c::t_4bba5dc6eac509 171-175,222,255-275,395,564,576,602,628,632-682
+internal/feedback/export_test.go
+  s_ae096a3447705c::t_3989292cc55405 11,13-21
+internal/feedback/fake_test.go
+  s_ae096a3447705c::t_793454056717b2 37-38,78-81,83,95-96,112,150,242-244,260,301-303,357-360,368-369,371-372
+internal/feedback/feedback_fuzz_test.go
+  s_ae096a3447705c::t_bad33cd08f8595 65-107
+internal/feedback/store.go
+  s_ae096a3447705c::t_0b84ae69ab8f7a 14-19,22,37,42-44,55-58,69-75
+internal/feedback/store_bdd_test.go
+  s_ae096a3447705c::t_09fce4117ee103 17,91-94,97-107,144-160,199-206,369
+internal/feedback/store_integration_bdd_test.go
+  s_ae096a3447705c::t_b457e3c61a27ff 164-165,297-325
+internal/feedback/store_pg.go
+  s_ae096a3447705c::t_33ce919176bd7f 152-155,179,205-207,240-241,437-438,443-445,520-522,583,585,587-589,591,594-602
+internal/feedback/types.go
+  s_ae096a3447705c::t_a473ac83393e17 13,24-32,35-44,71-73,76-103,231-236,248-250,267,270,285-288,313-314,331,334
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "983259660d3212a105cda29109f4f39afba2c87b",
+  "prompts": {},
+  "sessions": {
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
