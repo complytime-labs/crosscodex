@@ -1,0 +1,33 @@
+docs/dev/cleaning.md
+  s_ae096a3447705c::t_11479a3808dffd 321-361,392-396
+pkg/cleaning/cleaningtest/contract.go
+  s_ae096a3447705c::t_81215e34589824 166-169,293-295,761-803
+pkg/cleaning/cleaningtest/doc.go
+  s_ae096a3447705c::t_05944313ed27c1 39-42
+pkg/cleaning/cleaningtest/fake.go
+  s_ae096a3447705c::t_c68a65ef785464 53-56,431-461
+pkg/cleaning/engine_reproject.go
+  s_ae096a3447705c::t_10536c0df7cf0c 8,16,74,76-85,87-92,98-101,120,122-132,134,136-139,146-151,153-154,173-201,207,218-219,232-255,257-266,270-282,284-306,308,313-314,320-321,327,330,334-335,337
+pkg/cleaning/engine_reproject_bdd_test.go
+  s_ae096a3447705c::t_4a369efe416c3b 16,22,64-89,92-98,102-103,105-107,109,121-125,127-128,131-136,140-146,158-161,163,361,367-514
+pkg/cleaning/store.go
+  s_ae096a3447705c::t_ab4a9a430fe1a8 237-244
+pkg/cleaning/store_pg.go
+  s_ae096a3447705c::t_6acf4e969a986c 629-642,686-711
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "199d3ddd837198595dc25019dbac06e1f65e86bb",
+  "prompts": {},
+  "sessions": {
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
