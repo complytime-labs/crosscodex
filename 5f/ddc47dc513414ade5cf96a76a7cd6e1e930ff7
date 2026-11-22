@@ -1,0 +1,33 @@
+api/proto/crosscodex/v1/feedback.proto
+  s_ae096a3447705c::t_1f780a08941546 45,48-51,53-54,56-59,121-123,125-128,155,157-159,161-162,164-165,167-168,170-173,179-180
+api/proto/crosscodex/v1/gateway.proto
+  s_ae096a3447705c::t_6de3b06a2a0c97 186-199
+api/proto/crosscodex/v1/synthesis.proto
+  s_ae096a3447705c::t_e19f35f834b229 6,136-157
+internal/gateway/backend_errors_bdd_test.go
+  s_ae096a3447705c::t_3a9096368bd45a 300-307
+internal/gateway/backends.go
+  s_ae096a3447705c::t_47938ea9f2c8d0 74
+internal/gateway/feedback.go
+  s_ae096a3447705c::t_eac35ff0eb9a4c 49-82
+internal/gateway/gateway_bdd_test.go
+  s_ae096a3447705c::t_9ab8c28303e846 213,227-230,1191-1242,1296-1299,1363-1366
+internal/gateway/stream_bdd_test.go
+  s_ae096a3447705c::t_10d2a4acfa0db3 186-189
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "5fddc47dc513414ade5cf96a76a7cd6e1e930ff7",
+  "prompts": {},
+  "sessions": {
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
