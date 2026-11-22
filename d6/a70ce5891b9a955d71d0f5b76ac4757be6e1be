@@ -1,0 +1,69 @@
+internal/admin/service_bdd_test.go
+  s_ae096a3447705c::t_4840468df77e85 184-250
+  s_ae096a3447705c::t_c7e8f69e8440e0 251-252
+cmd/crosscodex/embedded_bdd_test.go
+  s_ae096a3447705c::t_dce381db37dd8b 546-558,652,654
+  s_c590808987deb2::t_f4c8cf8c3e81bc 542
+internal/gateway/gateway_bdd_test.go
+  s_ae096a3447705c::t_bbdfd4853b528a 1166-1174,1176-1177,1180-1190
+README.md
+  s_ae096a3447705c::t_91d39f3c2d53a3 352
+api/proto/crosscodex/v1/gateway.proto
+  s_ae096a3447705c::t_39ece9c5cbc1cd 186-188
+cmd/crosscodex/cleaning_client_bdd_test.go
+  s_ae096a3447705c::t_e48d8470352566 58
+cmd/crosscodex/connect.go
+  s_ae096a3447705c::t_e9a254dfa73ede 152,170
+cmd/crosscodex/embedded.go
+  s_ae096a3447705c::t_1e95b71953dd6b 22,24,35,486-493,495,512-516,524,528,543,550,558,567,608-630,632-634,645,658
+cmd/crosscodex/embedded_integration_bdd_test.go
+  s_ae096a3447705c::t_e6654f3812cb99 21,24,26,351,653-740
+cmd/crosscodex/embedded_telemetry_integration_bdd_test.go
+  s_ae096a3447705c::t_48189cff93b641 73
+cmd/crosscodexd/bootstrap.go
+  s_ae096a3447705c::t_4cf907cfd66e3f 22,351-353,446-447,459-464,467-468,498-501,504-517,568-569,803,807,813,1076-1078,1082,1102-1106,1130-1136,1138-1139,1149
+cmd/crosscodexd/gateway_backends_integration_test.go
+  s_ae096a3447705c::t_d3918828b1953d 17,33-35,42,58-62,93-106
+cmd/crosscodexd/graph_role_integration_test.go
+  s_ae096a3447705c::t_83323949365313 69,153-154,209-228
+docs/dev/service-runtime.md
+  s_ae096a3447705c::t_bae0c95b8a733c 18,21,26,56-64,105,163,168
+internal/admin/service.go
+  s_ae096a3447705c::t_5391b62eca26f5 46-60,75,77,83-96,154-156,182-184
+internal/catalog/retire.go
+  s_ae096a3447705c::t_a55bd611cc1064 63-64
+internal/gateway/feedback.go
+  s_ae096a3447705c::t_56afcd888ae736 90-92,94
+internal/gateway/graph_client.go
+  s_ae096a3447705c::t_69387ef1622e37 17-19,30,65,124-148
+internal/gateway/graph_client_bdd_test.go
+  s_ae096a3447705c::t_0416682b9098a5 54-102,145,184,192,208-211,273-288
+internal/graph/server.go
+  s_ae096a3447705c::t_c17a801a2b55a3 36-41,60-61,91-93
+internal/graph/server_bdd_test.go
+  s_ae096a3447705c::t_f395050ed318f6 36-45,92,262-269
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d6a70ce5891b9a955d71d0f5b76ac4757be6e1be",
+  "prompts": {},
+  "sessions": {
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_c590808987deb2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a5e378268b6d2ddd8",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
