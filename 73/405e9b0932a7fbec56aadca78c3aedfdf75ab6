@@ -1,0 +1,19 @@
+docs/dev/adr/0002-nats-client-authorization.md
+  s_ae096a3447705c::t_d6489b0091a5ac 2,4,38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "73405e9b0932a7fbec56aadca78c3aedfdf75ab6",
+  "prompts": {},
+  "sessions": {
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
