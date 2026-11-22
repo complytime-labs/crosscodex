@@ -1,0 +1,110 @@
+internal/results/service.go
+  s_ae096a3447705c::t_c800c74b7fa246 20,425-427
+  s_ae096a3447705c::t_d6831e94191a5d 428
+internal/results/store_pg.go
+  s_ae096a3447705c::t_23403f3d6713b2 185-187,197-241
+  s_ae096a3447705c::t_62ba6decb253a4 242-243
+internal/gateway/graph_client_bdd_test.go
+  s_ae096a3447705c::t_bc3137e4f9cb05 56,66-67,74,80,82-84,92-100,155,219-220,224,298-333,336
+  s_ae096a3447705c::t_0416682b9098a5 54-55,57-65,68-73,75-79,81,85-91,101-113,157,196,204,286-297,334-335
+cmd/crosscodex/crosswalk.go
+  s_ae096a3447705c::t_e4d724cd0623c0 231
+internal/gateway/graph_client.go
+  s_ae096a3447705c::t_69387ef1622e37 17-19,30,65,124-147
+  s_ae096a3447705c::t_8eb81dc6072cc0 148
+internal/gateway/gateway_bdd_test.go
+  s_ae096a3447705c::t_bbdfd4853b528a 1166-1174,1176-1177,1180-1190
+  s_ae096a3447705c::t_9ab8c28303e846 213,227-230,1202-1253,1307-1310,1374-1375
+  s_ae096a3447705c::t_12a65127d72c54 1376-1377
+internal/gateway/feedback.go
+  s_ae096a3447705c::t_eac35ff0eb9a4c 49-82
+  s_ae096a3447705c::t_56afcd888ae736 90-92,94
+internal/catalog/retire.go
+  s_ae096a3447705c::t_a55bd611cc1064 63-64
+internal/gateway/backend_errors_bdd_test.go
+  s_ae096a3447705c::t_3a9096368bd45a 300-307
+cmd/crosscodex/results_feedback_bdd_test.go
+  s_ae096a3447705c::t_a68f1249cc9f6b 1-7,9-109,136-177,182-237
+  s_ae096a3447705c::t_a00a1c8ee5c384 8,110-135,178-181
+cmd/crosscodex/connect.go
+  s_ae096a3447705c::t_e9a254dfa73ede 152,170
+internal/gateway/stream_bdd_test.go
+  s_ae096a3447705c::t_10d2a4acfa0db3 186-189
+cmd/crosscodex/embedded_integration_bdd_test.go
+  s_ae096a3447705c::t_f7a5888f2bf16b 710-717,719-723,726-729
+  s_ae096a3447705c::t_e6654f3812cb99 348,650-709,718,724-725
+  s_ae096a3447705c::t_33f0451a558bcf 730
+cmd/crosscodex/cleaning_client_bdd_test.go
+  s_ae096a3447705c::t_e48d8470352566 58
+internal/results/service_bdd_test.go
+  s_ae096a3447705c::t_ad295011820e50 14,23,317-328
+  s_ae096a3447705c::t_a90a1ee271f8ac 329-330
+cmd/crosscodexd/gateway_backends_integration_test.go
+  s_ae096a3447705c::t_d3918828b1953d 17,33-35,42,58-62,93-105
+  s_ae096a3447705c::t_2227aebe70c98d 106
+internal/admin/service.go
+  s_ae096a3447705c::t_5391b62eca26f5 46-60,75,77,83-96,154-156,182-184
+cmd/crosscodex/results_bdd_test.go
+  s_ae096a3447705c::t_91b2b6e05514c7 15,23,261,312,332,340,346,377-437,489,504-505,533,547
+internal/results/types.go
+  s_ae096a3447705c::t_944031a56f5f5e 7,66-78
+internal/admin/service_bdd_test.go
+  s_ae096a3447705c::t_4840468df77e85 184-250
+  s_ae096a3447705c::t_c7e8f69e8440e0 251-252
+cmd/crosscodex/embedded.go
+  s_ae096a3447705c::t_a7441729bdb48f 187-192,222,615,622-628,631-632
+  s_ae096a3447705c::t_1e95b71953dd6b 22,24,35,489-496,498,515-519,527,531,546,553,561,570,611-614,616-621,629-630,633-635,637-639,650,663
+cmd/crosscodexd/admin_cleaning.go
+  s_ae096a3447705c::t_4eabc6d309a91e 44-45,87-89,91-104,106,109,112,116,118,122,134,136,139,144-153
+  s_ae096a3447705c::t_5e5983fe6a3cfd 1-43,46-86,90,105,107-108,110-111,113-115,117,119-121,123-133,135,137-138,140-143,154-199
+cmd/crosscodexd/admin_cleaning_bdd_test.go
+  s_ae096a3447705c::t_4e69de1ff6dcd4 1-15,17-30,32-88,90-97,99-126,128-135,153-197,244-252
+  s_ae096a3447705c::t_66bf13f15f11d5 16,31,89,98,127,136-152,198-243
+cmd/crosscodex/results.go
+  s_ae096a3447705c::t_0de20c96b59ef6 391
+  s_ae096a3447705c::t_58f80415ca3aab 296-312,383,385-390,430-431,445-447,484,493-494,517,766-768
+  s_ae096a3447705c::t_5bf54dc42ab96e 16,41-42,185,207,223,799-821,826-834,837-845,849-850,852-855,858-864,869-875,880-888,894-895,898-908,914-918,920-927,929-948,956-957,959-985,987-1055,1057-1067,1070-1073
+  s_ae096a3447705c::t_2360937416cbbd 822-825,835-836,865-867,909-913,919,928,949-955,958,986,1056
+cmd/crosscodex/embedded_bdd_test.go
+  s_ae096a3447705c::t_bb2835be540405 345,356,405
+  s_c590808987deb2::t_f4c8cf8c3e81bc 542
+  s_ae096a3447705c::t_dce381db37dd8b 546-558,652,654
+cmd/crosscodex/embedded_telemetry_integration_bdd_test.go
+  s_ae096a3447705c::t_48189cff93b641 73
+cmd/crosscodexd/bootstrap.go
+  s_ae096a3447705c::t_4cf907cfd66e3f 22,351-353,446-447,459-464,467-468,498-501,504-517,568-569,803,807,813,1076-1078,1082,1102-1106,1130-1136,1138-1139,1149
+cmd/crosscodexd/graph_role_integration_test.go
+  s_ae096a3447705c::t_83323949365313 69,153-154,209-227
+  s_ae096a3447705c::t_1715233ac91bce 228
+internal/results/store_pg_integration_bdd_test.go
+  s_ae096a3447705c::t_12d425fe032af2 7,11,17,145-173,298-367
+  s_ae096a3447705c::t_d8c5ec63235b2c 368-369
+cmd/crosscodexd/admin.go
+  s_ae096a3447705c::t_e4fb6a465baaf3 35,71-72
+internal/gateway/backends.go
+  s_ae096a3447705c::t_47938ea9f2c8d0 74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "e89215c19669a93fee7ad61e8cd0fd75e20e3565",
+  "prompts": {},
+  "sessions": {
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_c590808987deb2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a5e378268b6d2ddd8",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
