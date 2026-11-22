@@ -1,0 +1,67 @@
+docs/dev/feedback-cleaning-results-spec.md
+  s_ae096a3447705c::t_84555f7f79c832 1-111,113-157,163-190
+  s_ae096a3447705c::t_0f60aba0f9b942 158-162
+  s_ae096a3447705c::t_62b3dd1d283fbc 112
+docs/dev/design-principles.md
+  s_ae096a3447705c::t_dd075c45d1fc22 103
+docs/dev/telemetry.md
+  s_a46cd4a5608fbb::t_05b9fab9e1c2b4 228,232-236
+docs/dev/service-runtime.md
+  s_ae096a3447705c::t_bae0c95b8a733c 18,21,26,56-61,63-64,105,163,168
+  s_ae096a3447705c::t_0197cab5992671 62,157
+README.md
+  s_ae096a3447705c::t_daf75b1fbb0c3d 1348
+  s_ae096a3447705c::t_1f224c45a138b9 29-32
+  s_ae096a3447705c::t_91d39f3c2d53a3 366
+  s_ae096a3447705c::t_e7445a46f57c45 1347,1349
+  s_ae096a3447705c::t_7b5604a99309f4 56
+  s_ae096a3447705c::t_5b5e0eea228798 26-28
+  s_ae096a3447705c::t_b6a74aa8ce9948 1344-1346
+  s_ae096a3447705c::t_123285fa842422 1350-1352
+  s_09f844f123dbfb::t_87de2755169578 19-25,465-466,1219-1266,1269,1336-1343,1387-1388,1879-1883
+docs/dev/cleaning.md
+  s_ae096a3447705c::t_7d06bd8bfc2412 370
+  s_ae096a3447705c::t_30f4420f536bb6 351-352,357-369
+  s_ae096a3447705c::t_ab041f0568dc5d 14-15,144,175,185,220-224,284,306-320,377-406,412,493-494,509-512,607-608,618-620
+  s_ae096a3447705c::t_f6548df0161b4d 452-457
+  s_ae096a3447705c::t_11479a3808dffd 321-350,353-356,371-376,407-411
+  s_ae096a3447705c::t_7ef7e15e6df6ec 621
+docs/dev/migrations.md
+  s_ae096a3447705c::t_78924395869771 18-19,22
+docs/dev/feedback.md
+  s_ae096a3447705c::t_c22cde01a6fc9d 198
+  s_ae096a3447705c::t_848f17e0bc6900 124,128-140
+  s_ae096a3447705c::t_6bc43ef19df32c 1-123,125-127,141-197
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "0e6bbf72d9397091c308fe8bbb8672bc4a747b3f",
+  "prompts": {},
+  "sessions": {
+    "s_09f844f123dbfb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a0187b510eb0d5f5d",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_a46cd4a5608fbb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a5be66c704a2a9e71",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
