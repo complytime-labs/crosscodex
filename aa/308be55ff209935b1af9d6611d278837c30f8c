@@ -1,0 +1,20 @@
+internal/feedback/reproject_bdd_test.go
+  s_6aac903a0a86f2::t_827afac03cbb97 481
+  s_6aac903a0a86f2::t_959f2568db0af9 476-480,482
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "aa308be55ff209935b1af9d6611d278837c30f8c",
+  "prompts": {},
+  "sessions": {
+    "s_6aac903a0a86f2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1daeff3c-b8b0-4294-9580-269db5efd1ea",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
