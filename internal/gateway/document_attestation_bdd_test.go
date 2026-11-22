@@ -129,6 +129,35 @@ var _ = Describe("catalog import attestation", func() {
 		Entry("StreamDocument", importDocument(streamDocument), "gateway.StreamDocument"),
 	)
 
+	DescribeTable("records the document slug, the stored label and the resolved version in the ingest link",
+		func(requested string) {
+			cat := &mockCatalog{parseFn: func(context.Context, *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
+				return connect.NewResponse(&pb.ParseCatalogResponse{
+					CatalogId:    "cat-1",
+					Version:      "nist-800-53 @ rev5 (2026-01-02 · abc123)",
+					VersionLabel: "rev5",
+				}), nil
+			}}
+			svc := service(forA, gateway.WithCatalogBackend(cat))
+
+			_, err := svc.SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{
+				Source:       &pb.SubmitDocumentRequest_Content{Content: content},
+				DocumentSlug: "nist-800-53",
+				VersionLabel: requested,
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			link, err := gen.Verify(context.Background(), store.Objects()[ingestKey])
+			Expect(err).NotTo(HaveOccurred())
+			Expect(link.ByProducts).To(HaveKeyWithValue("document_slug", "nist-800-53"))
+			Expect(link.ByProducts).To(HaveKeyWithValue("version_label", "rev5"))
+			Expect(link.ByProducts).To(HaveKeyWithValue("version", "nist-800-53 @ rev5 (2026-01-02 · abc123)"))
+		},
+		Entry("an explicit label", "rev5"),
+		Entry("no explicit label (OSCAL or fallback label stored)", ""),
+		Entry("a requested label the catalog did not store", "other"),
+	)
+
 	DescribeTable("fails the import, without leaking the cause, when the link cannot be stored",
 		func(run importDocument) {
 			store.PutFunc = func(context.Context, string, io.Reader) error {

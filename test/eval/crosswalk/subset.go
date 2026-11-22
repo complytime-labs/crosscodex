@@ -12,11 +12,22 @@ import (
 
 const subsetTitleSuffix = " (eval subset)"
 
-// Subset returns a new catalog holding only the listed controls, so a run over
-// it costs a fixed number of analysis calls. Each listed control moves directly
-// under its top-level group (or under the catalog when it has no group) and
-// loses its child controls; everything else, including groups left empty, is
-// dropped. Back-matter and metadata are kept as is, except the title, which is
+const (
+	// ScopeProp marks a control of a subset that the profile lists. Controls
+	// without it are kept only as context for the ones that have it.
+	ScopeProp = "eval-scope"
+	// ScopeIn is the value ScopeProp takes on a listed control.
+	ScopeIn = "in"
+)
+
+// Subset returns a new catalog holding the listed controls and their ancestor
+// controls, so a run over it costs a bounded number of analysis calls. Each
+// listed control keeps the chain of controls above it, with their params,
+// parts and props, because its statement and context can depend on them. Only
+// the listed controls carry ScopeProp; the ancestors are context. Controls
+// under a top-level group are kept in that group (sub-groups are flattened,
+// and a control outside any group stays at the top); every unlisted control
+// that leads to no listed one, including groups left empty, is dropped. Back-matter and metadata are kept as is, except the title, which is
 // marked as a subset. The UUID is derived from the source UUID and the listed
 // controls (OSCAL: a UUID changes when content changes), so the same source and
 // controls always give byte-identical output. src is not modified.
@@ -50,28 +61,44 @@ func Subset(src *Catalog, controls []string) (*oscalTypes.Catalog, error) {
 	for _, id := range controls {
 		wanted[id] = true
 	}
-	// collect appends, in document order, every wanted control under controls
-	// (at any depth) to dst, without its children.
-	var collect func(controls *[]oscalTypes.Control, dst *[]oscalTypes.Control)
-	collect = func(controls *[]oscalTypes.Control, dst *[]oscalTypes.Control) {
+	// prune appends to dst, in document order, every control under controls (at
+	// any depth) that is wanted or has a wanted descendant. A kept control keeps
+	// its params, parts and props, because a listed control's text can refer to
+	// them; only the children that lead to no wanted control are dropped. A
+	// wanted control is marked in scope; its ancestors are context only.
+	var prune func(controls *[]oscalTypes.Control, dst *[]oscalTypes.Control)
+	prune = func(controls *[]oscalTypes.Control, dst *[]oscalTypes.Control) {
 		if controls == nil {
 			return
 		}
 		for _, c := range *controls {
-			children := c.Controls
+			var kept []oscalTypes.Control
+			prune(c.Controls, &kept)
+			c.Controls = nil
+			if len(kept) > 0 {
+				c.Controls = &kept
+			}
 			if wanted[c.ID] {
-				c.Controls = nil
+				var props []oscalTypes.Property
+				if c.Props != nil {
+					props = slices.Clone(*c.Props)
+				}
+				props = append(props, oscalTypes.Property{Name: ScopeProp, Value: ScopeIn})
+				c.Props = &props
+			}
+			if wanted[c.ID] || len(kept) > 0 {
 				*dst = append(*dst, c)
 			}
-			collect(children, dst)
 		}
 	}
-	var collectGroup func(g oscalTypes.Group, dst *[]oscalTypes.Control)
-	collectGroup = func(g oscalTypes.Group, dst *[]oscalTypes.Control) {
-		collect(g.Controls, dst)
+	// pruneGroup flattens a top-level group's sub-groups: it gathers the kept
+	// controls of the group and of every group below it.
+	var pruneGroup func(g oscalTypes.Group, dst *[]oscalTypes.Control)
+	pruneGroup = func(g oscalTypes.Group, dst *[]oscalTypes.Control) {
+		prune(g.Controls, dst)
 		if g.Groups != nil {
 			for _, sub := range *g.Groups {
-				collectGroup(sub, dst)
+				pruneGroup(sub, dst)
 			}
 		}
 	}
@@ -80,7 +107,7 @@ func Subset(src *Catalog, controls []string) (*oscalTypes.Catalog, error) {
 	if out.Groups != nil {
 		for _, g := range *out.Groups {
 			var kept []oscalTypes.Control
-			collectGroup(g, &kept)
+			pruneGroup(g, &kept)
 			if len(kept) > 0 {
 				g.Groups = nil
 				g.Controls = &kept
@@ -89,7 +116,7 @@ func Subset(src *Catalog, controls []string) (*oscalTypes.Catalog, error) {
 		}
 	}
 	var top []oscalTypes.Control
-	collect(out.Controls, &top)
+	prune(out.Controls, &top)
 
 	out.Groups, out.Controls = nil, nil
 	if len(groups) > 0 {

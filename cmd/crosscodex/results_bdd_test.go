@@ -403,6 +403,21 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			Expect(out.Mappings).To(HaveLen(1))
 		})
 
+		It("names a catalog document version and its lineage in the JSON analysis", func() {
+			fake.pages[0].Analysis.SourceCatalog.VersionDisplay = "csf @ Rev 2 (2026-01-02 · 012345)"
+			fake.pages[0].Analysis.SourceCatalog.SupersedesCatalogId = "cat-old"
+			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "json")
+			Expect(err).NotTo(HaveOccurred())
+			var out struct {
+				Analysis exportedAnalysis `json:"analysis"`
+			}
+			Expect(json.Unmarshal([]byte(stdout), &out)).To(Succeed())
+			Expect(out.Analysis.Source).To(SatisfyAll(
+				HaveKeyWithValue("versionDisplay", "csf @ Rev 2 (2026-01-02 · 012345)"),
+				HaveKeyWithValue("supersedesCatalogId", "cat-old")))
+			Expect(out.Analysis.Target).To(SatisfyAll(HaveKeyWithValue("versionDisplay", ""), HaveKeyWithValue("supersedesCatalogId", "")))
+		})
+
 		It("repeats the job's analysis on every CSV row", func() {
 			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "csv")
 			Expect(err).NotTo(HaveOccurred())

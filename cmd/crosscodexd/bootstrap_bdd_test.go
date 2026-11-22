@@ -70,7 +70,7 @@ var _ = Describe("buildIngestGateway config guards", func() {
 			cfg.Storage.Objects.Backend = backend
 			cfg.Storage.Objects.BasePath = basePath
 
-			svc, err := buildIngestGateway(context.Background(), role, cfg, &sharedResources{}, nil)
+			svc, err := buildIngestGateway(context.Background(), role, cfg, &sharedResources{}, nil, nil)
 			Expect(svc).To(BeNil())
 			Expect(err).To(MatchError(want))
 		},
@@ -98,7 +98,7 @@ var _ = Describe("buildIngestGateway config guards", func() {
 			cfg.Tenants.DefaultTenant = "crosscodexd-test"
 			cfg.Storage.Objects = config.ObjectStorageConfig{Backend: "s3", Bucket: "crosscodex-objects"}
 
-			svc, err := buildIngestGateway(context.Background(), role, cfg, &sharedResources{}, nil)
+			svc, err := buildIngestGateway(context.Background(), role, cfg, &sharedResources{}, nil, nil)
 			Expect(svc).To(BeNil())
 			Expect(err).To(MatchError(ContainSubstring("catalog import authenticates clients by X.509 certificate")))
 		},
@@ -118,7 +118,7 @@ var _ = Describe("buildIngestGateway attestation guard", func() {
 			cfg.Storage.Objects = config.ObjectStorageConfig{Backend: "local", BasePath: GinkgoT().TempDir()}
 			cfg.Attestation = config.AttestationConfig{Enabled: true, ExpiryDuration: time.Hour}
 
-			svc, err := buildIngestGateway(context.Background(), role, cfg, &sharedResources{}, nil)
+			svc, err := buildIngestGateway(context.Background(), role, cfg, &sharedResources{}, nil, nil)
 			Expect(svc).To(BeNil())
 			Expect(err).To(MatchError(config.ErrMissingRequired))
 			Expect(err.Error()).To(And(HavePrefix(role+" role: "),
@@ -260,7 +260,7 @@ var _ = Describe("buildIngestGateway client-certificate guard", func() {
 				}
 			}
 
-			svc, err := buildIngestGateway(context.Background(), role, cfg, &sharedResources{}, nil)
+			svc, err := buildIngestGateway(context.Background(), role, cfg, &sharedResources{}, nil, nil)
 			Expect(svc).To(BeNil())
 			if wantRefused {
 				Expect(err).To(MatchError(role + ` role: catalog import authenticates clients by X.509 certificate, so tls.mode (or tls.targets.gateway-server.mode) must be "mutual" with a CA configured`))
@@ -290,7 +290,7 @@ var _ = Describe("buildIngestGateway x509 mappings guard", func() {
 				Mode: "mutual", CA: testTLSWiringCAPath, Cert: testTLSWiringClientCertPath, Key: testTLSWiringClientKeyPath,
 			}
 
-			svc, err := buildIngestGateway(context.Background(), role, cfg, &sharedResources{}, nil)
+			svc, err := buildIngestGateway(context.Background(), role, cfg, &sharedResources{}, nil, nil)
 			Expect(svc).To(BeNil())
 			Expect(err).To(MatchError(errNoX509Mappings))
 			Expect(err).To(MatchError(role + " role: no client certificate can sign in: auth.x509_mappings is empty, " +

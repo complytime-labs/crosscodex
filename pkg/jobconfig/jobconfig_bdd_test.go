@@ -73,6 +73,14 @@ var _ = Describe("ExtractCatalogs", func() {
 			Entry("a config from before snapshots records none",
 				`{"catalog_id":"cat-a","target_catalog_id":"cat-b"}`,
 				jobconfig.Label{}, jobconfig.Label{}),
+			Entry("a document version records its display form and the version it superseded",
+				`{"catalog_id":"cat-a","target_catalog_id":"cat-b",`+
+					`"source_catalog":{"catalog_id":"cat-a","name":"CSF 2.0","version":"2.0",`+
+					`"version_display":"csf @ Rev 2 (2026-01-02 · 012345)","supersedes_catalog_id":"cat-old"},`+
+					`"target_catalog":{"catalog_id":"cat-b","name":"NIST SP 800-53"}}`,
+				jobconfig.Label{Name: "CSF 2.0", Version: "2.0", VersionDisplay: "csf @ Rev 2 (2026-01-02 · 012345)",
+					SupersedesCatalogID: "cat-old", Recorded: true},
+				sp),
 			// Only CreateJob writes snapshots; one naming another catalog
 			// was not written by it and labels nothing.
 			Entry("a snapshot of another catalog is ignored",

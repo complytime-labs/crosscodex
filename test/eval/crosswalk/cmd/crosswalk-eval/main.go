@@ -274,6 +274,7 @@ func runScore(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	refs := crosswalk.ResolveReferences(raw, crosswalk.NewTargetIndex(l.target))
+	refs.SkippedLinks = crosswalk.CountSkippedLinks(l.profile, l.source)
 	rep, err := crosswalk.Score(crosswalk.ScoreInput{
 		Profile: l.profile, Source: l.source, Subset: sub, Target: l.target,
 		Refs: refs, Run: run, Baseline: base, CSVDigest: csvDigest, Label: *label, Commit: commit, Labels: labelled, LabelsDigest: labelsDigest,

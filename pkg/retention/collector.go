@@ -74,7 +74,10 @@ func (c *dbCollector) Collect(ctx context.Context, p Policy, now time.Time) ([]C
 
 // catalogCollector collects catalogs from Postgres. Every catalog is a
 // candidate (there is no status filter as with jobs); expiry is decided per row
-// by the policy against created_at.
+// by the policy against created_at. A catalog that is its document's current
+// version (catalog_documents.current_catalog_id) is returned Protected: the
+// lineage foreign key forbids deleting it, so the engine skips it instead of
+// archiving it and failing the purge on every scan.
 type catalogCollector struct {
 	conn db.Connection
 }
@@ -82,6 +85,8 @@ type catalogCollector struct {
 // NewCatalogCollector returns a Collector that scans catalogs from the given
 // Postgres connection. Only catalogs whose retention has expired are returned;
 // their classifications, controls, and embeddings are purged as dependents.
+// The connection's role must be able to SELECT catalog_documents (app_user
+// can; see migration 002).
 func NewCatalogCollector(conn db.Connection) Collector {
 	return &catalogCollector{conn: conn}
 }
@@ -99,7 +104,11 @@ func (c *catalogCollector) Collect(ctx context.Context, p Policy, now time.Time)
 	// ErrTxClosed, which we discard); the guard also covers the error paths.
 	defer func() { _ = tx.Rollback() }()
 
-	rows, err := tx.Query(ctx, `SELECT catalog_id, tenant_id, created_at FROM catalogs`)
+	rows, err := tx.Query(ctx, `
+		SELECT c.catalog_id, c.tenant_id, c.created_at, d.current_catalog_id IS NOT NULL
+		FROM catalogs c
+		LEFT JOIN catalog_documents d
+		  ON d.tenant_id = c.tenant_id AND d.current_catalog_id = c.catalog_id`)
 	if err != nil {
 		return nil, fmt.Errorf("catalog collector: query: %w", err)
 	}
@@ -109,7 +118,8 @@ func (c *catalogCollector) Collect(ctx context.Context, p Policy, now time.Time)
 	for rows.Next() {
 		var catalogID, tenantID string
 		var createdAt time.Time
-		if err := rows.Scan(&catalogID, &tenantID, &createdAt); err != nil {
+		var current bool
+		if err := rows.Scan(&catalogID, &tenantID, &createdAt, &current); err != nil {
 			return nil, err
 		}
 		if !p.Expired(ClassCatalogs, tenantID, createdAt, now) {
@@ -121,6 +131,7 @@ func (c *catalogCollector) Collect(ctx context.Context, p Policy, now time.Time)
 			ID:        catalogID,
 			TenantID:  tenantID,
 			CreatedAt: createdAt,
+			Protected: current,
 		})
 	}
 	if err := rows.Err(); err != nil {

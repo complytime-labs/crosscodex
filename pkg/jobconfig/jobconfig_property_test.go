@@ -23,6 +23,8 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				targetName := rapid.String().Draw(t, "targetName")
 				version := rapid.String().Draw(t, "version")
 				noCache := rapid.Bool().Draw(t, "noCache")
+				display := rapid.String().Draw(t, "display")
+				supersedes := rapid.StringMatching(`[a-z0-9-]{0,24}`).Draw(t, "supersedes")
 
 				wantTarget := target
 				if wantTarget == "" {
@@ -33,9 +35,11 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				if snapshot {
 					// CreateJob snapshots both sides, the target under the
 					// resolved target ID.
-					cfg.SourceCatalog = &pb.CatalogSnapshot{CatalogId: source, Name: sourceName, Version: version}
+					cfg.SourceCatalog = &pb.CatalogSnapshot{CatalogId: source, Name: sourceName, Version: version,
+						VersionDisplay: display, SupersedesCatalogId: supersedes}
 					cfg.TargetCatalog = &pb.CatalogSnapshot{CatalogId: wantTarget, Name: targetName}
-					wantSourceLabel = jobconfig.Label{Name: sourceName, Version: version, Recorded: true}
+					wantSourceLabel = jobconfig.Label{Name: sourceName, Version: version, VersionDisplay: display,
+						SupersedesCatalogID: supersedes, Recorded: true}
 					wantTargetLabel = jobconfig.Label{Name: targetName, Recorded: true}
 					if wantTarget == source {
 						wantTargetLabel = wantSourceLabel

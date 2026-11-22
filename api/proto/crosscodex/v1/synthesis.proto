@@ -333,4 +333,12 @@ message CatalogSummary {
   // before snapshots: name and version are then the catalog's current ones,
   // which a re-import under another name changes.
   bool snapshot = 5;
+  // Set when the catalog is a version of a catalog document: the version as
+  // "slug @ label (date · hash6)", recorded or current as name is. Empty for
+  // a catalog outside any document.
+  string version_display = 6;
+  // The catalog this version superseded in its document, recorded or current
+  // as name is; empty for a document's first version and outside any
+  // document.
+  string supersedes_catalog_id = 7;
 }

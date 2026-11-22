@@ -76,13 +76,17 @@ type JobAnalysis struct {
 // Name and Version are the ones the job recorded at creation; otherwise (a
 // job created before snapshots) they are the catalog's current ones. Imported
 // is false when the tenant no longer has the catalog; Name and Version are
-// then empty unless Snapshot is true.
+// then empty unless Snapshot is true. VersionDisplay ("slug @ label (date ·
+// hash6)") and SupersedesCatalogID are set for a version of a catalog
+// document, recorded or current as Name is.
 type CatalogSummary struct {
-	ID       string
-	Name     string
-	Version  string
-	Imported bool
-	Snapshot bool
+	ID                  string
+	Name                string
+	Version             string
+	VersionDisplay      string
+	SupersedesCatalogID string
+	Imported            bool
+	Snapshot            bool
 }
 
 // Page is one page of mappings. Next is nil on the last page.

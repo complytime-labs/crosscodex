@@ -341,9 +341,11 @@ func newResultsExportCmd(state *cliState) *cobra.Command {
 		Long: `Export a job's control mappings to JSON or CSV format.
 
 JSON wraps the mappings with the job's source and target catalogs (ID, name,
-version) and direction under "analysis". Names and versions are the ones the
-job recorded when it was created ("snapshot": true); a job created before
-those records shows the catalogs' current ones ("snapshot": false). CSV
+version) and direction under "analysis". For a version of a catalog document,
+versionDisplay is "slug @ label (date · hash)" and supersedesCatalogId the
+version it superseded; both are empty otherwise. Names and versions are the
+ones the job recorded when it was created ("snapshot": true); a job created
+before those records shows the catalogs' current ones ("snapshot": false). CSV
 repeats them on every row in the job_source_catalog_*, job_target_catalog_*
 and job_bidirectional columns, with job_source_catalog_snapshot and
 job_target_catalog_snapshot saying which kind of label each side has: they

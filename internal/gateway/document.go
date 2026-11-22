@@ -44,6 +44,8 @@ func (s *Service) SubmitDocument(ctx context.Context, req *connect.Request[pb.Su
 		convertReq:    convertReq,
 		catalogFormat: req.Msg.GetCatalogFormat(),
 		catalogName:   req.Msg.GetCatalogName(),
+		documentSlug:  req.Msg.GetDocumentSlug(),
+		versionLabel:  req.Msg.GetVersionLabel(),
 		rpcName:       "SubmitDocument",
 	})
 }
@@ -52,6 +54,8 @@ type processDocumentInput struct {
 	convertReq    *pb.ConvertDocumentRequest
 	catalogFormat pb.CatalogFormat
 	catalogName   string
+	documentSlug  string
+	versionLabel  string
 	rpcName       string
 }
 
@@ -93,6 +97,8 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 		DocumentId:    docID,
 		Format:        input.catalogFormat,
 		CatalogName:   input.catalogName,
+		DocumentSlug:  input.documentSlug,
+		VersionLabel:  input.versionLabel,
 	}
 
 	parseResp, err := s.catalog.ParseCatalog(ctx, connect.NewRequest(parseReq))
@@ -118,6 +124,11 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 		"catalog_format": input.catalogFormat.String(),
 		"catalog_name":   input.catalogName,
 	}
+	if input.documentSlug != "" {
+		byProducts["document_slug"] = input.documentSlug
+		byProducts["version_label"] = parseResp.Msg.GetVersionLabel()
+		byProducts["version"] = parseResp.Msg.GetVersion()
+	}
 	if err := s.attestIngest(ctx, "gateway."+input.rpcName, docID, catalogID, input.convertReq.GetContent(), byProducts); err != nil {
 		// The cause can name storage buckets, hosts or key files (CWE-209):
 		// it is logged here, once, and the caller gets a reference to it.
@@ -141,6 +152,10 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 		DocumentId:       docID,
 		CatalogId:        catalogID,
 		TextlessControls: parseResp.Msg.GetTextlessControls(),
+
+		Version:             parseResp.Msg.GetVersion(),
+		SupersededCatalogId: parseResp.Msg.GetSupersededCatalogId(),
+		ChangeReport:        parseResp.Msg.GetChangeReport(),
 	}), nil
 }
 

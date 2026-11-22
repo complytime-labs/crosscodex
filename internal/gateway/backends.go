@@ -21,6 +21,7 @@ type CatalogBackend interface {
 	GetCatalog(ctx context.Context, req *connect.Request[pb.GetCatalogRequest]) (*connect.Response[pb.GetCatalogResponse], error)
 	SearchControls(ctx context.Context, req *connect.Request[pb.SearchControlsRequest]) (*connect.Response[pb.SearchControlsResponse], error)
 	GetControl(ctx context.Context, req *connect.Request[pb.GetControlRequest]) (*connect.Response[pb.GetControlResponse], error)
+	RetireCatalogVersion(ctx context.Context, req *connect.Request[pb.RetireCatalogVersionRequest]) (*connect.Response[pb.RetireCatalogVersionResponse], error)
 }
 
 type PipelineBackend interface {

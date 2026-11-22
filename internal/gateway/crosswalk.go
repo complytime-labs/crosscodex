@@ -16,6 +16,7 @@ import (
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
+	"github.com/complytime-labs/crosscodex/pkg/catalogversion"
 	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
 )
 
@@ -138,11 +139,14 @@ func (s *Service) crosswalkViaBackend(ctx context.Context, identity *authn.Ident
 func (s *Service) lookupCrosswalkCatalog(ctx context.Context, identity *authn.Identity, tc *pb.TenantContext, id string, mustExist bool) (*pb.CatalogSummary, error) {
 	resp, err := s.catalog.GetCatalog(ctx, connect.NewRequest(&pb.GetCatalogRequest{TenantContext: tc, CatalogId: id}))
 	if err == nil {
+		cat := resp.Msg.GetCatalog()
 		return &pb.CatalogSummary{
-			CatalogId: id,
-			Name:      resp.Msg.GetCatalog().GetName(),
-			Version:   resp.Msg.GetCatalog().GetVersion(),
-			Imported:  true,
+			CatalogId:           id,
+			Name:                cat.GetName(),
+			Version:             cat.GetVersion(),
+			VersionDisplay:      catalogversion.OfCatalog(cat),
+			SupersedesCatalogId: cat.GetSupersedesCatalogId(),
+			Imported:            true,
 		}, nil
 	}
 	if connect.CodeOf(err) != connect.CodeNotFound {
@@ -292,13 +296,15 @@ func crosswalkJobMatches(msg *pb.GetCrosswalkRequest, c jobconfig.Catalogs) bool
 	return false
 }
 
-// applyNewestSnapshot sets sum's name and version to the ones the most recent
-// contributing job recorded for the catalog, and marks it a snapshot. A
+// applyNewestSnapshot sets sum's name, version, version display and lineage
+// to the ones the most recent contributing job recorded for the catalog, and
+// marks it a snapshot. A
 // catalog no selected job recorded a label for keeps its current name.
 func applyNewestSnapshot(sum *pb.CatalogSummary, selected []crosswalkJob) {
 	for _, j := range slices.Backward(selected) {
 		if label := j.cats.LabelOf(sum.GetCatalogId()); label.Recorded {
 			sum.Name, sum.Version, sum.Snapshot = label.Name, label.Version, true
+			sum.VersionDisplay, sum.SupersedesCatalogId = label.VersionDisplay, label.SupersedesCatalogID
 			return
 		}
 	}

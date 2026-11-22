@@ -1,0 +1,36 @@
+{
+  "catalog": {
+    "uuid": "22222222-2222-4222-8222-222222222222",
+    "metadata": {
+      "title": "Practice catalog",
+      "last-modified": "2025-01-01T00:00:00Z",
+      "version": "1",
+      "oscal-version": "1.1.3"
+    },
+    "groups": [
+      {
+        "id": "PO",
+        "title": "Prepare the Organization",
+        "controls": [
+          {
+            "id": "PO.1",
+            "title": "Define requirements",
+            "params": [{"id": "PO.1_prm_1", "label": "review interval"}],
+            "props": [{"name": "label", "value": "PO.1"}],
+            "parts": [{"id": "PO.1_smt", "name": "statement", "prose": "Define requirements every {{ insert: param, PO.1_prm_1 }}."}],
+            "controls": [
+              {"id": "PO.1.1", "title": "Identify requirements"},
+              {"id": "PO.1.2", "title": "Document requirements", "props": [{"name": "label", "value": "PO.1.2"}]}
+            ]
+          },
+          {"id": "PO.2", "title": "Define roles"}
+        ]
+      },
+      {
+        "id": "PS",
+        "title": "Protect the Software",
+        "controls": [{"id": "PS.1", "title": "Protect code"}]
+      }
+    ]
+  }
+}

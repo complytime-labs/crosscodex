@@ -142,7 +142,8 @@ therefore performed under a dedicated, sanctioned credential:
     `vote_summaries`, `analysis_results`, `relationship_candidates`, and
     `requires_candidates` (job-scoped by column, no FK), then
     `DELETE FROM jobs WHERE job_id = $1`.
-  - `Catalogs`: `DELETE FROM <child> WHERE catalog_id = $1` for each of
+  - `Catalogs`: first the catalog is taken out of its document's version chain
+    (see below), then `DELETE FROM <child> WHERE catalog_id = $1` for each of
     `classifications`, `embeddings`, `controls`, `catalog_containers`, then
     `DELETE FROM catalogs WHERE catalog_id = $1`. Note `embeddings` is deleted here
     though it is absent from the archive doc (purge-only; see Archive-Verify).
@@ -155,10 +156,87 @@ therefore performed under a dedicated, sanctioned credential:
   `job_stages`, `vote_summaries` and `classifications` have immutability delete
   triggers, which accept `purge_user` through its `retention_purge` membership;
   the other tables have none, so the grant alone suffices.
+- **Version lineage.** The lineage foreign keys of migration `002`
+  (`catalogs.supersedes_catalog_id` and `catalog_documents.current_catalog_id`)
+  are `ON DELETE NO ACTION`, so a catalog that another version supersedes, or
+  that is a document's current version, cannot simply be deleted. Before the
+  deletes, the purge reads `catalog_documents`: a document's current version is
+  refused with `ErrCatalogIsCurrent` (the error names the document and says to
+  import a newer version first) and nothing is deleted. Otherwise the version
+  that supersedes the catalog is re-pointed to the catalog's own predecessor
+  (NULL for a first version), which keeps the chain intact. A scheduled scan
+  never reaches that refusal for a version that was current when it was
+  collected: `catalogCollector` joins `catalog_documents` (app_user's `SELECT`
+  grant from migration `002`) and returns an expired current version with
+  `Candidate.Protected` set, which `Engine.Scan` skips like a held candidate
+  (counted in `held`; no archive, purge, audit record or error). It purges an
+  expired superseded version. The purge refusal remains as defence in depth
+  for a version that became current after collection. Migration
+  `002` grants `purge_user` exactly what this needs: `SELECT` on
+  `catalog_documents` and `UPDATE (supersedes_catalog_id)` on `catalogs`.
+- `Purge` handles one candidate per transaction. `PurgeBatch` deletes several
+  relational candidates of one tenant in a single transaction, all or none; it
+  refuses an empty batch, mixed tenants and object candidates before it begins.
 - The daemon opens this connection from `config.Database.PurgeDSN`
   (`cmd/crosscodexd/bootstrap.go`). When `PurgeDSN` is unset the Purger falls
   back to the app pool so scans still run, but purges fail closed against the
   immutability triggers rather than silently deleting under the wrong role.
+
+## Retiring a Catalog Version
+
+`CatalogService.RetireCatalogVersion` (CLI: `crosscodex catalog retire
+<slug>@<label>...`) deletes chosen versions of a catalog document on request.
+Retention never retires anything implicitly. The CLI refuses without `--yes`
+and lists the versions it would retire; the RPC has no preview or confirmation
+of its own. There is no restore path: nothing in `pkg/retention` or the CLI
+reads an archived catalog back or re-imports it, so the archive copy
+(`db/catalogs/<id>.json` plus its controls and containers, see
+[Archive-Verify Guarantee](#archive-verify-guarantee)) is the only copy and
+recovery is manual. `internal/catalog/retire.go`
+implements it on the retention engine's own parts:
+
+1. **Resolve every label first.** The labels are looked up among the
+   document's versions. An unknown document or label is `NotFound`, and a
+   label that two versions share is refused. Nothing has been changed at this
+   point.
+2. **Check every protection for every version.** A version is protected, and
+   the whole request is refused with `ErrVersionProtected`
+   (`FailedPrecondition`), when any of these holds:
+   - it is the document's current version (`ErrVersionIsCurrent`, which wraps
+     `ErrVersionProtected`);
+   - an active hold covers it as a `ClassCatalogs` candidate (`Hold.Covers`,
+     the check `HoldChecker` applies);
+   - an active hold names a job (`HoldScope.JobID`) whose stored config
+     references it (`jobconfig.ExtractCatalogs`);
+   - a job whose stored config references it is not finished: its
+     `jobs.status` is not `completed`, `failed` or `cancelled` (an unknown
+     status counts as unfinished). The message says to wait for the job or
+     cancel it with `crosscodex run cancel`;
+   - a job whose stored config references it has attestation objects under
+     `attestation/<job_id>/`. The catalog's own ingest attestation
+     (`attestation/ingest/...`) does not count: it records the import, not a
+     result that depends on the version;
+   - a job's stored config is NULL or cannot be read, since it might
+     reference the version.
+
+   The error lists every blocker it found, with what to do about each. It
+   names only the caller's tenant's holds, jobs and documents.
+3. **Archive, then purge.** Each version is archived with the `Archiver` and
+   verified, then all of them are deleted with one `PurgeBatch` call: one
+   `purge_user` transaction that re-points the lineage and deletes the
+   aggregates. A failed archive deletes nothing. Each version gets an `archive`
+   and a `purge` audit record (actor `catalog-retire`).
+
+Retire leaves graph `Control` and `Container` nodes in place. The graph is a
+materialized view of the relational tables (see AGENTS.md), and the retention
+purge does not touch it either.
+
+Retire needs the `purge_user` connection and an archive backend, so only the
+`all` role offers it, and only when `database.purge_dsn` is set. Elsewhere,
+for example on the standalone `gateway` role, it fails closed with
+`FailedPrecondition` and says so. Cost: one read of the document's versions,
+one read of the tenant's job configs, one object listing per job that
+references a version, then the archive and the purge. No LLM calls are made.
 
 ## Tenant Isolation Model
 

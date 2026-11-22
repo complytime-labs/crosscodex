@@ -87,10 +87,16 @@ func startTestDaemon() (*cliState, func()) {
 }
 
 func importCatalog(ctx context.Context, client crosscodexv1connect.GatewayServiceClient, data []byte, format pb.CatalogFormat, name string) (*pb.SubmitDocumentResponse, error) {
+	return importCatalogUnder(ctx, client, data, format, name, "")
+}
+
+// importCatalogUnder imports data as a version of the document named by slug;
+// an empty slug imports it without a document.
+func importCatalogUnder(ctx context.Context, client crosscodexv1connect.GatewayServiceClient, data []byte, format pb.CatalogFormat, name, slug string) (*pb.SubmitDocumentResponse, error) {
 	stream := client.StreamDocument(ctx)
 	sendErr := stream.Send(&pb.StreamDocumentChunk{
 		Payload: &pb.StreamDocumentChunk_Metadata{
-			Metadata: &pb.StreamDocumentMetadata{CatalogFormat: format, CatalogName: name},
+			Metadata: &pb.StreamDocumentMetadata{CatalogFormat: format, CatalogName: name, DocumentSlug: slug},
 		},
 	})
 	if sendErr == nil && len(data) > 0 {

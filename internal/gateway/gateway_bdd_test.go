@@ -76,6 +76,7 @@ type mockCatalog struct {
 	getCatalogFn     func(context.Context, *connect.Request[pb.GetCatalogRequest]) (*connect.Response[pb.GetCatalogResponse], error)
 	searchControlsFn func(context.Context, *connect.Request[pb.SearchControlsRequest]) (*connect.Response[pb.SearchControlsResponse], error)
 	getControlFn     func(context.Context, *connect.Request[pb.GetControlRequest]) (*connect.Response[pb.GetControlResponse], error)
+	retireFn         func(context.Context, *connect.Request[pb.RetireCatalogVersionRequest]) (*connect.Response[pb.RetireCatalogVersionResponse], error)
 }
 
 func (m *mockCatalog) ParseCatalog(ctx context.Context, req *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
@@ -99,6 +100,10 @@ func (m *mockCatalog) SearchControls(ctx context.Context, req *connect.Request[p
 
 func (m *mockCatalog) GetControl(ctx context.Context, req *connect.Request[pb.GetControlRequest]) (*connect.Response[pb.GetControlResponse], error) {
 	return orDefault(m.getControlFn, ctx, req)
+}
+
+func (m *mockCatalog) RetireCatalogVersion(ctx context.Context, req *connect.Request[pb.RetireCatalogVersionRequest]) (*connect.Response[pb.RetireCatalogVersionResponse], error) {
+	return orDefault(m.retireFn, ctx, req)
 }
 
 type mockPipeline struct {
@@ -373,6 +378,61 @@ var _ = Describe("Catalog handlers", func() {
 		_, err := svc.ListCatalogs(ctx, connect.NewRequest(&pb.ListCatalogsRequest{}))
 		Expect(err).To(HaveOccurred())
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
+	})
+})
+
+var _ = Describe("RetireCatalogVersion handler", func() {
+	retireReq := func() *connect.Request[pb.RetireCatalogVersionRequest] {
+		return connect.NewRequest(&pb.RetireCatalogVersionRequest{
+			TenantContext: &pb.TenantContext{TenantId: "spoofed-tenant"},
+			DocumentSlug:  "nist", VersionLabel: []string{"Rev 4"},
+		})
+	}
+
+	It("forwards an admin's request with the authenticated tenant and returns the retired IDs", func() {
+		var captured *pb.RetireCatalogVersionRequest
+		svc := newTestService(gateway.WithCatalogBackend(&mockCatalog{
+			retireFn: func(_ context.Context, req *connect.Request[pb.RetireCatalogVersionRequest]) (*connect.Response[pb.RetireCatalogVersionResponse], error) {
+				captured = req.Msg
+				return connect.NewResponse(&pb.RetireCatalogVersionResponse{RetiredCatalogIds: []string{"cat-2"}}), nil
+			},
+		}))
+		resp, err := svc.RetireCatalogVersion(adminCtx(), retireReq())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Msg.GetRetiredCatalogIds()).To(Equal([]string{"cat-2"}))
+		Expect(captured.GetTenantContext().GetTenantId()).To(Equal("tenant-a"))
+		Expect(captured.GetDocumentSlug()).To(Equal("nist"))
+		Expect(captured.GetVersionLabel()).To(Equal([]string{"Rev 4"}))
+	})
+
+	DescribeTable("refuses a caller who may not delete catalog data, without reaching the backend",
+		func(ctx context.Context, code connect.Code, wantMsg string) {
+			called := false
+			svc := newTestService(gateway.WithCatalogBackend(&mockCatalog{
+				retireFn: func(context.Context, *connect.Request[pb.RetireCatalogVersionRequest]) (*connect.Response[pb.RetireCatalogVersionResponse], error) {
+					called = true
+					return connect.NewResponse(&pb.RetireCatalogVersionResponse{}), nil
+				},
+			}))
+			_, err := svc.RetireCatalogVersion(ctx, retireReq())
+			Expect(connect.CodeOf(err)).To(Equal(code))
+			Expect(err.Error()).To(ContainSubstring(wantMsg))
+			Expect(called).To(BeFalse())
+		},
+		Entry("an unauthenticated caller", context.Background(), connect.CodeUnauthenticated, "not authenticated"),
+		Entry("a non-admin user", userCtx("user-1"), connect.CodePermissionDenied, "requires the admin role"),
+	)
+
+	It("passes a protected-version refusal through verbatim", func() {
+		const msg = `catalog version is protected: cannot retire from nist: legal hold "litigation" covers nist@"Rev 4"`
+		svc := newTestService(gateway.WithCatalogBackend(&mockCatalog{
+			retireFn: func(context.Context, *connect.Request[pb.RetireCatalogVersionRequest]) (*connect.Response[pb.RetireCatalogVersionResponse], error) {
+				return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New(msg))
+			},
+		}))
+		_, err := svc.RetireCatalogVersion(adminCtx(), retireReq())
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+		Expect(err.Error()).To(ContainSubstring(msg))
 	})
 })
 
@@ -1239,5 +1299,77 @@ var _ = Describe("Required request arguments", func() {
 			_, err := svc.SubmitVote(ctx, connect.NewRequest(&pb.SubmitVoteRequest{MappingId: ""}))
 			return err
 		}),
+	)
+})
+
+var _ = Describe("Document version arguments through the gateway", func() {
+	type importFn func(svc *gateway.Service, slug, label string) (*pb.SubmitDocumentResponse, error)
+	submit := func(svc *gateway.Service, slug, label string) (*pb.SubmitDocumentResponse, error) {
+		resp, err := svc.SubmitDocument(userCtx("user-a"), connect.NewRequest(&pb.SubmitDocumentRequest{
+			Source:       &pb.SubmitDocumentRequest_Content{Content: []byte("doc")},
+			DocumentSlug: slug,
+			VersionLabel: label,
+		}))
+		if err != nil {
+			return nil, err
+		}
+		return resp.Msg, nil
+	}
+	stream := func(svc *gateway.Service, slug, label string) (*pb.SubmitDocumentResponse, error) {
+		resp, err := gateway.ExportHandleStreamedDocument(svc, userCtx("user-a"), time.Now(),
+			&pb.StreamDocumentMetadata{DocumentSlug: slug, VersionLabel: label}, []byte("doc"))
+		if err != nil {
+			return nil, err
+		}
+		return resp.Msg, nil
+	}
+
+	DescribeTable("passes the slug and label to the catalog and returns the version results",
+		func(run importFn) {
+			var got *pb.ParseCatalogRequest
+			report := &pb.ChangeReport{Added: []string{"ac-3"}, Removed: []string{"ac-2"}, Changed: []string{"ac-1"}, IdsUnstable: true}
+			cat := &mockCatalog{
+				parseFn: func(_ context.Context, req *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
+					got = req.Msg
+					return connect.NewResponse(&pb.ParseCatalogResponse{
+						CatalogId: "cat-2", Version: "nist-800-53 @ rev5 (2026-01-02 · abc123)",
+						SupersededCatalogId: "cat-1", ChangeReport: report,
+					}), nil
+				},
+			}
+			svc := newTestService(gateway.WithCatalogBackend(cat))
+
+			resp, err := run(svc, "nist-800-53", "rev5")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.GetDocumentSlug()).To(Equal("nist-800-53"))
+			Expect(got.GetVersionLabel()).To(Equal("rev5"))
+			Expect(resp.GetVersion()).To(Equal("nist-800-53 @ rev5 (2026-01-02 · abc123)"))
+			Expect(resp.GetSupersededCatalogId()).To(Equal("cat-1"))
+			Expect(resp.GetChangeReport().GetAdded()).To(ConsistOf("ac-3"))
+			Expect(resp.GetChangeReport().GetRemoved()).To(ConsistOf("ac-2"))
+			Expect(resp.GetChangeReport().GetChanged()).To(ConsistOf("ac-1"))
+			Expect(resp.GetChangeReport().GetIdsUnstable()).To(BeTrue())
+		},
+		Entry("SubmitDocument", importFn(submit)),
+		Entry("StreamDocument", importFn(stream)),
+	)
+
+	DescribeTable("returns the backend's actionable refusal to the caller with its message intact",
+		func(run importFn, code connect.Code, msg string) {
+			cat := &mockCatalog{
+				parseFn: func(context.Context, *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
+					return nil, connect.NewError(code, errors.New(msg))
+				},
+			}
+			svc := newTestService(gateway.WithCatalogBackend(cat))
+
+			_, err := run(svc, "nist-800-53", "")
+			Expect(connect.CodeOf(err)).To(Equal(code))
+			Expect(err.Error()).To(ContainSubstring(msg))
+		},
+		Entry("SubmitDocument, invalid slug", importFn(submit), connect.CodeInvalidArgument, `invalid document slug "NIST": use a-z0-9`),
+		Entry("StreamDocument, invalid slug", importFn(stream), connect.CodeInvalidArgument, `invalid document slug "NIST": use a-z0-9`),
+		Entry("SubmitDocument, content in another document", importFn(submit), connect.CodeFailedPrecondition, `already a version of document "other-doc"`),
+		Entry("StreamDocument, content in another document", importFn(stream), connect.CodeFailedPrecondition, `already a version of document "other-doc"`),
 	)
 })

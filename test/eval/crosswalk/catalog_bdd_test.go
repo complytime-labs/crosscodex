@@ -15,6 +15,8 @@ import (
 const (
 	syntheticCatalog   = "testdata/synthetic_catalog.json"
 	statementCatalog   = "testdata/statement_catalog.json"
+	ssdfStyleCatalog   = "testdata/ssdf_style_catalog.json"
+	siblingsCatalog    = "testdata/group_siblings_catalog.json"
 	sourceItemsCatalog = "testdata/source_items.json"
 )
 
@@ -106,7 +108,7 @@ var _ = Describe("TargetIndex", func() {
 
 	DescribeTable("Base returns the outermost ancestor control",
 		func(id, want string) {
-			Expect(x.Base(id)).To(Equal(want))
+			Expect(x.Base(id, crosswalk.BaseRoot)).To(Equal(want))
 		},
 		Entry("grandchild", "ab-2.3.1", "ab-2"),
 		Entry("child", "ab-2.3", "ab-2"),
@@ -134,7 +136,7 @@ var _ = Describe("TargetIndex statement items", func() {
 	DescribeTable("knows the item IDs the importer takes from the parts, rolling each up to its outermost control",
 		func(id, wantBase string) {
 			Expect(x.Has(id)).To(BeTrue())
-			Expect(x.Base(id)).To(Equal(wantBase))
+			Expect(x.Base(id, crosswalk.BaseRoot)).To(Equal(wantBase))
 		},
 		Entry("item under a control", "sa-1_smt.a", "sa-1"),
 		Entry("sub-item under an item", "sa-1_smt.b.1", "sa-1"),
@@ -146,10 +148,18 @@ var _ = Describe("TargetIndex statement items", func() {
 		Entry("a control without a statement", "pl-9", "pl-9"),
 	)
 
+	DescribeTable("rolls an item up to the parent of its control at the parent level",
+		func(id, want string) {
+			Expect(x.Base(id, crosswalk.BaseParent)).To(Equal(want))
+		},
+		Entry("item under an enhancement", "sa-1.2_smt.a", "sa-1"),
+		Entry("item under a top-level control", "sa-1_smt.b.1", "sa-1"),
+	)
+
 	DescribeTable("does not know an ID that is neither a control nor an item",
 		func(id string) {
 			Expect(x.Has(id)).To(BeFalse())
-			Expect(x.Base(id)).To(BeEmpty())
+			Expect(x.Base(id, crosswalk.BaseRoot)).To(BeEmpty())
 		},
 		Entry("a part id with its _smt suffix stripped", "sa-1.a"),
 		Entry("an item of no control", "sa-1.z"),
@@ -180,5 +190,30 @@ var _ = Describe("TargetIndex.Owner", func() {
 		Entry("an item of an enhancement", "sa-1.2_smt.a", "sa-1.2"),
 		Entry("an item with a part ID outside the pattern", "second", "np-1"),
 		Entry("an unknown ID", "nope", ""),
+	)
+})
+
+var _ = Describe("TargetIndex.Base levels", func() {
+	var x *crosswalk.TargetIndex
+
+	BeforeEach(func() {
+		x = crosswalk.NewTargetIndex(mustCatalog(siblingsCatalog))
+	})
+
+	DescribeTable("returns the ancestor the level names",
+		func(id string, level crosswalk.BaseLevel, want string) {
+			Expect(x.Base(id, level)).To(Equal(want))
+		},
+		Entry("parent of a grandchild is its immediate parent", "g-1.1.1", crosswalk.BaseParent, "g-1.1"),
+		Entry("parent of a child is the outer control", "g-1.1", crosswalk.BaseParent, "g-1"),
+		Entry("parent of a child whose sibling has no children", "g-1.2", crosswalk.BaseParent, "g-1"),
+		Entry("parent of a top-level control is itself", "g-1", crosswalk.BaseParent, "g-1"),
+		Entry("parent of a top-level sibling is itself", "g-2", crosswalk.BaseParent, "g-2"),
+		Entry("root of a grandchild is the outermost control", "g-1.1.1", crosswalk.BaseRoot, "g-1"),
+		Entry("root of a top-level sibling is itself", "g-2", crosswalk.BaseRoot, "g-2"),
+		Entry("the zero level means root", "g-1.1.1", crosswalk.BaseLevel(""), "g-1"),
+		Entry("none returns nothing for a grandchild", "g-1.1.1", crosswalk.BaseNone, ""),
+		Entry("none returns nothing for a top-level control", "g-2", crosswalk.BaseNone, ""),
+		Entry("an unknown control has no base at any level", "nope", crosswalk.BaseParent, ""),
 	)
 })

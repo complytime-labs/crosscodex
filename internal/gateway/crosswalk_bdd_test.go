@@ -237,6 +237,22 @@ var _ = Describe("GetCrosswalk", func() {
 			Expect(b.GetSnapshot()).To(BeTrue())
 		})
 
+		It("reports a catalog document version and its lineage, current or as the newest job recorded it", func() {
+			known["cat-a"].DocumentSlug, known["cat-a"].VersionLabel = "csf", "Rev 2"
+			known["cat-a"].SupersedesCatalogId = "cat-a-old"
+			known["cat-a"].Audit = &pb.AuditMetadata{CreatedAt: timestamppb.New(time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))}
+			known["cat-a"].Provenance = &pb.ProvenanceMetadata{LineageMetadata: map[string]string{"content_hash": "0123456789"}}
+			jobs[1].Config.SourceCatalog = &pb.CatalogSnapshot{CatalogId: "cat-b", Name: "B", Version: "v1",
+				VersionDisplay: "sp @ Rev 5 (2026-01-01 · abcdef)", SupersedesCatalogId: "cat-b-old"}
+			_, err := call(newSvc(), pair("cat-a", "cat-b"))
+			Expect(err).NotTo(HaveOccurred())
+			a, b := backend.got.GetCatalogs()[0], backend.got.GetCatalogs()[1]
+			Expect(a.GetVersionDisplay()).To(Equal("csf @ Rev 2 (2026-01-02 · 012345)"))
+			Expect(a.GetSupersedesCatalogId()).To(Equal("cat-a-old"))
+			Expect(b.GetVersionDisplay()).To(Equal("sp @ Rev 5 (2026-01-01 · abcdef)"))
+			Expect(b.GetSupersedesCatalogId()).To(Equal("cat-b-old"))
+		})
+
 		It("ignores a snapshot of another catalog", func() {
 			jobs[0].Config.SourceCatalog = &pb.CatalogSnapshot{CatalogId: "cat-zzz", Name: "other", Version: "v1"}
 			_, err := call(newSvc(), pair("cat-a", "cat-b"))

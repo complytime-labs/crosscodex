@@ -242,8 +242,9 @@ message StreamDrift {
 
 message GetRetentionStatsResponse {
   // Per-class counts a dry-run scan would find right now: scanned = expired
-  // and eligible, held = blocked by an active legal hold. archived/purged
-  // are always 0 for a dry run.
+  // and eligible, held = blocked by an active legal hold or kept because the
+  // catalog is its document's current version. archived/purged are always 0
+  // for a dry run.
   RetentionReport eligible = 1;
   // Number of legal holds currently active for the tenant.
   int64 active_holds = 2;

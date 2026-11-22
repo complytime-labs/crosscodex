@@ -162,6 +162,14 @@ var _ = Describe("Backend errors at the gateway boundary", func() {
 			})).GetCatalog(ctx, connect.NewRequest(&pb.GetCatalogRequest{CatalogId: "cat-1"}))
 			return e
 		})),
+		Entry("RetireCatalogVersion", "RetireCatalogVersion", adminCtx, call(func(ctx context.Context, err error) error {
+			_, e := newService(gateway.WithCatalogBackend(&mockCatalog{
+				retireFn: func(context.Context, *connect.Request[pb.RetireCatalogVersionRequest]) (*connect.Response[pb.RetireCatalogVersionResponse], error) {
+					return nil, err
+				},
+			})).RetireCatalogVersion(ctx, connect.NewRequest(&pb.RetireCatalogVersionRequest{DocumentSlug: "nist", VersionLabel: []string{"Rev 4"}}))
+			return e
+		})),
 		Entry("SearchControls", "SearchControls", func() context.Context { return userCtx("user-a") }, call(func(ctx context.Context, err error) error {
 			_, e := newService(gateway.WithCatalogBackend(&mockCatalog{
 				searchControlsFn: func(context.Context, *connect.Request[pb.SearchControlsRequest]) (*connect.Response[pb.SearchControlsResponse], error) {

@@ -13,14 +13,16 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/pkg/catalogversion"
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
 
 // CatalogNameReader reads an imported catalog's current label: its name (the
-// uploader's catalog_name, or the OSCAL metadata title when none was given)
-// and its OSCAL metadata.version. CreateJob records it in the job's config
+// uploader's catalog_name, or the OSCAL metadata title when none was given),
+// its OSCAL metadata.version and, for a version of a catalog document, its
+// "slug @ label (date · hash6)" display and the version it superseded. CreateJob records it in the job's config
 // as the job's snapshot; the pair analyzers show the name as each control's
 // framework.
 type CatalogNameReader interface {
@@ -111,8 +113,13 @@ func (r *pgCatalogNameReader) catalogSnapshot(ctx context.Context, span trace.Sp
 	defer func() { _ = tx.Rollback() }()
 
 	snap := &pb.CatalogSnapshot{CatalogId: catalogID}
-	err = tx.QueryRow(ctx, `SELECT name, version FROM catalogs WHERE tenant_id = $1 AND catalog_id = $2`, tenantID, catalogID).
-		Scan(&snap.Name, &snap.Version)
+	var slug, label, contentHash, supersedes string
+	var importedAt time.Time
+	err = tx.QueryRow(ctx, `
+		SELECT name, version, COALESCE(document_slug, ''), COALESCE(version_label, ''), created_at,
+		       COALESCE(content_hash, ''), COALESCE(supersedes_catalog_id, '')
+		FROM catalogs WHERE tenant_id = $1 AND catalog_id = $2`, tenantID, catalogID).
+		Scan(&snap.Name, &snap.Version, &slug, &label, &importedAt, &contentHash, &supersedes)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return nil, fmt.Errorf("pgCatalogNameReader.CatalogSnapshot: catalog %s: %w", catalogID, ErrCatalogNotFound)
@@ -121,6 +128,10 @@ func (r *pgCatalogNameReader) catalogSnapshot(ctx context.Context, span trace.Sp
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("pgCatalogNameReader.CatalogSnapshot: commit failed: %w", err)
+	}
+	if slug != "" {
+		snap.VersionDisplay = catalogversion.Format(slug, label, importedAt, contentHash)
+		snap.SupersedesCatalogId = supersedes
 	}
 	return snap, nil
 }

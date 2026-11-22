@@ -49,6 +49,28 @@ var _ = Describe("LoadProfile", func() {
 		Expect(p.References.OSCALLinks.Separator).To(Equal(","))
 	})
 
+	DescribeTable("reads the declared base level and defaults it to root",
+		func(body string, want crosswalk.BaseLevel) {
+			p, err := crosswalk.LoadProfile(writeProfile(profileYAML(body + validLinks)))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(p.BaseLevel).To(Equal(want))
+		},
+		Entry("absent", "", crosswalk.BaseRoot),
+		Entry("parent", "base_level: parent\n", crosswalk.BaseParent),
+		Entry("root", "base_level: root\n", crosswalk.BaseRoot),
+		Entry("none", "base_level: none\n", crosswalk.BaseNone),
+	)
+
+	DescribeTable("rejects an invalid base level, listing the three values",
+		func(value string) {
+			_, err := crosswalk.LoadProfile(writeProfile(profileYAML("base_level: " + value + "\n" + validLinks)))
+			Expect(err).To(MatchError(And(ContainSubstring("base_level"), ContainSubstring("parent"), ContainSubstring("root"), ContainSubstring("none"))))
+		},
+		Entry("an unknown word", "grandparent"),
+		Entry("a wrong case", "Root"),
+		Entry("a quoted blank", "' '"),
+	)
+
 	DescribeTable("rejects an invalid profile, naming the field",
 		func(content, field string) {
 			_, err := crosswalk.LoadProfile(writeProfile(content))

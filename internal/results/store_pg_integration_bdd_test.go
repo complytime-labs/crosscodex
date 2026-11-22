@@ -573,6 +573,31 @@ var _ = Describe("PGStore", func() {
 			}))
 		})
 
+		It("shows the document version the job recorded, and a current version for a job that recorded none", func() {
+			src := env.seedCatalog(env.tenantA, "CSF 2.0", "2.0")
+			tgt := env.seedCatalog(env.tenantA, "NIST SP 800-53", "5.1.1")
+			Expect(env.su.Exec(context.Background(), `
+				UPDATE catalogs SET document_slug = 'sp800-53', version_label = 'Rev 5', supersedes_catalog_id = $3,
+				       link_method = 'declared', content_hash = '0123456789abcdef', created_at = '2026-01-02T12:00:00Z'
+				WHERE catalog_id = $1 AND tenant_id = $2`, tgt, env.tenantA, src)).To(Succeed())
+			job := env.seedJobWithConfig(env.tenantA, "completed", fmt.Sprintf(
+				`{"catalog_id":%q,"target_catalog_id":%q,"source_catalog":{"catalog_id":%q,"name":"CSF 2.0","version":"2.0"},`+
+					`"target_catalog":{"catalog_id":%q,"name":"NIST SP 800-53","version":"5.1.1",`+
+					`"version_display":"sp800-53 @ Rev 5 (2026-01-01 · 012345)","supersedes_catalog_id":"cat-recorded"}}`, src, tgt, src, tgt))
+
+			page, err := env.store.ListMappings(env.ctxA, filter(env.tenantA, job, results.StageSynthesized))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(page.Analysis.Source).To(Equal(results.CatalogSummary{ID: src, Name: "CSF 2.0", Version: "2.0", Imported: true, Snapshot: true}))
+			Expect(page.Analysis.Target).To(Equal(results.CatalogSummary{ID: tgt, Name: "NIST SP 800-53", Version: "5.1.1",
+				VersionDisplay: "sp800-53 @ Rev 5 (2026-01-01 · 012345)", SupersedesCatalogID: "cat-recorded", Imported: true, Snapshot: true}))
+
+			old := env.seedJobWithConfig(env.tenantA, "completed", fmt.Sprintf(`{"catalog_id":%q,"target_catalog_id":%q}`, src, tgt))
+			page, err = env.store.ListMappings(env.ctxA, filter(env.tenantA, old, results.StageSynthesized))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(page.Analysis.Target).To(Equal(results.CatalogSummary{ID: tgt, Name: "NIST SP 800-53", Version: "5.1.1",
+				VersionDisplay: "sp800-53 @ Rev 5 (2026-01-02 · 012345)", SupersedesCatalogID: src, Imported: true}))
+		})
+
 		It("still names a catalog deleted since the job by the label the job recorded", func() {
 			src := env.seedCatalog(env.tenantA, "CSF 2.0", "2.0")
 			job := env.seedJobWithConfig(env.tenantA, "completed", fmt.Sprintf(

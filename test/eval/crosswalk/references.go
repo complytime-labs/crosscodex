@@ -43,6 +43,12 @@ type References struct {
 	ResolvedRaw []RawReference
 	Unresolved  []RawReference
 	Ambiguous   []RawReference
+	// SkippedLinks counts links of the profile's rel whose href is not a
+	// "#fragment" (for example an absolute URL). The profile reader cannot
+	// resolve them to a back-matter resource, so they are reported, not read.
+	// ResolveReferences cannot see the catalog; the caller sets this from
+	// CountSkippedLinks.
+	SkippedLinks int
 }
 
 // SplitLinkText splits text on sep, trims each token and drops empty ones.
@@ -126,6 +132,31 @@ func extractLinks(p *Profile, byID map[string]oscalTypes.Control, src *Catalog) 
 		}
 	}
 	return out, nil
+}
+
+// CountSkippedLinks counts the profile controls' links of the profile's rel
+// whose href is not a "#fragment", which ExtractReferences cannot follow to a
+// back-matter resource. A CSV profile reads no links, so it skips none.
+func CountSkippedLinks(p *Profile, src *Catalog) int {
+	if p.References.OSCALLinks == nil {
+		return 0
+	}
+	inScope := map[string]bool{}
+	for _, id := range p.Controls {
+		inScope[id] = true
+	}
+	n := 0
+	for _, ctrl := range src.Controls() {
+		if !inScope[ctrl.ID] || ctrl.Links == nil {
+			continue
+		}
+		for _, link := range *ctrl.Links {
+			if link.Rel == p.References.OSCALLinks.Rel && !strings.HasPrefix(link.Href, "#") {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // selects reports whether res satisfies every selector that is set.

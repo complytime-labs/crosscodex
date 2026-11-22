@@ -16,6 +16,7 @@ import (
 	"connectrpc.com/connect"
 	crosscodexv1 "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
+	"github.com/complytime-labs/crosscodex/pkg/catalogversion"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
@@ -47,6 +48,10 @@ type Service struct {
 	textlessControls  metric.Int64Counter
 	parseDuration     metric.Int64Histogram
 	searchDuration    metric.Int64Histogram
+	retention         Retention
+	retireOps         metric.Int64Counter
+	retiredVersions   metric.Int64Counter
+	retireDuration    metric.Int64Histogram
 }
 
 // ServiceOption configures a Service.
@@ -54,7 +59,7 @@ type ServiceOption func(*Service)
 
 // NewService creates a new CatalogService with the given options.
 // Required: WithParser, WithStore, WithStorage.
-// Optional: WithAssembler, WithVectorDB, WithEmbedder, WithBus, WithTracer, WithMeter, WithLogger.
+// Optional: WithAssembler, WithVectorDB, WithEmbedder, WithBus, WithRetention, WithTracer, WithMeter, WithLogger.
 func NewService(opts ...ServiceOption) *Service {
 	s := &Service{
 		logger: slog.Default(),
@@ -89,6 +94,21 @@ func NewService(opts ...ServiceOption) *Service {
 		s.searchDuration, err = s.meter.Int64Histogram("catalog.search.duration_ms")
 		if err != nil {
 			s.logger.Warn("failed to create searchDuration histogram", "error", err)
+		}
+
+		s.retireOps, err = s.meter.Int64Counter("crosscodex.catalog.retire.total")
+		if err != nil {
+			s.logger.Warn("failed to create retireOps counter", "error", err)
+		}
+
+		s.retiredVersions, err = s.meter.Int64Counter("crosscodex.catalog.retire.versions")
+		if err != nil {
+			s.logger.Warn("failed to create retiredVersions counter", "error", err)
+		}
+
+		s.retireDuration, err = s.meter.Int64Histogram("crosscodex.catalog.retire.duration_ms")
+		if err != nil {
+			s.logger.Warn("failed to create retireDuration histogram", "error", err)
 		}
 	}
 
@@ -216,6 +236,29 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid tenant_id: %v", err))
 	}
 
+	// Version arguments are validated before any storage read: they reach
+	// listings, reports and prompts.
+	slug := req.Msg.GetDocumentSlug()
+	explicitLabel := req.Msg.GetVersionLabel()
+	switch {
+	case slug != "":
+		if err := ValidateDocumentSlug(slug); err != nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		if explicitLabel != "" {
+			if err := ValidateVersionLabel(explicitLabel); err != nil {
+				return nil, connect.NewError(connect.CodeInvalidArgument, err)
+			}
+		}
+		if s.store == nil {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New(
+				"store not configured: a document version cannot be recorded. Configure the catalog store, or import without document_slug"))
+		}
+	case explicitLabel != "":
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New(
+			"version_label requires document_slug: a label names a version of a document. Set document_slug, or omit version_label"))
+	}
+
 	// Get document from storage
 	if s.storage == nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("storage provider not configured"))
@@ -317,6 +360,13 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		catalogVersion = doc.metadataString(OSCALVersionKey)
 	}
 
+	var (
+		version      string
+		versionLabel string
+		supersededID string
+		changeReport *crosscodexv1.ChangeReport
+	)
+
 	// Persist catalog metadata if store configured
 	if s.store != nil {
 		catalogRecord := CatalogRecord{
@@ -369,8 +419,17 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 			}
 		}
 
-		if err := s.store.UpsertCatalogWithTree(ctx, catalogRecord, containerRecords, controlRecords); err != nil {
-			return nil, s.internalError(ctx, "ParseCatalog", fmt.Errorf("store catalog: %w", err))
+		if slug == "" {
+			if err := s.store.UpsertCatalogWithTree(ctx, catalogRecord, containerRecords, controlRecords); err != nil {
+				return nil, s.internalError(ctx, "ParseCatalog", fmt.Errorf("store catalog: %w", err))
+			}
+		} else {
+			catalogRecord.DocumentSlug = slug
+			var verr *connect.Error
+			version, versionLabel, supersededID, changeReport, verr = s.importVersion(ctx, catalogRecord, containerRecords, controlRecords, explicitLabel, doc.metadataString(OSCALVersionKey))
+			if verr != nil {
+				return nil, verr
+			}
 		}
 
 		// The graph role treats an empty projection as an error, so a catalog
@@ -452,10 +511,68 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 	}
 
 	return connect.NewResponse(&crosscodexv1.ParseCatalogResponse{
-		CatalogId:        catalogID,
-		Status:           crosscodexv1.JobStatus_JOB_STATUS_COMPLETED,
-		TextlessControls: textless,
+		CatalogId:           catalogID,
+		Status:              crosscodexv1.JobStatus_JOB_STATUS_COMPLETED,
+		TextlessControls:    textless,
+		Version:             version,
+		VersionLabel:        versionLabel,
+		SupersededCatalogId: supersededID,
+		ChangeReport:        changeReport,
 	}), nil
+}
+
+// importVersion stores catalog as a version of catalog.DocumentSlug and
+// returns the version's display string, its stored label, the catalog it
+// superseded and the control differences against it. catalog.VersionLabel is resolved here:
+// explicitLabel (already validated), else oscalVersion when it is a valid
+// label, else "<date> · <hash6>". An OSCAL version comes from the untrusted
+// document, so an invalid one falls back rather than blocking the import.
+//
+// The superseded catalog is read back from the stored row after the upsert,
+// not from a pre-read of the document's current version, so a concurrent import
+// cannot make it stale. Content that already carried this slug before the call
+// is an identical re-import: it keeps its place and reports nothing superseded.
+func (s *Service) importVersion(ctx context.Context, catalog CatalogRecord, containers []ContainerRecord, controls []ControlRecord, explicitLabel, oscalVersion string) (string, string, string, *crosscodexv1.ChangeReport, *connect.Error) {
+	existing, err := s.store.GetCatalog(ctx, catalog.CatalogID)
+	if err != nil && !errors.Is(err, ErrCatalogNotFound) {
+		return "", "", "", nil, s.internalError(ctx, "ParseCatalog", fmt.Errorf("read catalog before versioning: %w", err))
+	}
+	alreadyInDocument := existing != nil && existing.DocumentSlug == catalog.DocumentSlug
+	if alreadyInDocument && explicitLabel != "" && explicitLabel != existing.VersionLabel {
+		return "", "", "", nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"%w: this content is already version %q of document %q, so label %q was not applied and nothing was written; relabelling is not supported. Re-import without --version-label (or with %q), or import changed content to create a new version",
+			ErrVersionLabelConflict, existing.VersionLabel, catalog.DocumentSlug, explicitLabel, existing.VersionLabel))
+	}
+
+	if ValidateVersionLabel(oscalVersion) != nil {
+		oscalVersion = ""
+	}
+	catalog.VersionLabel = ResolveVersionLabel(explicitLabel, oscalVersion, catalog.CreatedAt, catalog.ContentHash)
+
+	if err := s.store.UpsertCatalogVersion(ctx, catalog, containers, controls); err != nil {
+		if errors.Is(err, ErrCatalogInOtherDocument) {
+			return "", "", "", nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		}
+		return "", "", "", nil, s.internalError(ctx, "ParseCatalog", fmt.Errorf("store catalog version: %w", err))
+	}
+
+	stored, err := s.store.GetCatalog(ctx, catalog.CatalogID)
+	if err != nil || stored == nil {
+		return "", "", "", nil, s.internalError(ctx, "ParseCatalog", fmt.Errorf("read back catalog version %s: %w", catalog.CatalogID, errors.Join(err, ErrCatalogNotFound)))
+	}
+	version := catalogversion.Format(stored.DocumentSlug, stored.VersionLabel, stored.CreatedAt, stored.ContentHash)
+	if alreadyInDocument || stored.SupersedesCatalogID == "" {
+		return version, stored.VersionLabel, "", nil, nil
+	}
+
+	previous, err := s.store.ListControlsForCatalog(ctx, stored.SupersedesCatalogID)
+	if err != nil {
+		return "", "", "", nil, s.internalError(ctx, "ParseCatalog", fmt.Errorf("list controls of superseded catalog: %w", err))
+	}
+	diff := DiffControls(previous, controls)
+	return version, stored.VersionLabel, stored.SupersedesCatalogID, &crosscodexv1.ChangeReport{
+		Added: diff.Added, Removed: diff.Removed, Changed: diff.Changed, IdsUnstable: diff.IDsUnstable,
+	}, nil
 }
 
 // publishParsed tells the graph role that catalogID's controls are stored and
@@ -516,9 +633,11 @@ func (s *Service) GetCatalog(ctx context.Context, req *connect.Request[crosscode
 		return nil, s.internalError(ctx, "GetCatalog", fmt.Errorf("get catalog: %w", err))
 	}
 
-	return connect.NewResponse(&crosscodexv1.GetCatalogResponse{
-		Catalog: catalogRecordToProto(record),
-	}), nil
+	pb, err := s.catalogToProto(ctx, record, map[string]string{})
+	if err != nil {
+		return nil, s.internalError(ctx, "GetCatalog", err)
+	}
+	return connect.NewResponse(&crosscodexv1.GetCatalogResponse{Catalog: pb}), nil
 }
 
 // ListCatalogs lists catalogs with pagination.
@@ -572,8 +691,12 @@ func (s *Service) ListCatalogs(ctx context.Context, req *connect.Request[crossco
 	}
 
 	catalogs := make([]*crosscodexv1.Catalog, len(records))
-	for i, rec := range records {
-		catalogs[i] = catalogRecordToProto(&rec)
+	currentByDoc := map[string]string{}
+	for i := range records {
+		catalogs[i], err = s.catalogToProto(ctx, &records[i], currentByDoc)
+		if err != nil {
+			return nil, s.internalError(ctx, "ListCatalogs", err)
+		}
 	}
 
 	return connect.NewResponse(&crosscodexv1.ListCatalogsResponse{
@@ -938,7 +1061,33 @@ func mergeResults(ftRecords []ControlRecord, semanticResults []vectordb.Similari
 	return merged
 }
 
-// catalogRecordToProto converts CatalogRecord to proto Catalog.
+// catalogToProto converts rec like catalogRecordToProto and sets Current from
+// the store. currentByDoc caches each document's current catalog ID so a list
+// reads it once per document.
+func (s *Service) catalogToProto(ctx context.Context, rec *CatalogRecord, currentByDoc map[string]string) (*crosscodexv1.Catalog, error) {
+	pb := catalogRecordToProto(rec)
+	if rec == nil || rec.DocumentSlug == "" {
+		return pb, nil
+	}
+	currentID, ok := currentByDoc[rec.DocumentSlug]
+	if !ok {
+		current, err := s.store.GetDocumentCurrent(ctx, rec.DocumentSlug)
+		switch {
+		case err == nil:
+			currentID = current.CatalogID
+		case errors.Is(err, ErrDocumentNotFound):
+			// A catalog naming a document that has no current version is not current.
+		default:
+			return nil, fmt.Errorf("get current version of document %q: %w", rec.DocumentSlug, err)
+		}
+		currentByDoc[rec.DocumentSlug] = currentID
+	}
+	pb.Current = currentID == rec.CatalogID
+	return pb, nil
+}
+
+// catalogRecordToProto converts CatalogRecord to proto Catalog. Current is left
+// false: it needs the store (see Service.catalogToProto).
 func catalogRecordToProto(rec *CatalogRecord) *crosscodexv1.Catalog {
 	if rec == nil {
 		return nil
@@ -953,6 +1102,11 @@ func catalogRecordToProto(rec *CatalogRecord) *crosscodexv1.Catalog {
 		Format:       formatStringToEnum(rec.Format),
 		Version:      rec.Version,
 		ControlCount: int32(rec.ControlCount),
+
+		DocumentSlug:        rec.DocumentSlug,
+		VersionLabel:        rec.VersionLabel,
+		SupersedesCatalogId: rec.SupersedesCatalogID,
+		LinkMethod:          rec.LinkMethod,
 		Audit: &crosscodexv1.AuditMetadata{
 			CreatedAt: timestamppb.New(rec.CreatedAt),
 		},

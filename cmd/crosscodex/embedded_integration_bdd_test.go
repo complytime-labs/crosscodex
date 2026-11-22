@@ -544,7 +544,7 @@ var _ = Describe("Edge cases — TLS client (green)", func() {
 	})
 })
 
-var _ = Describe("Bug records (Pending correct + active tripwire)", func() {
+var _ = Describe("Bug records", func() {
 	var ctx context.Context
 
 	BeforeEach(func() {
@@ -567,39 +567,31 @@ var _ = Describe("Bug records (Pending correct + active tripwire)", func() {
 	})
 
 	// --- #3: edited re-import creates a new row instead of updating ---
-	PIt("#3 re-importing an edited catalog updates the same logical catalog", func() {
+	It("#3 re-importing an edited catalog under a document is one logical document with two versions", func() {
 		orig := fixture("minimal-catalog.json")
-		_, err := importCatalog(ctx, sharedState.client, orig, pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "v1")
+		first, err := importCatalogUnder(ctx, sharedState.client, orig, pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "v1", "minimal")
 		Expect(err).NotTo(HaveOccurred())
-		before, err := listCatalogs(ctx, sharedState.client)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(before).To(HaveLen(1))
+		Expect(first.GetSupersededCatalogId()).To(BeEmpty())
 
-		edited := append([]byte(nil), orig...) // caller edits a control's prose
-		edited = bytes.Replace(edited, []byte("Separate duties of individuals."), []byte("Separate duties of individuals across roles."), 1)
-		_, err = importCatalog(ctx, sharedState.client, edited, pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "v2")
-		Expect(err).NotTo(HaveOccurred())
-
-		// Correct: still one logical catalog (updated), not two.
-		after, err := listCatalogs(ctx, sharedState.client)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(after).To(HaveLen(1))
-	})
-
-	It("#3 TRIPWIRE: an edited re-import currently creates a second catalog row", func() {
-		// TRIPWIRE for bug #3: when this fails, edits update in place —
-		// flip the PIt above and delete this. Content-hash id:
-		// generateCatalogID (internal/catalog/service.go).
-		orig := fixture("minimal-catalog.json")
-		_, err := importCatalog(ctx, sharedState.client, orig, pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "v1")
-		Expect(err).NotTo(HaveOccurred())
 		edited := bytes.Replace(append([]byte(nil), orig...),
 			[]byte("Separate duties of individuals."), []byte("Separate duties of individuals across roles."), 1)
-		_, err = importCatalog(ctx, sharedState.client, edited, pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "v2")
+		second, err := importCatalogUnder(ctx, sharedState.client, edited, pb.CatalogFormat_CATALOG_FORMAT_OSCAL, "v2", "minimal")
 		Expect(err).NotTo(HaveOccurred())
+		Expect(second.GetCatalogId()).NotTo(Equal(first.GetCatalogId()), "an edit is a new immutable version")
+		Expect(second.GetSupersededCatalogId()).To(Equal(first.GetCatalogId()))
+		Expect(second.GetChangeReport().GetChanged()).To(HaveLen(1))
+		Expect(second.GetChangeReport().GetAdded()).To(BeEmpty())
+		Expect(second.GetChangeReport().GetRemoved()).To(BeEmpty())
+
 		after, err := listCatalogs(ctx, sharedState.client)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(after).To(HaveLen(2))
+		currents := map[string]bool{}
+		for _, c := range after {
+			Expect(c.GetDocumentSlug()).To(Equal("minimal"), "one logical document")
+			currents[c.GetCatalogId()] = c.GetCurrent()
+		}
+		Expect(currents).To(Equal(map[string]bool{first.GetCatalogId(): false, second.GetCatalogId(): true}))
 	})
 
 	// --- #6: failed parse leaves an orphan blob ---

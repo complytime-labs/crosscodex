@@ -67,8 +67,8 @@ var _ = Describe("catalogCollector", func() {
 	It("emits only expired catalogs stamped with StorePostgres and ClassCatalogs", func() {
 		now := time.Now()
 		fake := collectorConn([][]any{
-			{"cat-old", "t1", now.Add(-8 * 365 * 24 * time.Hour)},
-			{"cat-new", "t1", now.Add(-1 * time.Hour)},
+			{"cat-old", "t1", now.Add(-8 * 365 * 24 * time.Hour), false},
+			{"cat-new", "t1", now.Add(-1 * time.Hour), false},
 		})
 		p, _ := retention.NewPolicy(config.RetentionConfig{Defaults: config.RetentionTiers{Catalogs: "7y"}})
 		got, err := retention.NewCatalogCollector(fake).Collect(context.Background(), p, now)
@@ -78,6 +78,24 @@ var _ = Describe("catalogCollector", func() {
 		Expect(got[0].Store).To(Equal(retention.StorePostgres))
 		Expect(got[0].Class).To(Equal(retention.ClassCatalogs))
 		Expect(got[0].TenantID).To(Equal("t1"))
+		Expect(got[0].Protected).To(BeFalse())
+	})
+
+	It("marks an expired document's current version protected and leaves superseded ones purgeable", func() {
+		now := time.Now()
+		old := now.Add(-8 * 365 * 24 * time.Hour)
+		fake := collectorConn([][]any{
+			{"cat-current", "t1", old, true},
+			{"cat-superseded", "t1", old, false},
+		})
+		p, _ := retention.NewPolicy(config.RetentionConfig{Defaults: config.RetentionTiers{Catalogs: "7y"}})
+		got, err := retention.NewCatalogCollector(fake).Collect(context.Background(), p, now)
+		Expect(err).NotTo(HaveOccurred())
+		protected := map[string]bool{}
+		for _, c := range got {
+			protected[c.ID] = c.Protected
+		}
+		Expect(protected).To(Equal(map[string]bool{"cat-current": true, "cat-superseded": false}))
 	})
 })
 
@@ -149,7 +167,7 @@ var _ = Describe("collectors with nothing expired", func() {
 			config.RetentionTiers{JobResults: "7y"}),
 		Entry("the catalog collector when no catalogs are expired",
 			func() retention.Collector {
-				return retention.NewCatalogCollector(collectorConn([][]any{{"cat-new", "t1", recent}}))
+				return retention.NewCatalogCollector(collectorConn([][]any{{"cat-new", "t1", recent, false}}))
 			},
 			config.RetentionTiers{Catalogs: "7y"}),
 		Entry("the object collector when no objects are expired",
