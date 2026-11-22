@@ -1,0 +1,25 @@
+docs/dev/migrations.md
+  s_ae096a3447705c::t_78924395869771 18-19,22
+pkg/db/migrations/003_mapping_feedback.down.sql
+  s_ae096a3447705c::t_8278efe7a87189 1-22
+pkg/db/migrations/003_mapping_feedback.up.sql
+  s_ae096a3447705c::t_2bd6a8a91bd6ae 1-191
+pkg/db/role_check_integration_bdd_test.go
+  s_ae096a3447705c::t_726df08b97c8ae 38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "74a57554a48db9f2a0b5d842e0ee0e0c18318baf",
+  "prompts": {},
+  "sessions": {
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
