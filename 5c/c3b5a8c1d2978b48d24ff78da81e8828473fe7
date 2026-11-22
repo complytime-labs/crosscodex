@@ -1,0 +1,34 @@
+docs/dev/feedback.md
+  s_ae096a3447705c::t_6bc43ef19df32c 1-188
+  s_ae096a3447705c::t_c22cde01a6fc9d 189
+cmd/crosscodex/results.go
+  s_ae096a3447705c::t_0de20c96b59ef6 391
+docs/dev/design-principles.md
+  s_ae096a3447705c::t_dd075c45d1fc22 103
+docs/dev/telemetry.md
+  s_a46cd4a5608fbb::t_05b9fab9e1c2b4 228,232-236
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "5cc3b5a8c1d2978b48d24ff78da81e8828473fe7",
+  "prompts": {},
+  "sessions": {
+    "s_a46cd4a5608fbb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a5be66c704a2a9e71",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
