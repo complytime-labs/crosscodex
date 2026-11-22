@@ -1,0 +1,41 @@
+internal/graph/server_bdd_test.go
+  s_ae096a3447705c::t_5c30710aacb24b 284-293
+README.md
+  s_ae096a3447705c::t_7b5604a99309f4 42
+api/proto/crosscodex/v1/gateway.proto
+  s_ae096a3447705c::t_28d673dc489852 192
+cmd/crosscodex/embedded.go
+  s_ae096a3447705c::t_a7441729bdb48f 187-192,222,615,622-628,631-632
+cmd/crosscodex/embedded_bdd_test.go
+  s_ae096a3447705c::t_bb2835be540405 345,356,405
+cmd/crosscodex/embedded_integration_bdd_test.go
+  s_ae096a3447705c::t_f7a5888f2bf16b 710-717,719-723,726-728
+docs/dev/feedback-cleaning-results-spec.md
+  s_ae096a3447705c::t_62b3dd1d283fbc 112
+docs/dev/service-runtime.md
+  s_ae096a3447705c::t_0197cab5992671 62,157
+internal/feedback/determine.go
+  s_ae096a3447705c::t_cf522dea570d9e 93
+internal/feedback/determine_bdd_test.go
+  s_ae096a3447705c::t_5804ad9afba7fd 334
+internal/feedback/service.go
+  s_ae096a3447705c::t_3f6bfb7216539c 38-40,299
+internal/gateway/graph_client_bdd_test.go
+  s_ae096a3447705c::t_bc3137e4f9cb05 56,66-67,74,80,82-84,92-100,155,219-220,222-224,298-333
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "90957d9b8aec76e80b921b5ff9eb73f8f7802fa1",
+  "prompts": {},
+  "sessions": {
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
