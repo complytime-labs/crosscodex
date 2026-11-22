@@ -1,0 +1,31 @@
+README.md
+  s_ae096a3447705c::t_6947107c731cfc 19-26,42,45
+deploy/README.md
+  s_ae096a3447705c::t_22d1f415d13456 46,55,58,60-70,73,76-80,82-89,93-97,101-103,105,200,211,610
+deploy/praxis/config.yaml
+  s_ae096a3447705c::t_d0b22589b54de3 5-7
+docs/dev/adr/0002-nats-client-authorization.md
+  s_ae096a3447705c::t_d33b30e9f99958 1-78
+docs/dev/adr/index.md
+  s_ae096a3447705c::t_e72f5b8d4f0f78 10
+docs/dev/attestation.md
+  s_ae096a3447705c::t_e3501c9a0db09d 362
+docs/dev/design-principles.md
+  s_ae096a3447705c::t_980e5214e488f0 315-324
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "0edf962cb99d3cc140f6e9c97e09935516798fe2",
+  "prompts": {},
+  "sessions": {
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
