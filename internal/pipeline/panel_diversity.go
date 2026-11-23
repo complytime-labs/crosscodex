@@ -352,6 +352,22 @@ func parsePanelRecord(raw string) (panelRecord, error) {
 	return rec, nil
 }
 
+// PanelProvenanceFromRecord converts a stored Stage.PanelRecord into the
+// API's PanelProvenance, for callers that read stages from a Store without
+// the Service (the embedded daemon). A stage with no record has no panel
+// to show, so an empty raw returns nil, nil; one that cannot be read returns
+// an error rather than a blank panel.
+func PanelProvenanceFromRecord(raw string) (*pb.PanelProvenance, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	rec, err := parsePanelRecord(raw)
+	if err != nil {
+		return nil, err
+	}
+	return rec.toProto(), nil
+}
+
 func (r panelRecord) byProducts() map[string]any {
 	by := map[string]any{byproductPanelIndependence: r.Independence, byproductPanelAllowShared: r.AllowShared}
 	if r.Models != nil {

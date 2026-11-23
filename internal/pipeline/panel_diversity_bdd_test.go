@@ -584,3 +584,27 @@ var _ = Describe("Panel diversity check", func() {
 		})
 	})
 })
+
+var _ = Describe("PanelProvenanceFromRecord", func() {
+	It("returns nil for a stage that recorded no panel", func() {
+		got, err := pipeline.PanelProvenanceFromRecord("")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(BeNil())
+	})
+
+	It("restores the aliases and the models they reported", func() {
+		got, err := pipeline.PanelProvenanceFromRecord(`{"independence":"independent","allow_shared":true,"models":{"b":"model-y","a":"model-x"}}`)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.GetIndependence()).To(Equal("independent"))
+		Expect(got.GetAllowShared()).To(BeTrue())
+		Expect(got.GetModels()).To(HaveLen(2))
+		Expect([]string{got.GetModels()[0].GetAlias(), got.GetModels()[0].GetObservedModel()}).To(Equal([]string{"a", "model-x"}))
+		Expect([]string{got.GetModels()[1].GetAlias(), got.GetModels()[1].GetObservedModel()}).To(Equal([]string{"b", "model-y"}))
+	})
+
+	It("rejects a corrupt record rather than reporting no panel", func() {
+		got, err := pipeline.PanelProvenanceFromRecord(`{"independence":`)
+		Expect(got).To(BeNil())
+		Expect(err).To(MatchError(ContainSubstring("reading a stored panel record")))
+	})
+})
