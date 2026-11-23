@@ -1,0 +1,25 @@
+internal/feedback/types.go
+  s_202dc0751da7da::t_39c4d02e32417d 15,52
+pkg/cleaning/engine_reproject.go
+  s_202dc0751da7da::t_39c4d02e32417d 249-252,254-255,257
+pkg/cleaning/graphops.go
+  s_202dc0751da7da::t_39c4d02e32417d 101-104,106-124,131,133,150,153-154
+pkg/cleaning/engine_reproject_bdd_test.go
+  s_202dc0751da7da::t_39c4d02e32417d 321
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "388eecfd37af54ef4905a26b35aa9d942aecb28a",
+  "prompts": {},
+  "sessions": {
+    "s_202dc0751da7da": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a3d17a73-8bd7-4246-bc78-ebd894c42ca6",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
