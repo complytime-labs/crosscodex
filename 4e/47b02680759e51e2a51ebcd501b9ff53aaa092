@@ -1,0 +1,52 @@
+cmd/crosscodexd/bootstrap.go
+  s_202dc0751da7da::t_ffa3fd400918ab 568-572,575-577,587-591
+  s_202dc0751da7da::t_4fc17bc92335f6 64
+  s_202dc0751da7da::t_bca968cbe14bc0 607-608
+  s_202dc0751da7da::t_ba685cf918ffe6 656
+cmd/crosscodexd/retention_admin_bdd_test.go
+  s_202dc0751da7da::t_b63b72206ce827 1-98
+cmd/crosscodexd/graph_role_integration_test.go
+  s_202dc0751da7da::t_0e4f2cfc6d09f3 28,128-129,301,322,324-325,339-365
+  s_202dc0751da7da::t_74818a4bb55b30 327-338
+internal/feedback/types.go
+  s_202dc0751da7da::t_39c4d02e32417d 15,52
+pkg/cleaning/engine_reproject.go
+  s_202dc0751da7da::t_39c4d02e32417d 249-252,254-255,257
+pkg/cleaning/graphops.go
+  s_202dc0751da7da::t_39c4d02e32417d 101-104,106-124,131,133,150,153-154
+pkg/cleaning/engine_reproject_bdd_test.go
+  s_202dc0751da7da::t_39c4d02e32417d 321
+cmd/crosscodex/embedded_integration_bdd_test.go
+  s_202dc0751da7da::t_cc49b3f099ed2c 672-716,720,725-743,748-749,753-756,764
+internal/gateway/graph_client_bdd_test.go
+  s_202dc0751da7da::t_750bc53f487fa7 105-109
+  s_202dc0751da7da::t_79155389c0a808 66-68
+  s_202dc0751da7da::t_fe750454be0759 324-333
+  s_202dc0751da7da::t_ed58d22bd1d876 334-336
+cmd/crosscodexd/admin_cleaning_bdd_test.go
+  s_ae2739847b2684::t_b465595f3f95a3 53-60,68,76,161-176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "4e47b02680759e51e2a51ebcd501b9ff53aaa092",
+  "prompts": {},
+  "sessions": {
+    "s_202dc0751da7da": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a3d17a73-8bd7-4246-bc78-ebd894c42ca6",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_ae2739847b2684": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a3d849743732fd940",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
