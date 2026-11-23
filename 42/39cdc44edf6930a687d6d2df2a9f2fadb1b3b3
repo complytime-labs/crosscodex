@@ -1,0 +1,26 @@
+test/tooling/tls-name-probe.venom.yml
+  s_1963e32741ee2b::t_087505d90e29d4 115
+  s_1963e32741ee2b::t_37d3fb9d69b35c 17-18,44-45,65-79,86-114,116-118
+  s_1963e32741ee2b::t_d4104dcbea760c 80-85
+test/tooling/cert-services-agreement.venom.yml
+  s_1963e32741ee2b::t_346fae72fb0635 1-29
+test/tooling/e2e-daemon-identity.venom.yml
+  s_1963e32741ee2b::t_087505d90e29d4 17,20
+  s_1963e32741ee2b::t_37d3fb9d69b35c 1,6-11,13,19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "4239cdc44edf6930a687d6d2df2a9f2fadb1b3b3",
+  "prompts": {},
+  "sessions": {
+    "s_1963e32741ee2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e47dcf4a-928e-4704-9c9c-2ff40f46db28",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
