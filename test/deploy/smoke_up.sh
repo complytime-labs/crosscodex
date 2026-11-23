@@ -10,7 +10,8 @@
 # Isolation (so the smoke stack can run alongside a real production stack):
 #   * COMPOSE_PROJECT_NAME    — separate project → own pod/containers/network
 #                               and own (auto-namespaced) data volumes.
-#   * CROSSCODEX_CERTS_VOLUME — own server PKI volume, generated fresh.
+#   * CROSSCODEX_CERTS_VOLUME — prefix of the own per-service server key
+#                               volumes (<prefix>-db, -nats, ...), generated fresh.
 #   * CROSSCODEX_CLIENT_CERTS_VOLUME — own client key volume.
 #   * CROSSCODEX_ATTESTATION_KEYS_VOLUME — own attestation key volume.
 #   * CROSSCODEX_GATEWAY_PORT — own published host port (production keeps 50051).
@@ -294,11 +295,17 @@ if [ "${hardening_failures}" -gt 0 ]; then
 fi
 echo "Hardening checks passed for ${#smoke_containers[@]} running container(s)."
 
-# Key separation (issue #236). Each key volume holds only its own files: the
-# server volume (db, nats, the LLM gateway) no CA, client or attestation key;
-# the client volume (migrate, crosscodexd) no CA or attestation key; the
-# attestation volume (crosscodexd) no CA or client key. Only migrate and
-# crosscodexd may mount the client volume, only crosscodexd the attestation one.
+# Key separation (issues #236, #298). Every key volume holds only its own
+# files. Each service's server volume (<CERTS_VOLUME>-<service>) holds ca.pem
+# plus that service's own certificate and key, as server.pem and
+# server-key.pem; the client volume (migrate, crosscodexd) no CA, service or
+# attestation key; the attestation volume (crosscodexd) no CA, service or
+# client key. Each volume is mounted only by the services that use it.
+#
+# volume_files <volume> prints the volume's file names (C-sorted `ls -A`) and
+# volume_digest <volume> <file> the file's sha256, both through a helper
+# container (env as the entrypoint so key_absent's `test -e <path>` runs as the
+# command; sh for the listing). A helper failure fails the smoke test.
 #
 # key_absent <what> <path> <command...> runs `<command...> test -e <path>`.
 # test(1) exits 1 for an absent file; 0 (present) and any other status (no
@@ -319,57 +326,122 @@ key_absent() {
 		;;
 	esac
 }
-project_filter="label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}"
-db_cid="$("${engine}" ps --filter "${project_filter}" \
-	--filter "label=com.docker.compose.service=db" --format '{{.ID}}' | head -n1)"
-if [ -z "${db_cid}" ]; then
-	echo "FAIL: certs volume: no running db container in project ${COMPOSE_PROJECT_NAME} to inspect /certs through." >&2
-	exit 1
-fi
-if ! "${engine}" exec "${db_cid}" test -r /certs/ca.pem; then
-	echo "FAIL: certs volume: cannot read /certs/ca.pem in db (error above, if any)." >&2
-	exit 1
-fi
-for key in ca-key.pem client-key.pem attestation-key.pem; do
-	key_absent "${CROSSCODEX_CERTS_VOLUME} (seen from db)" "/certs/${key}" "${engine}" exec "${db_cid}"
-done
-# env as the entrypoint so key_absent's `test -e <path>` runs as the command.
-helper=("${engine}" run --rm --entrypoint env)
 image="crosscodex-db:${TAG:-latest}"
-for key in ca-key.pem attestation-key.pem; do
-	key_absent "${CROSSCODEX_CLIENT_CERTS_VOLUME}" "/v/${key}" "${helper[@]}" -v "${CROSSCODEX_CLIENT_CERTS_VOLUME}:/v:ro,z" "${image}"
+volume_files() {
+	"${engine}" run --rm --entrypoint sh -v "$1:/v:ro,z" "${image}" -c 'LC_ALL=C ls -A /v | tr "\n" " "'
+}
+volume_digest() {
+	"${engine}" run --rm --entrypoint sha256sum -v "$1:/v:ro,z" "${image}" "/v/$2" | cut -d' ' -f1
+}
+host_digest() {
+	sha256sum "${CERTS_DIR}/$1" | cut -d' ' -f1
+}
+
+# The services with their own server key, and the compose service that mounts
+# each one's volume (the litellm key is held by its stunnel sidecar).
+cert_services=(db nats litellm praxis crosscodexd)
+declare -A cert_mounter=([db]=db [nats]=nats [litellm]=litellm-tls [praxis]=praxis [crosscodexd]=crosscodexd)
+# Every key file a service container must not see at /certs (besides the CA
+# key): another service's, the client's and the attestation key. Its own is
+# there as server-key.pem.
+key_files=(client-key.pem attestation-key.pem)
+for svc in "${cert_services[@]}"; do
+	key_files+=("${svc}-key.pem")
 done
-for key in ca-key.pem client-key.pem; do
-	key_absent "${CROSSCODEX_ATTESTATION_KEYS_VOLUME}" "/v/${key}" "${helper[@]}" -v "${CROSSCODEX_ATTESTATION_KEYS_VOLUME}:/v:ro,z" "${image}"
-done
-# The services that mount the server volume must not reach the client or
-# attestation key at the old /certs path either.
-key_services=(db nats litellm-tls)
-if [ "${LLM_GATEWAY}" = "praxis" ]; then
-	key_services=(db nats praxis)
-fi
-for svc in "${key_services[@]}"; do
-	cid="$("${engine}" ps --filter "${project_filter}" \
-		--filter "label=com.docker.compose.service=${svc}" --format '{{.ID}}' | head -n1)"
-	if [ -z "${cid}" ]; then
-		echo "FAIL: certs volume: no running ${svc} container in project ${COMPOSE_PROJECT_NAME} to check key access in." >&2
+
+# Each volume holds exactly its files, and each service volume's server-key.pem
+# is the service's own key from the host PKI, so it holds no other key.
+for svc in "${cert_services[@]}"; do
+	vol="${CROSSCODEX_CERTS_VOLUME}-${svc}"
+	want_listing=".fingerprint ca.pem server-key.pem server.pem "
+	if ! got_listing="$(volume_files "${vol}")"; then
+		echo "FAIL: certs volume: could not list ${vol} (error above)." >&2
 		exit 1
 	fi
-	for key in client-key.pem attestation-key.pem; do
-		key_absent "service ${svc}" "/certs/${key}" "${engine}" exec "${cid}"
+	if [ "${got_listing}" != "${want_listing}" ]; then
+		echo "FAIL: certs volume: ${vol} holds [${got_listing}], want [${want_listing}]; the certs:load task in .taskfiles/deploy.yml must load only ca.pem and the ${svc} certificate and key into it." >&2
+		exit 1
+	fi
+	if ! got_digest="$(volume_digest "${vol}" server-key.pem)"; then
+		echo "FAIL: certs volume: could not hash server-key.pem in ${vol} (error above)." >&2
+		exit 1
+	fi
+	if [ "${got_digest}" != "$(host_digest "${svc}-key.pem")" ]; then
+		echo "FAIL: certs volume: server-key.pem in ${vol} is not ${svc}-key.pem from the host PKI; a service may hold only its own key." >&2
+		exit 1
+	fi
+done
+for entry in "${CROSSCODEX_CLIENT_CERTS_VOLUME}:.fingerprint ca.pem client-key.pem client.pem " \
+	"${CROSSCODEX_ATTESTATION_KEYS_VOLUME}:.fingerprint attestation-key.pem attestation-pub.pem "; do
+	vol="${entry%%:*}"
+	if ! got_listing="$(volume_files "${vol}")"; then
+		echo "FAIL: certs volume: could not list ${vol} (error above)." >&2
+		exit 1
+	fi
+	if [ "${got_listing}" != "${entry#*:}" ]; then
+		echo "FAIL: certs volume: ${vol} holds [${got_listing}], want [${entry#*:}]; the certs:load task in .taskfiles/deploy.yml must load only that volume's files into it." >&2
+		exit 1
+	fi
+done
+
+# From inside each running service that has test(1): its own key is readable and
+# no other key, nor the CA key, is reachable at the /certs path. crosscodexd is
+# distroless (no test); the volume checks above and the mount check below cover it.
+project_filter="label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}"
+if [ "${LLM_GATEWAY}" = "praxis" ]; then
+	running_services=(db nats praxis)
+else
+	running_services=(db nats litellm)
+fi
+for svc in "${running_services[@]}"; do
+	mounter="${cert_mounter[${svc}]}"
+	cid="$("${engine}" ps --filter "${project_filter}" \
+		--filter "label=com.docker.compose.service=${mounter}" --format '{{.ID}}' | head -n1)"
+	if [ -z "${cid}" ]; then
+		echo "FAIL: certs volume: no running ${mounter} container in project ${COMPOSE_PROJECT_NAME} to check key access in." >&2
+		exit 1
+	fi
+	if ! "${engine}" exec "${cid}" test -r /certs/server-key.pem; then
+		echo "FAIL: certs volume: ${mounter} cannot read its own /certs/server-key.pem (error above, if any)." >&2
+		exit 1
+	fi
+	for key in ca-key.pem "${key_files[@]}"; do
+		key_absent "service ${mounter}" "/certs/${key}" "${engine}" exec "${cid}"
 	done
 done
+
 # Mounts of every container in the project, exited ones included, so the
-# one-shot migrate is checked too.
+# one-shot migrate is checked too. Each volume may be mounted only by the
+# services in volume_users, and each of those must be seen mounting it, so the
+# check cannot pass on an empty or partial container list.
 # Capture the list first: a failing ps inside a process substitution would not
 # trip set -e and would leave the loop silently empty.
+declare -A volume_users=(
+	["${CROSSCODEX_CERTS_VOLUME}-db"]="db"
+	["${CROSSCODEX_CERTS_VOLUME}-nats"]="nats"
+	["${CROSSCODEX_CERTS_VOLUME}-litellm"]="litellm-tls"
+	["${CROSSCODEX_CERTS_VOLUME}-praxis"]="praxis"
+	["${CROSSCODEX_CERTS_VOLUME}-crosscodexd"]="crosscodexd"
+	["${CROSSCODEX_CLIENT_CERTS_VOLUME}"]="migrate crosscodexd"
+	["${CROSSCODEX_ATTESTATION_KEYS_VOLUME}"]="crosscodexd"
+)
+expected_mounts=(
+	"db ${CROSSCODEX_CERTS_VOLUME}-db" "nats ${CROSSCODEX_CERTS_VOLUME}-nats"
+	"crosscodexd ${CROSSCODEX_CERTS_VOLUME}-crosscodexd"
+	"migrate ${CROSSCODEX_CLIENT_CERTS_VOLUME}" "crosscodexd ${CROSSCODEX_CLIENT_CERTS_VOLUME}"
+	"crosscodexd ${CROSSCODEX_ATTESTATION_KEYS_VOLUME}"
+)
+if [ "${LLM_GATEWAY}" = "praxis" ]; then
+	expected_mounts+=("praxis ${CROSSCODEX_CERTS_VOLUME}-praxis")
+else
+	expected_mounts+=("litellm-tls ${CROSSCODEX_CERTS_VOLUME}-litellm")
+fi
 if ! container_ids="$("${engine}" ps -a --filter "${project_filter}" --format '{{.ID}}')"; then
 	echo "FAIL: certs volume: '${engine} ps -a' failed for project ${COMPOSE_PROJECT_NAME} (error above)." >&2
 	exit 1
 fi
 mapfile -t all_containers <<<"${container_ids}"
-seen_migrate=0
-seen_crosscodexd=0
+declare -A seen_mount=()
 for cid in "${all_containers[@]}"; do
 	[ -n "${cid}" ] || continue
 	if ! mounts="$("${engine}" inspect --format \
@@ -378,40 +450,36 @@ for cid in "${all_containers[@]}"; do
 		exit 1
 	fi
 	read -r svc names <<<"${mounts}"
-	case "${svc}" in
-	migrate) seen_migrate=1 ;;
-	crosscodexd) seen_crosscodexd=1 ;;
-	*) ;;
-	esac
 	for name in ${names}; do
-		if [ "${name}" = "${CROSSCODEX_CLIENT_CERTS_VOLUME}" ] && [ "${svc}" != migrate ] && [ "${svc}" != crosscodexd ]; then
-			echo "FAIL: certs volume: service ${svc} mounts ${CROSSCODEX_CLIENT_CERTS_VOLUME}; only migrate and crosscodexd may hold the client key." >&2
+		[ -n "${volume_users[${name}]+set}" ] || continue
+		case " ${volume_users[${name}]} " in
+		*" ${svc} "*) seen_mount["${svc} ${name}"]=1 ;;
+		*)
+			echo "FAIL: certs volume: service ${svc} mounts ${name}; the only services allowed to mount it: ${volume_users[${name}]}." >&2
 			exit 1
-		fi
-		if [ "${name}" = "${CROSSCODEX_ATTESTATION_KEYS_VOLUME}" ] && [ "${svc}" != crosscodexd ]; then
-			echo "FAIL: certs volume: service ${svc} mounts ${CROSSCODEX_ATTESTATION_KEYS_VOLUME}; only crosscodexd may hold the attestation key." >&2
-			exit 1
-		fi
+			;;
+		esac
 	done
 done
-# The expected services must have been inspected, so the check cannot pass
-# on an empty or partial container list.
-if [ "${seen_migrate}" -ne 1 ] || [ "${seen_crosscodexd}" -ne 1 ]; then
-	echo "FAIL: certs volume: mount check did not see both migrate (seen=${seen_migrate}) and crosscodexd (seen=${seen_crosscodexd}) in project ${COMPOSE_PROJECT_NAME}; cannot prove which services mount the client and attestation key volumes." >&2
-	exit 1
-fi
-echo "Key volumes hold only their own files; only migrate and crosscodexd mount the client key, only crosscodexd the attestation key."
+for pair in "${expected_mounts[@]}"; do
+	if [ -z "${seen_mount[${pair}]+set}" ]; then
+		echo "FAIL: certs volume: mount check did not see '${pair}' (service volume) in project ${COMPOSE_PROJECT_NAME}; cannot prove which services mount which key volumes." >&2
+		exit 1
+	fi
+done
+echo "Each key volume holds only its own files and is mounted only by the services that use it: each service reads its own key and no other."
 
-# server.pem must not be a client identity (issue #236): db, nats and the LLM
-# gateway can read server-key.pem, and nats accepts any CA-signed client cert.
-# Present each cert to nats as a TLS client from a sibling container that holds
-# what those services hold: the server volume and GID 10001 (compose.yaml
-# group_add). server.pem must get a TLS alert; client.pem, the positive control,
-# must get PONG, so the check cannot pass on a broken probe. nats sends a
-# plaintext INFO line before the TLS handshake, so `openssl s_client` cannot
-# speak it; python3 (from the apache/age base of crosscodex-db, the image the
-# volume checks above already use) can. Exit codes: 0 accepted, 3 refused by a
-# TLS alert from nats, anything else means nothing was proven.
+# No service key may act as a client identity (issues #236, #298): db, nats and
+# the LLM gateway each hold a server key, and nats accepts any CA-signed client
+# cert. Present each certificate to nats as a TLS client from a sibling
+# container that holds what that service holds: its own volume and GID 10001
+# (compose.yaml group_add). Every service certificate must get a TLS alert;
+# client.pem, the positive control, must get PONG, so the check cannot pass on a
+# broken probe. nats sends a plaintext INFO line before the TLS handshake, so
+# `openssl s_client` cannot speak it; python3 (from the apache/age base of
+# crosscodex-db, the image the volume checks above already use) can. Exit
+# codes: 0 accepted, 3 refused by a TLS alert from nats, anything else means
+# nothing was proven.
 nats_probe='
 import socket, ssl, sys
 host, port, ca, cert, key = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
@@ -468,22 +536,68 @@ nats_presents() {
 }
 nats_presents "${CROSSCODEX_CLIENT_CERTS_VOLUME}" client
 if [ "${probe_rc}" -ne 0 ]; then
-	echo "FAIL: client identity: nats did not accept client.pem (probe exit ${probe_rc}: ${probe_out}); the probe cannot prove server.pem is refused." >&2
+	echo "FAIL: client identity: nats did not accept client.pem (probe exit ${probe_rc}: ${probe_out}); the probe cannot prove a service certificate is refused." >&2
 	exit 1
 fi
-nats_presents "${CROSSCODEX_CERTS_VOLUME}" server
-case "${probe_rc}" in
-3) ;;
-0)
-	echo "FAIL: client identity: nats accepted server.pem as a client cert; the deploy server cert must be serverAuth-only (deploy/certgen/gen.go) so db, nats and the LLM gateway cannot act as NATS clients." >&2
-	exit 1
-	;;
-*)
-	echo "FAIL: client identity: could not check whether nats refuses server.pem (probe exit ${probe_rc}: ${probe_out})." >&2
-	exit 1
-	;;
-esac
-echo "nats accepts client.pem and refuses server.pem as a client cert (${probe_out})."
+for svc in "${cert_services[@]}"; do
+	# The litellm and praxis volumes are loaded whichever gateway runs, so the
+	# one not deployed is probed too: its key is still on the host.
+	nats_presents "${CROSSCODEX_CERTS_VOLUME}-${svc}" server
+	case "${probe_rc}" in
+	3) ;;
+	0)
+		echo "FAIL: client identity: nats accepted the ${svc} certificate as a client cert; every deploy server cert must be serverAuth-only (deploy/certgen/gen.go) so the services holding a server key cannot act as NATS clients." >&2
+		exit 1
+		;;
+	*)
+		echo "FAIL: client identity: could not check whether nats refuses the ${svc} certificate (probe exit ${probe_rc}: ${probe_out})." >&2
+		exit 1
+		;;
+	esac
+done
+echo "nats accepts client.pem and refuses every service certificate as a client cert (${probe_out})."
+
+# Hostname isolation (issue #298): each running service's certificate is valid
+# for its own name and rejected for every other service's name, so a service
+# that someone reaches by another service's hostname cannot pass for it. The
+# probe (test/deploy/tls_name_probe.py) connects to the live service, so it
+# checks the certificate actually served, not just the file on the host. The
+# own name is probed first and must be accepted, so a refusal elsewhere means a
+# hostname mismatch, not a dead service or a bad probe. localhost is a name only
+# the host-facing services (praxis, crosscodexd) own.
+# tls_name <service> <protocol> <port> <name> prints the probe output and sets
+# probe_rc, presenting client.pem (the services require a client certificate).
+tls_name() {
+	probe_out="$("${engine}" run --rm --network "${nats_network}" --group-add 10001 \
+		-v "${CROSSCODEX_CLIENT_CERTS_VOLUME}:/v:ro,z" \
+		-v "${ROOT_DIR}/test/deploy/tls_name_probe.py:/probe.py:ro,z" \
+		--entrypoint python3 "${image}" \
+		-I /probe.py "$2" "$1" "$3" /v/ca.pem /v/client.pem /v/client-key.pem "$4")" && probe_rc=0 || probe_rc=$?
+}
+if [ "${LLM_GATEWAY}" = "praxis" ]; then
+	gateway_service=praxis
+else
+	gateway_service=litellm
+fi
+declare -A service_protocol=([db]=postgres [nats]=nats [litellm]=tls [praxis]=tls [crosscodexd]=tls)
+declare -A service_port=([db]=5432 [nats]=4222 [litellm]=4443 [praxis]=4443 [crosscodexd]=50051)
+declare -A service_names=([db]="db" [nats]="nats" [litellm]="litellm" [praxis]="praxis localhost" [crosscodexd]="crosscodexd localhost")
+probed_services=(db nats "${gateway_service}" crosscodexd)
+all_names=(db nats litellm praxis crosscodexd localhost)
+for svc in "${probed_services[@]}"; do
+	for name in "${all_names[@]}"; do
+		tls_name "${svc}" "${service_protocol[${svc}]}" "${service_port[${svc}]}" "${name}"
+		case " ${service_names[${svc}]} " in
+		*" ${name} "*) want_rc=0 ;;
+		*) want_rc=4 ;;
+		esac
+		if [ "${probe_rc}" -ne "${want_rc}" ]; then
+			echo "FAIL: hostname isolation: the ${svc} certificate checked for the name '${name}': probe exit ${probe_rc} (${probe_out}), want ${want_rc} (0 valid, 4 refused as not valid for that name). Each service certificate may name only its own service (deploy/certgen/gen.go)." >&2
+			exit 1
+		fi
+	done
+done
+echo "Each service certificate is valid for its own names and refused for every other service's hostname."
 
 # Reach the daemon exactly as deploy:up's health check does: a host process
 # dialing the published gateway port over mTLS. In this rootless, nested-podman
@@ -499,7 +613,7 @@ echo "nats accepts client.pem and refuses server.pem as a client cert (${probe_o
 CLI_BIN="${OUT_DIR}/crosscodex"
 CGO_ENABLED=0 go build -o "${CLI_BIN}" "${ROOT_DIR}/cmd/crosscodex"
 
-# The server cert SAN covers localhost + 127.0.0.1; client.pem is the CLI's mTLS
+# The crosscodexd cert SANs cover localhost + 127.0.0.1; client.pem is the CLI's mTLS
 # identity. Certs come from the host PKI dir that deploy:certs populated.
 run_cli() {
 	"${CLI_BIN}" \

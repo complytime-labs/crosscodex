@@ -8,8 +8,13 @@
 # Usage: smoke-up-hardening.sh <repo-root>
 # Env:   TABLE   rows "<service> <CapBnd hex> <PidsLimit> <comma-separated mounted volumes or ->";
 #                default is a compliant stack. The container id is the service name.
-#        PRESENT lines "<id>:<path>" (exec) or "<volume>:<path>" (run) whose key
-#                file exists; default none.
+#        PRESENT lines "<id>:<path>" whose file exists in that container (exec
+#                test -e); default none.
+#        VOLUME_FILES lines "<volume>/<file>[=<content>]" added to (or, with
+#                content, replacing the content of) the default volume contents:
+#                each service volume holds ca.pem, server.pem and server-key.pem
+#                (the key's content is the service name), the client and
+#                attestation volumes their own files; default none.
 # Prints smoke_up.sh output, then "smoke_up exit=<code>".
 set -u
 root="${1:?Usage: smoke-up-hardening.sh <repo-root>}"
@@ -22,13 +27,41 @@ cp "${root}/scripts/in-container.sh" "${root}/scripts/generate-llm-gateway-confi
 cp "${root}"/deploy/litellm/*.tmpl "$d/deploy/litellm/"
 printf '#!/bin/sh\nexit 0\n' >"$d/bin/task"
 
-default_table='db 0000000000000000 256 -
-nats 0000000000000000 256 -
-litellm-tls 0000000000000000 256 -
+default_table='db 0000000000000000 256 crosscodex-smoke-certs-db
+nats 0000000000000000 256 crosscodex-smoke-certs-nats
+litellm-tls 0000000000000000 256 crosscodex-smoke-certs-litellm
 migrate 0000000000000000 256 smoke-client-certs
-crosscodexd 0000000000000000 256 smoke-client-certs,smoke-attestation-keys'
+crosscodexd 0000000000000000 256 crosscodex-smoke-certs-crosscodexd,smoke-client-certs,smoke-attestation-keys'
 printf '%s\n' "${TABLE:-$default_table}" >"$d/table"
 printf '%s\n' "${PRESENT:-}" >"$d/present"
+
+# Host PKI dir (smoke_up.sh's default CERTS_DIR) and the volumes loaded from it:
+# a key's content is its name, so a volume holding another service's key is
+# told apart by content.
+host="$d/.test-output/deploy-smoke/certs"
+mkdir -p "$host"
+for k in ca client attestation db nats litellm praxis crosscodexd; do
+	printf '%s\n' "$k" >"$host/$k-key.pem"
+done
+mkvol() { # mkvol <volume> <file>=<content>...
+	local v="$d/vols/$1"
+	shift
+	mkdir -p "$v"
+	local f
+	for f in "$@"; do printf '%s\n' "${f#*=}" >"$v/${f%%=*}"; done
+	printf 'fingerprint\n' >"$v/.fingerprint"
+}
+for svc in db nats litellm praxis crosscodexd; do
+	mkvol "crosscodex-smoke-certs-$svc" ca.pem=ca server.pem="$svc" server-key.pem="$svc"
+done
+mkvol smoke-client-certs ca.pem=ca client.pem=client client-key.pem=client
+mkvol smoke-attestation-keys attestation-key.pem=attestation attestation-pub.pem=attestation
+while IFS= read -r line; do
+	[ -n "$line" ] || continue
+	vf="${line%%=*}"
+	mkdir -p "$d/vols/$(dirname "$vf")"
+	if [[ "$line" == *=* ]]; then printf '%s\n' "${line#*=}" >"$d/vols/$vf"; else printf 'extra\n' >"$d/vols/$vf"; fi
+done <<<"${VOLUME_FILES:-}"
 while read -r svc capbnd _; do
 	mkdir -p "$d/proc/$svc"
 	printf 'CapBnd:\t%s\nNoNewPrivs:\t1\n' "$capbnd" >"$d/proc/$svc/status"
@@ -59,8 +92,19 @@ inspect)
 	;;
 exec) [ "$4" = "-r" ] && exit 0; grep -qxF "$2:${*: -1}" "$d/present" && exit 0 || exit 1 ;;
 run)
+	# Volume helpers: `--entrypoint sh ... -c <ls>` lists the volume,
+	# `--entrypoint sha256sum ... /v/<file>` hashes one of its files.
 	if [[ "$*" =~ -v[[:space:]]([^:]+):/v: ]]; then
-		grep -qxF "${BASH_REMATCH[1]}:${*: -1}" "$d/present" && exit 0 || exit 1
+		vol="$d/vols/${BASH_REMATCH[1]}"
+		if [[ "$*" == *"--entrypoint sh "* ]]; then
+			LC_ALL=C ls -A "$vol" | tr '\n' ' '
+			exit 0
+		fi
+		if [[ "$*" == *"--entrypoint sha256sum"* ]]; then
+			f="${*: -1}"
+			sha256sum "$vol/${f#/v/}" || exit 1
+			exit 0
+		fi
 	fi
 	exit 1
 	;;
