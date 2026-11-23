@@ -8,6 +8,9 @@ testcases:
     steps:
       - type: exec
         script: |
+          #!/bin/bash
+          # bash, not sh: dash's `jobs -p` is empty inside $(...), so the servers would
+          # outlive the trap and hold venom's stdout pipe open forever.
           d=$(mktemp -d)
           trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$d"' EXIT
           cd {{.root}}
@@ -35,6 +38,9 @@ testcases:
     steps:
       - type: exec
         script: |
+          #!/bin/bash
+          # bash, not sh: dash's `jobs -p` is empty inside $(...), so the servers would
+          # outlive the trap and hold venom's stdout pipe open forever.
           d=$(mktemp -d)
           trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$d"' EXIT
           cd {{.root}}
@@ -67,6 +73,9 @@ testcases:
     steps:
       - type: exec
         script: |
+          #!/bin/bash
+          # bash, not sh: dash's `jobs -p` is empty inside $(...), so the servers would
+          # outlive the trap and hold venom's stdout pipe open forever.
           d=$(mktemp -d)
           trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$d"' EXIT
           cd {{.root}}
