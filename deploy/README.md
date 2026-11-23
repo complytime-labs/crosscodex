@@ -317,7 +317,7 @@ task deploy:smoke OLLAMA_HOST=http://your-host:11434 \
 
 The `OLLAMA_HOST` override works with `LLM_GATEWAY=litellm` only. The host is probed and its models pulled before the stack starts, so an unreachable provider or missing model fails fast. `OLLAMA_HOST` may omit the scheme (`your-host:11434`); `http://` is assumed.
 
-To use an Ollama running on your **host machine**, point at loopback — `OLLAMA_HOST=localhost:11435` (any port other than the baked default `11434`). LiteLLM runs in the compose bridge network, so `smoke_up.sh` rewrites a `localhost`/`127.0.0.1` host to `host.containers.internal` when rendering the LiteLLM config, and the `compose.offline-remote.yaml` overlay maps that name to the host gateway. This needs podman ≥ 4.1 (or a docker-compose that supports `host-gateway`). A `localhost` override is reachable from the host for the pre-flight probe but only reachable from the container via this rewrite — without it, `localhost` inside the container is the container itself.
+To use an Ollama running on your **host machine**, point at loopback — `OLLAMA_HOST=localhost:11435` (any port other than the baked default `11434`). LiteLLM runs in the compose bridge network, so `deploy/local_up.sh` rewrites a `localhost`/`127.0.0.1` host to `host.containers.internal` when rendering the LiteLLM config, and the `compose.offline-remote.yaml` overlay maps that name to the host gateway. This needs podman ≥ 4.1 (or a docker-compose that supports `host-gateway`). A `localhost` override is reachable from the host for the pre-flight probe but only reachable from the container via this rewrite — without it, `localhost` inside the container is the container itself.
 
 #### llama.cpp, vLLM or another OpenAI-compatible server
 
@@ -355,7 +355,7 @@ The check is a snapshot taken when the job's panel stages start, from the one de
     OPENAI_COMPAT_PANEL_MODELS=qwen3.8-flash-next,gpt-oss-120b,qwen3.8-27b
   ```
 
-  With the Ollama default all three aliases are one model, so `deploy/compose.offline.yaml` and `deploy/compose.offline-praxis.yaml` set `CROSSCODEX_ANALYSIS_{RELATIONSHIP,REQUIRES,CRITIQUE}_ALLOW_SHARED_PANEL_MODELS=true` on `crosscodexd`. `deploy/compose.offline-remote.yaml` (a remote Ollama or an OpenAI-compatible server) passes the same variables through as `false` by default. `smoke_up.sh` sets them to `true` only for an Ollama run without `OLLAMA_PANEL_MODELS`, so an explicit three-model list and the OpenAI-compatible path stay checked by the daemon. The single-model Ollama smoke stack therefore does not exercise the diversity check; production never sets these.
+  With the Ollama default all three aliases are one model, so `deploy/compose.offline.yaml` and `deploy/compose.offline-praxis.yaml` set `CROSSCODEX_ANALYSIS_{RELATIONSHIP,REQUIRES,CRITIQUE}_ALLOW_SHARED_PANEL_MODELS=true` on `crosscodexd`. `deploy/compose.offline-remote.yaml` (a remote Ollama or an OpenAI-compatible server) passes the same variables through as `false` by default. `deploy/local_up.sh` sets them to `true` only for an Ollama run without `OLLAMA_PANEL_MODELS`, so an explicit three-model list and the OpenAI-compatible path stay checked by the daemon. The single-model Ollama smoke stack therefore does not exercise the diversity check; production never sets these.
 
 #### Tuning a self-hosted model server
 
