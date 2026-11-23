@@ -1,0 +1,29 @@
+name: The deploy cert service list agrees across the generator, the Taskfile and the compose volumes
+
+vars:
+  root: "."
+
+# CERT_SERVICES (.taskfiles/deploy.yml) and the per-service volumes in
+# deploy/compose*.yaml restate the services deploy/certgen/gen.go issues
+# certificates to. Nothing else links them, so a service added in one place
+# only would fail late, at `up`. This suite fails early and names the drift.
+testcases:
+  - name: Every service the generator issues a certificate to has a Taskfile entry and a compose volume, and no more
+    steps:
+      - type: exec
+        script: |
+          set -e
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          cd {{.root}}
+          go run ./deploy/certgen/gen.go "$d" >/dev/null
+          generated=$(cd "$d" && ls *-key.pem | sed 's/-key\.pem$//' | grep -vx -e ca -e client -e attestation | sort | tr '\n' ' ')
+          task_list=$(sed -n 's/^  CERT_SERVICES: //p' .taskfiles/deploy.yml | tr ' ' '\n' | sort | tr '\n' ' ')
+          compose=$(cat deploy/compose*.yaml | sed -n 's/^  crosscodex-certs-\([a-z]*\):$/\1/p' | sort | tr '\n' ' ')
+          echo "generated=$generated"
+          echo "taskfile=$task_list"
+          echo "compose=$compose"
+          [ "$generated" = "$task_list" ] && [ "$generated" = "$compose" ] && echo AGREE
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring AGREE

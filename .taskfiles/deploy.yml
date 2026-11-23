@@ -81,10 +81,15 @@ vars:
   # also read by compose.yaml's ${...} interpolation, so exporting them keeps
   # the task side and the compose side in agreement.
   CERTS_DIR: '{{.CERTS_DIR | default (printf "%s/deploy/certs" .ROOT_DIR)}}'
+  # Prefix of the per-service server cert volumes: <CERTS_VOLUME>-<service>
+  # for each service in CERT_SERVICES (issue #298).
   CERTS_VOLUME: '{{.CROSSCODEX_CERTS_VOLUME | default "crosscodex-certs"}}'
-  # Key volumes split by consumer (issue #236): CERTS_VOLUME keeps only the
-  # server material db, nats and the LLM gateway need; CLIENT_CERTS_VOLUME the
-  # daemon's client identity (migrate and crosscodexd); ATTESTATION_KEYS_VOLUME
+  # The TLS servers, one key and certificate each. Must match `services` in
+  # deploy/certgen/gen.go and the per-service volumes in deploy/compose*.yaml.
+  CERT_SERVICES: db nats litellm praxis crosscodexd
+  # Key volumes split by consumer (issues #236, #298): one server volume per
+  # service in CERT_SERVICES holding only that service's key; CLIENT_CERTS_VOLUME
+  # the daemon's client identity (migrate and crosscodexd); ATTESTATION_KEYS_VOLUME
   # the attestation signing keypair (crosscodexd only).
   CLIENT_CERTS_VOLUME: '{{.CROSSCODEX_CLIENT_CERTS_VOLUME | default "crosscodex-client-certs"}}'
   ATTESTATION_KEYS_VOLUME: '{{.CROSSCODEX_ATTESTATION_KEYS_VOLUME | default "crosscodex-attestation-keys"}}'
@@ -194,7 +199,7 @@ tasks:
         -f {{.ROOT_DIR}}/deploy/db/Containerfile {{.ROOT_DIR}}/deploy/db
 
   certs:
-    desc: Generate the deploy TLS PKI and load it into the crosscodex-certs, crosscodex-client-certs and crosscodex-attestation-keys volumes
+    desc: Generate the deploy TLS PKI and load it into the per-service server cert volumes (crosscodex-certs-<service>), crosscodex-client-certs and crosscodex-attestation-keys
     cmds:
       - task: certs:generate
       - task: certs:load
@@ -209,60 +214,71 @@ tasks:
     status:
       # Regenerate when anything is missing, mismatched, lacks a compose SAN
       # (e.g. sets predating praxis), or expires within a day. A full regen
-      # mints a new CA and attestation key, changing the fingerprint and
-      # forcing certs:load to reload the whole bundle.
+      # mints a new CA, client cert and attestation key, changing the
+      # fingerprint and forcing certs:load to reload every volume. A set in
+      # the shared-server-key layout of earlier releases fails the same way,
+      # so an upgrade regenerates automatically (docs: deploy/README.md,
+      # "Upgrading").
       - go run {{.ROOT_DIR}}/deploy/certgen/gen.go --verify {{.CERTS_DIR}}
 
   certs:load:
     internal: true
-    desc: Load the host TLS PKI and attestation keypair into the server, client and attestation key volumes
+    desc: Load the host TLS PKI and attestation keypair into the per-service server, client and attestation key volumes
     # Depends on the db image (used as the copy helper) and the host certs.
     deps: [build, certs:generate]
     cmds:
-      # Three volumes so a service can read only the keys it uses (issue
-      # #236). CERTS_VOLUME (db, nats, litellm-tls, praxis, and crosscodexd at
-      # /server-certs) gets the server identity. CLIENT_CERTS_VOLUME (migrate
-      # and crosscodexd at /certs) gets the daemon's client identity, which db
-      # and nats trust. ATTESTATION_KEYS_VOLUME (crosscodexd at /attestation)
-      # gets the attestation signing keypair. ca-key.pem goes into none: no
-      # service signs certificates, and any reader could mint client
-      # certificates the whole stack trusts. Each list is sorted in C order
-      # because the status check compares it with `ls`.
-      - task: certs:load:volume
+      # Separate volumes so a service can read only the keys it uses (issues
+      # #236, #298). Each service in CERT_SERVICES gets <CERTS_VOLUME>-<service>
+      # with ca.pem and its own certificate and key, renamed server.pem and
+      # server-key.pem so every service reads the same in-container paths.
+      # All of them are loaded whichever LLM gateway runs, so switching gateway
+      # needs no reload. CLIENT_CERTS_VOLUME (migrate and crosscodexd at
+      # /certs) gets the daemon's client identity, which db and nats trust.
+      # ATTESTATION_KEYS_VOLUME (crosscodexd at /attestation) gets the
+      # attestation signing keypair. ca-key.pem goes into none: no service signs
+      # certificates, and any reader could mint client certificates the whole
+      # stack trusts. FILES lists what the volume ends up holding, sorted in C
+      # order because the status check compares it with `ls`. PAIRS lists the
+      # source:destination copies.
+      - for: {var: CERT_SERVICES, split: " "}
+        task: certs:load:volume
         vars:
-          VOLUME: "{{.CERTS_VOLUME}}"
+          VOLUME: "{{.CERTS_VOLUME}}-{{.ITEM}}"
+          PAIRS: "ca.pem:ca.pem {{.ITEM}}.pem:server.pem {{.ITEM}}-key.pem:server-key.pem"
           FILES: ca.pem server-key.pem server.pem
       - task: certs:load:volume
         vars:
           VOLUME: "{{.CLIENT_CERTS_VOLUME}}"
+          PAIRS: ca.pem:ca.pem client.pem:client.pem client-key.pem:client-key.pem
           FILES: ca.pem client-key.pem client.pem
       - task: certs:load:volume
         vars:
           VOLUME: "{{.ATTESTATION_KEYS_VOLUME}}"
+          PAIRS: attestation-key.pem:attestation-key.pem attestation-pub.pem:attestation-pub.pem
           FILES: attestation-key.pem attestation-pub.pem
 
   certs:load:volume:
     internal: true
-    desc: Make one certs volume hold exactly FILES from the host PKI (VOLUME, FILES)
+    desc: Make one certs volume hold exactly FILES, copied from the host PKI as PAIRS (VOLUME, PAIRS, FILES)
     requires:
-      vars: [VOLUME, FILES]
+      vars: [VOLUME, PAIRS, FILES]
     vars:
       # Shared supplementary GID for cert-key access. MUST match the
       # group_add value on every cert-consuming service in deploy/compose.yaml.
       CERT_GID: "10001"
     cmds:
       - "{{.CONTAINER_ENGINE}} volume create {{.VOLUME}} 2>/dev/null || true"
-      # Empty the volume, copy FILES, and set a shared-group ownership model so
-      # every consumer can read the keys despite running as different users
+      # Empty the volume, copy PAIRS (source:destination, source names in the
+      # host PKI dir), and set a shared-group ownership model so every
+      # consumer can read the keys despite running as different users
       # (postgres, nats=root, stunnel=nobody, crosscodexd=nonroot). Files are
       # owned root:CERT_GID; certs 0644, private keys 0640 (group-read only).
       # PostgreSQL accepts a root-owned 0640 key, and each service is added to
       # CERT_GID via group_add in compose.yaml so it can read the key group.
       # Emptying first removes whatever an older release loaded and FILES does
       # not list (ca-key.pem, the client and attestation keys an older
-      # release put in the server volume, the attestation keys an older
-      # release put in the client volume); the status check forces that
-      # reload. .fingerprint
+      # release put in the server volume, another service's key); the status
+      # check forces that reload. .fingerprint
       # is removed first and copied last, so it marks a complete load.
       # Reuse the db image (has a shell) as the copy helper.
       # Caps (issue #236), measured with this command: CHOWN for the chown to
@@ -278,19 +294,22 @@ tasks:
           -v {{.CERTS_DIR}}:/src:ro,z \
           --entrypoint sh \
           crosscodex-db:{{.TAG}} \
-          -c 'rm -f /certs/.fingerprint && find /certs -mindepth 1 -delete && cd /src && cp {{.FILES}} /certs/ && chown 0:{{.CERT_GID}} /certs/* && chmod 0644 /certs/*.pem && chmod 0640 /certs/*-key.pem && cp /src/.fingerprint /certs/'
+          -c 'rm -f /certs/.fingerprint && find /certs -mindepth 1 -delete && for p in {{.PAIRS}}; do cp "/src/${p%%:*}" "/certs/${p#*:}" || exit 1; done && chown 0:{{.CERT_GID}} /certs/* && chmod 0644 /certs/*.pem && chmod 0640 /certs/*-key.pem && cp /src/.fingerprint /certs/'
     # Re-load whenever the volume is absent, its fingerprint no longer matches
-    # the host PKI, or it holds anything besides FILES and .fingerprint (for
-    # example the client or CA key an older release loaded into CERTS_VOLUME).
-    # `deploy:down VOLUMES=1` explicitly removes all three volumes (an external
-    # volume survives compose's own `down --volumes`), so after a teardown
-    # the read below returns nothing, the check fails, and the volume is
-    # repopulated on the next `up`.
+    # the host PKI, it holds anything besides FILES and .fingerprint, or any
+    # file's content differs from its source in the host PKI dir. The content
+    # digests catch what the listing cannot: another service's key under this
+    # volume's own file names. `deploy:down VOLUMES=1` explicitly removes every
+    # key volume (an external volume survives compose's own `down --volumes`),
+    # so after a teardown the read below returns nothing, the check fails, and
+    # the volume is repopulated on the next `up`. Both digest lists follow
+    # PAIRS order; a missing file makes sha256sum print an error, which
+    # differs from the host digests and so forces a reload.
     status:
-      - >
-        test "$({{.CONTAINER_ENGINE}} run --rm -v {{.VOLUME}}:/certs:ro,z
-        --entrypoint sh crosscodex-db:{{.TAG}} -c 'LC_ALL=C ls -A /certs | tr "\n" " " && cat /certs/.fingerprint 2>/dev/null')"
-        = ".fingerprint {{.FILES}} $(cat {{.CERTS_DIR}}/.fingerprint)"
+      - |
+        want="$(cd {{.CERTS_DIR}} && for p in {{.PAIRS}}; do sha256sum "${p%%:*}"; done | cut -d' ' -f1 | tr '\n' ' ')"
+        got="$({{.CONTAINER_ENGINE}} run --rm -v {{.VOLUME}}:/certs:ro,z --entrypoint sh crosscodex-db:{{.TAG}} -c 'cd /certs && LC_ALL=C ls -A | tr "\n" " " && printf "%s " "$(cat .fingerprint 2>/dev/null)" && for p in {{.PAIRS}}; do sha256sum "${p#*:}" 2>&1; done | cut -d" " -f1 | tr "\n" " "')"
+        test "${got}" = ".fingerprint {{.FILES}} $(cat {{.CERTS_DIR}}/.fingerprint) ${want}"
 
   up:
     desc: Bring up the production stack and wait for the gateway to be healthy
@@ -401,10 +420,14 @@ tasks:
       # such as the backup sidecars or a stack run from another deploy/ dir.
       - '{{.COMPOSE_CMD}} -f {{.ROOT_DIR}}/deploy/compose.yaml -f {{.ROOT_DIR}}/deploy/compose.gateway-litellm.yaml -f {{.ROOT_DIR}}/deploy/compose.gateway-praxis.yaml -f {{.ROOT_DIR}}/deploy/compose.gateway-praxis-models.yaml {{if .COMPOSE_OVERLAY}}-f {{.COMPOSE_OVERLAY}}{{end}} down {{if eq .VOLUMES "1"}}--volumes{{end}}'
       # compose's own `down --volumes` does NOT remove `external` volumes, so
-      # the three key volumes must be dropped explicitly. This keeps VOLUMES=1 a true
-      # full teardown and guarantees the next `up` reloads a freshly generated
-      # PKI rather than stale certs (mirrors test:integration's cert teardown).
-      - '{{if eq .VOLUMES "1"}}{{.CONTAINER_ENGINE}} volume rm -f {{.CERTS_VOLUME}} {{.CLIENT_CERTS_VOLUME}} {{.ATTESTATION_KEYS_VOLUME}}{{else}}true{{end}}'
+      # the key volumes must be dropped explicitly: the per-service server
+      # volumes, the client volume and the attestation volume, plus the
+      # shared <CERTS_VOLUME> volume releases before #298 loaded, which holds
+      # the old shared server key (`volume rm -f` ignores one that is absent).
+      # This keeps VOLUMES=1 a true full teardown and guarantees the next `up`
+      # reloads a freshly generated PKI rather than stale certs (mirrors
+      # test:integration's cert teardown).
+      - '{{if eq .VOLUMES "1"}}{{.CONTAINER_ENGINE}} volume rm -f {{range splitList " " .CERT_SERVICES}}{{$.CERTS_VOLUME}}-{{.}} {{end}}{{.CERTS_VOLUME}} {{.CLIENT_CERTS_VOLUME}} {{.ATTESTATION_KEYS_VOLUME}}{{else}}true{{end}}'
 
   logs:
     desc: Tail stack logs

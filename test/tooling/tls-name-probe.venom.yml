@@ -1,0 +1,118 @@
+name: test/deploy/tls_name_probe.py tells a certificate valid for a hostname from one valid for another
+
+vars:
+  root: "."
+
+testcases:
+  - name: A service certificate is accepted for its own name and refused for another service's name, over each protocol
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$d"' EXIT
+          cd {{.root}}
+          go run ./deploy/certgen/gen.go "$d/certs" >/dev/null
+          for proto in tls nats postgres; do
+            python3 -I test/tooling/lib/tls_probe_server.py "$proto" "$d/certs/db.pem" "$d/certs/db-key.pem" "$d/$proto.port" &
+            for _ in $(seq 100); do [ -s "$d/$proto.port" ] && break; sleep 0.1; done
+            [ -s "$d/$proto.port" ] || { echo "probe server did not write its port file" >&2; exit 1; }
+            port=$(cat "$d/$proto.port")
+            for name in db nats; do
+              python3 -I test/deploy/tls_name_probe.py "$proto" 127.0.0.1 "$port" "$d/certs/ca.pem" "$d/certs/client.pem" "$d/certs/client-key.pem" "$name"
+              echo "$proto $name exit=$?"
+            done
+          done
+        assertions:
+          - result.systemout ShouldContainSubstring "tls db exit=0"
+          - result.systemout ShouldContainSubstring "tls nats exit=4"
+          - result.systemout ShouldContainSubstring "nats db exit=0"
+          - result.systemout ShouldContainSubstring "nats nats exit=4"
+          - result.systemout ShouldContainSubstring "postgres db exit=0"
+          - result.systemout ShouldContainSubstring "postgres nats exit=4"
+          - result.systemout ShouldContainSubstring "Hostname mismatch"
+
+  - name: A certificate from an untrusted CA proves nothing, so the probe does not report a hostname refusal
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$d"' EXIT
+          cd {{.root}}
+          go run ./deploy/certgen/gen.go "$d/certs" >/dev/null
+          go run ./deploy/certgen/gen.go "$d/other" >/dev/null
+          python3 -I test/tooling/lib/tls_probe_server.py tls "$d/other/db.pem" "$d/other/db-key.pem" "$d/port" &
+          for _ in $(seq 100); do [ -s "$d/port" ] && break; sleep 0.1; done
+            [ -s "$d/port" ] || { echo "probe server did not write its port file" >&2; exit 1; }
+          python3 -I test/deploy/tls_name_probe.py tls 127.0.0.1 "$(cat "$d/port")" "$d/certs/ca.pem" "$d/certs/client.pem" "$d/certs/client-key.pem" db
+          echo "exit=$?"
+        assertions:
+          - result.systemout ShouldContainSubstring "exit=2"
+          - result.systemout ShouldContainSubstring "another reason"
+
+  - name: A connection that never answers with TLS is an inconclusive probe
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          cd {{.root}}
+          go run ./deploy/certgen/gen.go "$d/certs" >/dev/null
+          python3 -I test/deploy/tls_name_probe.py tls 127.0.0.1 1 "$d/certs/ca.pem" "$d/certs/client.pem" "$d/certs/client-key.pem" db
+          echo "exit=$?"
+        assertions:
+          - result.systemout ShouldContainSubstring "exit=2"
+          - result.systemout ShouldContainSubstring "setup failed"
+
+  - name: A service that answers a protocol upgrade wrongly is an inconclusive probe
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$d"' EXIT
+          cd {{.root}}
+          go run ./deploy/certgen/gen.go "$d/certs" >/dev/null
+          # Plain TCP listener that sends $2 once per connection, then closes.
+          serve() {
+            python3 -I -c '
+          import socketserver, sys
+          class H(socketserver.BaseRequestHandler):
+              def handle(self):
+                  # NATS speaks first; postgres sends an 8-byte SSLRequest first.
+                  self.request.settimeout(0.3)
+                  try:
+                      self.request.recv(8)
+                  except OSError:
+                      pass
+                  self.request.sendall(sys.argv[2].encode().decode("unicode_escape").encode("latin-1"))
+          s = socketserver.TCPServer(("127.0.0.1", 0), H)
+          open(sys.argv[1], "w").write(str(s.server_address[1]))
+          s.serve_forever()' "$1" "$2" &
+            for _ in $(seq 100); do [ -s "$1" ] && break; sleep 0.1; done
+            [ -s "$1" ] || { echo "listener did not write its port file" >&2; exit 1; }
+          }
+          serve "$d/nats.port" '-ERR nope\r\n'
+          python3 -I test/deploy/tls_name_probe.py nats 127.0.0.1 "$(cat "$d/nats.port")" "$d/certs/ca.pem" "$d/certs/client.pem" "$d/certs/client-key.pem" db
+          echo "nats exit=$?"
+          serve "$d/pg.port" 'N'
+          python3 -I test/deploy/tls_name_probe.py postgres 127.0.0.1 "$(cat "$d/pg.port")" "$d/certs/ca.pem" "$d/certs/client.pem" "$d/certs/client-key.pem" db
+          echo "postgres exit=$?"
+        assertions:
+          - result.systemout ShouldContainSubstring "no NATS INFO line"
+          - result.systemout ShouldContainSubstring "nats exit=2"
+          - result.systemout ShouldContainSubstring "refused TLS"
+          - result.systemout ShouldContainSubstring "postgres exit=2"
+
+  - name: A malformed invocation is an inconclusive probe
+    steps:
+      - type: exec
+        script: |
+          cd {{.root}}
+          python3 -I test/deploy/tls_name_probe.py
+          echo "usage exit=$?"
+          python3 -I test/deploy/tls_name_probe.py smtp h 1 ca cert key name
+          echo "protocol exit=$?"
+        assertions:
+          - result.systemout ShouldContainSubstring "<protocol> <connect-host>"
+          - result.systemout ShouldContainSubstring "usage exit=2"
+          - result.systemout ShouldContainSubstring "unknown protocol 'smtp'"
+          - result.systemout ShouldContainSubstring "protocol exit=2"

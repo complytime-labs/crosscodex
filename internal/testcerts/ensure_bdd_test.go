@@ -112,7 +112,7 @@ var _ = Describe("VerifyDirWith", func() {
 		Entry("a caller-owned file check fails", func(string) {},
 			testcerts.VerifyOptions{VerifyExtra: func(string) error { return errors.New("attestation-key.pem: missing") }},
 			"attestation-key.pem: missing"),
-		Entry("the server cert also permits client authentication", func(string) {},
+		Entry("the server cert also permits client authentication", func(dir string) { writeSet(generateWith(), dir) },
 			testcerts.VerifyOptions{ServerAuthOnly: true},
 			"server.pem permits client authentication (extended key usage clientAuth), so any service holding server-key.pem can connect to the others as a client; it must be serverAuth-only"),
 		Entry("the server cert permits any extended key usage", func(dir string) {
@@ -135,6 +135,7 @@ var _ = Describe("VerifyDirWith", func() {
 	})
 
 	It("accepts a dual-use server cert when ServerAuthOnly is not required", func() {
+		writeSet(generateWith(), dir)
 		Expect(readCertFile(dir, "server.pem").ExtKeyUsage).To(ContainElement(x509.ExtKeyUsageClientAuth))
 		Expect(testcerts.VerifyDirWith(dir, testcerts.VerifyOptions{})).To(Succeed())
 	})
@@ -334,9 +335,7 @@ var _ = Describe("Ensure", func() {
 	})
 
 	It("replaces a dual-use server cert with a serverAuth-only set when ServerAuthOnly is required", func() {
-		p, err := testcerts.Generate()
-		Expect(err).NotTo(HaveOccurred())
-		writeSet(p, dir)
+		writeSet(generateWith(pkigen.WithDNSNames("localhost", "db", "nats"), pkigen.WithIPs(net.IPv4(127, 0, 0, 1))), dir)
 		before := storedFingerprint(dir)
 
 		opts := strictEnsure
@@ -401,6 +400,17 @@ var _ = Describe("Ensure", func() {
 				pkigen.WithIPs(net.IPv4(127, 0, 0, 1)))
 			Expect(writeOnly.WriteToDir(dir)).To(Succeed())
 			before := snapshot(dir)
+
+			generated, err := testcerts.Ensure(dir, opts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(generated).To(BeFalse())
+			Expect(snapshot(dir)).To(Equal(before))
+		})
+
+		It("keeps a supplied set whose server cert is dual-use even when ServerAuthOnly is required, since the certificate policy is the supplier's", func() {
+			Expect(generateWith(pkigen.WithDNSNames("localhost", "db", "nats"), pkigen.WithIPs(net.IPv4(127, 0, 0, 1))).WriteToDir(dir)).To(Succeed())
+			before := snapshot(dir)
+			opts.Verify.ServerAuthOnly = true
 
 			generated, err := testcerts.Ensure(dir, opts)
 			Expect(err).NotTo(HaveOccurred())

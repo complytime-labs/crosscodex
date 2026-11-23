@@ -54,7 +54,7 @@ services:
     read_only: true
     tmpfs: [/tmp]
     volumes:
-      - crosscodex-certs:/certs:ro
+      - crosscodex-certs-litellm:/certs:ro
     depends_on:
       litellm:
         condition: service_healthy
@@ -71,3 +71,9 @@ services:
       # litellm is up, so gate the daemon on the TLS front, not the backend.
       litellm-tls:
         condition: service_healthy
+
+volumes:
+  crosscodex-certs-litellm:
+    external: true
+    # Same prefix and override as compose.yaml's per-service cert volumes.
+    name: ${CROSSCODEX_CERTS_VOLUME:-crosscodex-certs}-litellm

@@ -1,42 +1,53 @@
-name: deploy:certs strips keys an older release left in the wrong volume
+name: deploy:certs loads one key per service and replaces layouts an earlier release left
 
 vars:
   root: "."
 
 testcases:
-  - name: The original single shared volume is split into exactly the three allowlists
+  - name: The shared-server-key PKI of earlier releases is replaced and each service gets only its own key
     steps:
       - type: exec
-        script: bash {{.root}}/test/tooling/lib/certs-load-upgrade.sh {{.root}} original
+        script: bash {{.root}}/test/tooling/lib/certs-load-upgrade.sh {{.root}} legacy
         timeout: 300
         assertions:
           - result.code ShouldEqual 0
-          - result.systemout ShouldContainSubstring "seeded_server=[.fingerprint attestation-key.pem attestation-pub.pem ca-key.pem ca.pem client-key.pem client.pem server-key.pem server.pem ]"
-          - result.systemout ShouldContainSubstring "server=[.fingerprint ca.pem server-key.pem server.pem ]"
+          - result.systemout ShouldContainSubstring "seeded_host=[.fingerprint ca-key.pem ca.pem client-key.pem client.pem server-key.pem server.pem ]"
+          - result.systemout ShouldContainSubstring "ca_replaced=yes"
+          - result.systemout ShouldContainSubstring "host=[.fingerprint attestation-key.pem attestation-pub.pem ca-key.pem ca.pem client-key.pem client.pem crosscodexd-key.pem crosscodexd.pem db-key.pem db.pem litellm-key.pem litellm.pem nats-key.pem nats.pem praxis-key.pem praxis.pem ]"
+          - result.systemout ShouldContainSubstring "db=[.fingerprint ca.pem server-key.pem server.pem ]"
+          - result.systemout ShouldContainSubstring "nats=[.fingerprint ca.pem server-key.pem server.pem ]"
+          - result.systemout ShouldContainSubstring "litellm=[.fingerprint ca.pem server-key.pem server.pem ]"
+          - result.systemout ShouldContainSubstring "praxis=[.fingerprint ca.pem server-key.pem server.pem ]"
+          - result.systemout ShouldContainSubstring "crosscodexd=[.fingerprint ca.pem server-key.pem server.pem ]"
           - result.systemout ShouldContainSubstring "client=[.fingerprint ca.pem client-key.pem client.pem ]"
           - result.systemout ShouldContainSubstring "attestation=[.fingerprint attestation-key.pem attestation-pub.pem ]"
-          - result.systemout ShouldContainSubstring "reloads=3"
+          - result.systemout ShouldContainSubstring "db_key=own"
+          - result.systemout ShouldContainSubstring "nats_key_in_db=no"
+          - result.systemout ShouldContainSubstring "reloads=0"
 
-  - name: A client volume that still holds the attestation keypair is stripped
+  - name: A volume holding another service's key, and a client volume holding the attestation keypair, are reloaded
     steps:
       - type: exec
-        script: bash {{.root}}/test/tooling/lib/certs-load-upgrade.sh {{.root}} split2
+        script: bash {{.root}}/test/tooling/lib/certs-load-upgrade.sh {{.root}} foreign-key
         timeout: 300
         assertions:
           - result.code ShouldEqual 0
-          - result.systemout ShouldContainSubstring "server=[.fingerprint ca.pem server-key.pem server.pem ]"
+          - result.systemout ShouldContainSubstring "db=[.fingerprint ca.pem server-key.pem server.pem ]"
           - result.systemout ShouldContainSubstring "client=[.fingerprint ca.pem client-key.pem client.pem ]"
           - result.systemout ShouldContainSubstring "attestation=[.fingerprint attestation-key.pem attestation-pub.pem ]"
+          - result.systemout ShouldContainSubstring "db_key=own"
+          - result.systemout ShouldContainSubstring "nats_key_in_db=no"
           - result.systemout ShouldContainSubstring "reloads=2"
 
-  - name: Volumes already holding exactly their allowlists are not reloaded
+  - name: Volumes already holding exactly their own files are not reloaded
     steps:
       - type: exec
         script: bash {{.root}}/test/tooling/lib/certs-load-upgrade.sh {{.root}} current
         timeout: 300
         assertions:
           - result.code ShouldEqual 0
-          - result.systemout ShouldContainSubstring "server=[.fingerprint ca.pem server-key.pem server.pem ]"
+          - result.systemout ShouldContainSubstring "db=[.fingerprint ca.pem server-key.pem server.pem ]"
           - result.systemout ShouldContainSubstring "client=[.fingerprint ca.pem client-key.pem client.pem ]"
           - result.systemout ShouldContainSubstring "attestation=[.fingerprint attestation-key.pem attestation-pub.pem ]"
+          - result.systemout ShouldContainSubstring "db_key=own"
           - result.systemout ShouldContainSubstring "reloads=0"
