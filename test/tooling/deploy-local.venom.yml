@@ -1,0 +1,105 @@
+name: deploy:local runs a persistent offline stack under its own identity
+
+vars:
+  root: "."
+
+testcases:
+  - name: Without deploy/.env deploy:local fails once with the copy instruction and starts nothing
+    steps:
+      - type: exec
+        script: |
+          out=$(bash {{.root}}/test/tooling/lib/deploy-local.sh {{.root}} no deploy:local)
+          echo "$out"
+          echo "missing_count=$(grep -c 'deploy/.env missing. Copy deploy/.env.example to deploy/.env and fill it in.' <<<"$out")"
+        assertions:
+          - result.systemout ShouldNotContainSubstring task_exit=0
+          - result.systemout ShouldContainSubstring missing_count=1
+          - result.systemout ShouldNotContainSubstring Traceback
+          - result.systemout ShouldNotContainSubstring ran=
+          - result.systemout ShouldNotContainSubstring "go build"
+
+  - name: deploy:local brings up the local identity, offline, on LiteLLM
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/deploy-local.sh {{.root}} yes deploy:local
+        assertions:
+          - result.systemout ShouldContainSubstring ran=local_up.sh
+          - result.systemout ShouldContainSubstring COMPOSE_PROJECT_NAME=crosscodex-local
+          - result.systemout ShouldContainSubstring CROSSCODEX_CERTS_VOLUME=crosscodex-local-certs
+          - result.systemout ShouldContainSubstring CROSSCODEX_CLIENT_CERTS_VOLUME=crosscodex-local-client-certs
+          - result.systemout ShouldContainSubstring CROSSCODEX_ATTESTATION_KEYS_VOLUME=crosscodex-local-attestation-keys
+          - result.systemout ShouldContainSubstring CROSSCODEX_GATEWAY_PORT=50251
+          - result.systemout ShouldContainSubstring CERTS_DIR=ROOT/.local/crosscodex/pki
+          - result.systemout ShouldContainSubstring OUT_DIR=ROOT/.local/crosscodex
+          - result.systemout ShouldContainSubstring LLM_GATEWAY=litellm
+          # The bring-up failed (stub exit 3), so the CLI is not built.
+          - result.systemout ShouldNotContainSubstring "go build"
+          - result.systemout ShouldNotContainSubstring task_exit=0
+
+  - name: deploy:local and deploy:smoke:up share no project, volume, port or PKI dir
+    steps:
+      - type: exec
+        script: |
+          keys='^(COMPOSE_PROJECT_NAME|CROSSCODEX_CERTS_VOLUME|CROSSCODEX_CLIENT_CERTS_VOLUME|CROSSCODEX_ATTESTATION_KEYS_VOLUME|CROSSCODEX_GATEWAY_PORT|CERTS_DIR)='
+          local_id=$(bash {{.root}}/test/tooling/lib/deploy-local.sh {{.root}} yes deploy:local | grep -E "$keys" | sort)
+          smoke_id=$(bash {{.root}}/test/tooling/lib/deploy-local.sh {{.root}} yes deploy:smoke:up | grep -E "$keys" | sort)
+          echo "local_keys=$(wc -l <<<"$local_id") smoke_keys=$(wc -l <<<"$smoke_id")"
+          echo "smoke: $(tr '\n' ' ' <<<"$smoke_id")"
+          for k in COMPOSE_PROJECT_NAME CROSSCODEX_CERTS_VOLUME CROSSCODEX_CLIENT_CERTS_VOLUME CROSSCODEX_ATTESTATION_KEYS_VOLUME CROSSCODEX_GATEWAY_PORT CERTS_DIR; do
+            l=$(grep "^$k=" <<<"$local_id"); s=$(grep "^$k=" <<<"$smoke_id")
+            [ -n "$l" ] && [ "$l" != "$s" ] || echo "shared=$k"
+          done
+        assertions:
+          - result.systemout ShouldContainSubstring "local_keys=6 smoke_keys=6"
+          - result.systemout ShouldNotContainSubstring shared=
+          - result.systemout ShouldContainSubstring COMPOSE_PROJECT_NAME=crosscodex-smoke
+          - result.systemout ShouldContainSubstring CROSSCODEX_GATEWAY_PORT=50151
+          - result.systemout ShouldContainSubstring CERTS_DIR=ROOT/.test-output/deploy-smoke/certs
+
+  - name: deploy:local refuses the Praxis gateway before starting anything
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/deploy-local.sh {{.root}} yes deploy:local LLM_GATEWAY=praxis
+        assertions:
+          - result.systemout ShouldNotContainSubstring task_exit=0
+          - "result.systemout ShouldContainSubstring \"LLM_GATEWAY has an invalid value : 'praxis' (allowed values : [litellm])\""
+          - result.systemout ShouldNotContainSubstring ran=
+
+  - name: deploy:local:down stops the local stack and keeps its volumes
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/deploy-local.sh {{.root}} yes deploy:local:down
+        assertions:
+          - result.systemout ShouldContainSubstring task_exit=0
+          - result.systemout ShouldContainSubstring "nested_task=deploy:down"
+          - result.systemout ShouldNotContainSubstring VOLUMES=1
+          - result.systemout ShouldContainSubstring COMPOSE_PROJECT_NAME=crosscodex-local
+          - result.systemout ShouldContainSubstring CROSSCODEX_CERTS_VOLUME=crosscodex-local-certs
+          - result.systemout ShouldContainSubstring CROSSCODEX_CLIENT_CERTS_VOLUME=crosscodex-local-client-certs
+          - result.systemout ShouldContainSubstring CROSSCODEX_ATTESTATION_KEYS_VOLUME=crosscodex-local-attestation-keys
+          - result.systemout ShouldContainSubstring COMPOSE_OVERLAY=ROOT/deploy/compose.offline.yaml
+          - result.systemout ShouldContainSubstring CROSSCODEX_GATEWAY_CONFIG_DIR=ROOT/.local/crosscodex
+          - result.systemout ShouldContainSubstring pki=present
+
+  - name: deploy:local:down VOLUMES=1 drops the volumes on the local identity, then the PKI
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/deploy-local.sh {{.root}} yes deploy:local:down VOLUMES=1
+        assertions:
+          - result.systemout ShouldContainSubstring task_exit=0
+          - result.systemout ShouldContainSubstring "nested_task=deploy:down VOLUMES=1"
+          - result.systemout ShouldContainSubstring COMPOSE_PROJECT_NAME=crosscodex-local
+          - result.systemout ShouldContainSubstring CROSSCODEX_CERTS_VOLUME=crosscodex-local-certs
+          - result.systemout ShouldContainSubstring CROSSCODEX_ATTESTATION_KEYS_VOLUME=crosscodex-local-attestation-keys
+          - result.systemout ShouldContainSubstring COMPOSE_OVERLAY=ROOT/deploy/compose.offline.yaml
+          - result.systemout ShouldContainSubstring CROSSCODEX_GATEWAY_CONFIG_DIR=ROOT/.local/crosscodex
+          - result.systemout ShouldContainSubstring pki=removed
+
+  - name: deploy:local:down VOLUMES=1 keeps the PKI when the volume teardown fails
+    steps:
+      - type: exec
+        script: STUB_TASK_EXIT=1 bash {{.root}}/test/tooling/lib/deploy-local.sh {{.root}} yes deploy:local:down VOLUMES=1
+        assertions:
+          - result.systemout ShouldNotContainSubstring task_exit=0
+          - result.systemout ShouldContainSubstring "nested_task=deploy:down VOLUMES=1"
+          - result.systemout ShouldContainSubstring pki=present

@@ -1,5 +1,5 @@
-# Offline overlay for the deploy SMOKE stack. Applied on top of compose.yaml
-# only by the smoke path (test/deploy/smoke_up.sh exports COMPOSE_OVERLAY);
+# Offline overlay for the deploy:local and deploy:smoke stacks. Applied on top
+# of compose.yaml only by deploy/local_up.sh (which exports COMPOSE_OVERLAY);
 # the production `task deploy:up` never loads it, so production stays OpenAI-backed.
 #
 # It adds a local Ollama provider (baked-model image reused from the integration
@@ -10,7 +10,7 @@ services:
   ollama:
     # Baked-model image from the integration stack (llama3.2:1b +
     # granite-embedding:30m), built from test/ollama/Containerfile by
-    # smoke_up.sh for the local (default) path.
+    # local_up.sh for the local (default) path.
     image: crosscodex-test-ollama:latest
     restart: unless-stopped
     cap_drop: [ALL]
@@ -47,10 +47,11 @@ services:
     # Mount the rendered offline config at a DISTINCT target: overlay volume
     # lists concatenate, so reusing /app/config.yaml would collide with the base
     # mount. The command override (replaced, not merged) selects this file.
-    # Path is relative to this compose file's dir (deploy/), matching the
-    # ../.test-output/... pattern used by test/compose.yaml.
+    # local_up.sh renders the file into CROSSCODEX_GATEWAY_CONFIG_DIR (its
+    # OUT_DIR). The default, relative to this compose file's dir (deploy/), is
+    # the smoke stack's, so a hand-run compose against it still resolves.
     volumes:
-      - ../.test-output/deploy-smoke/litellm_config.yaml:/app/config.offline.yaml:ro
+      - ${CROSSCODEX_GATEWAY_CONFIG_DIR:-../.test-output/deploy-smoke}/litellm_config.yaml:/app/config.offline.yaml:ro
     command:
       [
         "--config",

@@ -54,7 +54,7 @@ to detect it, and the fix. The user-facing smoke instructions are in
   a container marker was found). Compare `podman info --format '{{.Store.GraphDriverName}}'`
   in the environment used by each task.
 - **Fix:** both `deploy/local_up.sh` (which `test/deploy/smoke_up.sh` sources)
-  and the `deploy:smoke:down` task source
+  and the `deploy:smoke:down` and `deploy:local:down` tasks source
   `test/deploy/podman_env.sh`, the single definition. It acts only when
   `scripts/in-container.sh` reports a container, keeps any `TMPDIR` or
   `STORAGE_DRIVER` you already set, and creates the `TMPDIR` directory. Source

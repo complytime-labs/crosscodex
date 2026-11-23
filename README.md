@@ -324,7 +324,7 @@ Model answers cut off at `max_tokens`:
 
 ## Quick Start
 
-**Prerequisites**: Go >= 1.23, Task (taskfile.dev), container engine (podman or docker)
+**Prerequisites**: Go >= 1.26, Task (taskfile.dev), container engine (podman or docker)
 
 ### 1. Build from source
 
@@ -398,6 +398,25 @@ crosscodex catalog inspect <catalog-id>
 ```
 
 ### 8. Start an analysis
+
+Analysis runs in the `crosscodexd` daemon. To try it on this machine without an API key, bring up a persistent, offline stack (a small local model, its own ports, volumes and certificates; see [Try it locally](deploy/README.md#try-it-locally)):
+
+```sh
+cp deploy/.env.example deploy/.env   # then set the three passwords: openssl rand -hex 24
+task deploy:local
+```
+
+The task builds the CLI and prints how to call it with the stack's client certificate. Check that it answers:
+
+```sh
+.local/crosscodex/bin/crosscodex --endpoint https://localhost:50251 \
+  --tls-ca .local/crosscodex/pki/ca.pem \
+  --tls-cert .local/crosscodex/pki/client.pem \
+  --tls-key .local/crosscodex/pki/client-key.pem \
+  catalog list
+```
+
+The stack has its own database, so import the catalogs into it with `catalog import` using the same flags. The commands below take those flags too. `task deploy:local:down` stops the stack and keeps its data; `task deploy:local:down VOLUMES=1` also drops the data, key volumes and PKI.
 
 An analysis maps the controls of a source catalog onto a target catalog (a crosswalk, for example CSF 2.0 onto SP 800-53):
 

@@ -11,7 +11,8 @@
 #   * COMPOSE_PROJECT_NAME (required) — own pod/containers/network and own
 #                               (auto-namespaced) data volumes.
 #   * CERTS_DIR (required)    — host dir for this stack's PKI.
-#   * OUT_DIR (required)      — host dir the rendered gateway config is written to.
+#   * OUT_DIR (required)      — host dir the rendered gateway config is written
+#                               to; the offline overlays mount it from there.
 #   * CROSSCODEX_CERTS_VOLUME, CROSSCODEX_CLIENT_CERTS_VOLUME,
 #     CROSSCODEX_ATTESTATION_KEYS_VOLUME, CROSSCODEX_GATEWAY_PORT — read by the
 #                               child `task deploy:up` and compose.yaml; unset,
@@ -174,7 +175,9 @@ fi
 # Render the offline gateway config the overlay mounts, using render_host -- the
 # address the gateway (a container) uses to reach the model server: the compose
 # service name on the baked path, or the host-gateway-translated override for an
-# external host (LiteLLM only). Written to OUT_DIR, which the overlay bind-mounts.
+# external host (LiteLLM only). Written to OUT_DIR, which the overlay bind-mounts
+# as CROSSCODEX_GATEWAY_CONFIG_DIR.
+export CROSSCODEX_GATEWAY_CONFIG_DIR="${OUT_DIR}"
 case "${LLM_GATEWAY}" in
 praxis)
 	gateway_template="${ROOT_DIR}/deploy/praxis/config.offline.yaml.tmpl"
