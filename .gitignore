@@ -36,6 +36,8 @@ Thumbs.db
 credentials/
 .env
 .env.local
+# task deploy:local state: PKI (with the CA key), rendered gateway config, CLI
+/.local/
 
 # Property test failure artifacts (rapid regression captures)
 **/testdata/rapid/

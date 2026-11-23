@@ -294,6 +294,43 @@ Or tail a specific service (pass service names via `CLI_ARGS`):
 task deploy:logs -- crosscodexd
 ```
 
+### Try it locally
+
+To try CrossCodex on one machine without an API key, bring up a persistent, offline copy of the stack:
+
+```bash
+cp deploy/.env.example deploy/.env   # then set the three passwords: openssl rand -hex 24
+task deploy:local
+```
+
+`deploy:local` runs the stack the smoke test runs (the baked-model Ollama container behind LiteLLM, see [Run smoke test](#run-smoke-test)), under its own identity: compose project `crosscodex-local`, key volumes `crosscodex-local-certs-<service>`, `crosscodex-local-client-certs` and `crosscodex-local-attestation-keys`, gateway port `50251`, and its PKI in `.local/crosscodex/pki`. Neither the production stack (port `50051`) nor `deploy:smoke` uses any of them, so the smoke test's teardown never drops its data. `OPENAI_API_KEY` and `CROSSCODEX_LLM_API_KEY` may stay placeholders. The offline provider knobs of the smoke test apply too (`OLLAMA_HOST`, `OPENAI_COMPAT_HOST` and their model variables, `LOCAL=1`); `LLM_GATEWAY=praxis` is refused. Without `deploy/.env` it stops before building or starting anything and prints the copy instruction. Inside a container with no systemd, the [smoke stack's dev-container fixes](../docs/dev/podman-dev-container.md) apply here too.
+
+When the gateway is healthy, the task builds the CLI into `.local/crosscodex/bin/crosscodex` and prints the command to reach the stack with the stack's client certificate. From the repository root it is:
+
+```bash
+.local/crosscodex/bin/crosscodex --endpoint https://localhost:50251 \
+  --tls-ca .local/crosscodex/pki/ca.pem \
+  --tls-cert .local/crosscodex/pki/client.pem \
+  --tls-key .local/crosscodex/pki/client-key.pem \
+  catalog list
+```
+
+`.local/crosscodex/pki` also holds the stack's CA private key, which can mint client certificates the stack accepts as `admin`; it is gitignored, keep it to yourself. CPU-only inference on the baked model is slow: expect an analysis of a small catalog to take minutes.
+
+Stop the stack and keep its data for the next `task deploy:local`:
+
+```bash
+task deploy:local:down
+```
+
+To drop the data, key volumes and PKI too:
+
+```bash
+task deploy:local:down VOLUMES=1
+```
+
+It runs `deploy:down VOLUMES=1` on the local stack, then removes `.local/crosscodex` (the PKI) only if that succeeded, so a failed teardown keeps the CA key that matches the volumes still there.
+
 ### Run smoke test
 
 Container-driven end-to-end smoke test (bring up the stack, import a catalog and run its analysis over mTLS, tear down):
@@ -317,7 +354,7 @@ task deploy:smoke OLLAMA_HOST=http://your-host:11434 \
 
 The `OLLAMA_HOST` override works with `LLM_GATEWAY=litellm` only. The host is probed and its models pulled before the stack starts, so an unreachable provider or missing model fails fast. `OLLAMA_HOST` may omit the scheme (`your-host:11434`); `http://` is assumed.
 
-To use an Ollama running on your **host machine**, point at loopback — `OLLAMA_HOST=localhost:11435` (any port other than the baked default `11434`). LiteLLM runs in the compose bridge network, so `smoke_up.sh` rewrites a `localhost`/`127.0.0.1` host to `host.containers.internal` when rendering the LiteLLM config, and the `compose.offline-remote.yaml` overlay maps that name to the host gateway. This needs podman ≥ 4.1 (or a docker-compose that supports `host-gateway`). A `localhost` override is reachable from the host for the pre-flight probe but only reachable from the container via this rewrite — without it, `localhost` inside the container is the container itself.
+To use an Ollama running on your **host machine**, point at loopback — `OLLAMA_HOST=localhost:11435` (any port other than the baked default `11434`). LiteLLM runs in the compose bridge network, so `deploy/local_up.sh` rewrites a `localhost`/`127.0.0.1` host to `host.containers.internal` when rendering the LiteLLM config, and the `compose.offline-remote.yaml` overlay maps that name to the host gateway. This needs podman ≥ 4.1 (or a docker-compose that supports `host-gateway`). A `localhost` override is reachable from the host for the pre-flight probe but only reachable from the container via this rewrite — without it, `localhost` inside the container is the container itself.
 
 #### llama.cpp, vLLM or another OpenAI-compatible server
 
@@ -355,7 +392,7 @@ The check is a snapshot taken when the job's panel stages start, from the one de
     OPENAI_COMPAT_PANEL_MODELS=qwen3.8-flash-next,gpt-oss-120b,qwen3.8-27b
   ```
 
-  With the Ollama default all three aliases are one model, so `deploy/compose.offline.yaml` and `deploy/compose.offline-praxis.yaml` set `CROSSCODEX_ANALYSIS_{RELATIONSHIP,REQUIRES,CRITIQUE}_ALLOW_SHARED_PANEL_MODELS=true` on `crosscodexd`. `deploy/compose.offline-remote.yaml` (a remote Ollama or an OpenAI-compatible server) passes the same variables through as `false` by default. `smoke_up.sh` sets them to `true` only for an Ollama run without `OLLAMA_PANEL_MODELS`, so an explicit three-model list and the OpenAI-compatible path stay checked by the daemon. The single-model Ollama smoke stack therefore does not exercise the diversity check; production never sets these.
+  With the Ollama default all three aliases are one model, so `deploy/compose.offline.yaml` and `deploy/compose.offline-praxis.yaml` set `CROSSCODEX_ANALYSIS_{RELATIONSHIP,REQUIRES,CRITIQUE}_ALLOW_SHARED_PANEL_MODELS=true` on `crosscodexd`. `deploy/compose.offline-remote.yaml` (a remote Ollama or an OpenAI-compatible server) passes the same variables through as `false` by default. `deploy/local_up.sh` sets them to `true` only for an Ollama run without `OLLAMA_PANEL_MODELS`, so an explicit three-model list and the OpenAI-compatible path stay checked by the daemon. The single-model Ollama smoke stack therefore does not exercise the diversity check; production never sets these.
 
 #### Tuning a self-hosted model server
 

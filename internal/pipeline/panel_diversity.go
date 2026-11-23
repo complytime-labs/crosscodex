@@ -48,6 +48,10 @@ const (
 	panelRecordNotRecorded     = "panel independence not recorded"
 )
 
+// PanelNotRecorded is the independence run status shows for a panel whose
+// record is missing or unreadable.
+const PanelNotRecorded = panelRecordNotRecorded
+
 // panelSpec is one stage's panel: the aliases whose votes the stage counts
 // and whether analysis.<stage>.allow_shared_panel_models is set.
 type panelSpec struct {
@@ -350,6 +354,22 @@ func parsePanelRecord(raw string) (panelRecord, error) {
 		return panelRecord{}, fmt.Errorf("reading a stored panel record: %w", err)
 	}
 	return rec, nil
+}
+
+// PanelProvenanceFromRecord converts a stored Stage.PanelRecord into the
+// API's PanelProvenance, for callers that read stages from a Store without
+// the Service (the embedded daemon). A stage with no record has no panel
+// to show, so an empty raw returns nil, nil; one that cannot be read returns
+// an error rather than a blank panel.
+func PanelProvenanceFromRecord(raw string) (*pb.PanelProvenance, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	rec, err := parsePanelRecord(raw)
+	if err != nil {
+		return nil, err
+	}
+	return rec.toProto(), nil
 }
 
 func (r panelRecord) byProducts() map[string]any {

@@ -113,6 +113,24 @@ vars:
   # Host-loopback port compose.offline-praxis.yaml publishes praxis's mTLS
   # listener on, for smoke_up.sh's direct gateway probes (LLM_GATEWAY=praxis).
   SMOKE_PRAXIS_PORT: '{{.SMOKE_PRAXIS_PORT | default "54443"}}'
+  # Isolation identity for the persistent deploy:local stack, shared by local
+  # and local:down: its own project (which also namespaces its data volumes),
+  # key volumes, gateway port and PKI dir, so neither the production stack nor
+  # deploy:smoke (whose teardown drops its volumes) can touch it. LOCAL_DIR
+  # (gitignored) holds the PKI (pki/, CA key included), the rendered gateway
+  # config and the CLI (bin/crosscodex).
+  LOCAL_PROJECT: crosscodex-local
+  LOCAL_CERTS_VOLUME: crosscodex-local-certs
+  LOCAL_CLIENT_CERTS_VOLUME: crosscodex-local-client-certs
+  LOCAL_ATTESTATION_KEYS_VOLUME: crosscodex-local-attestation-keys
+  LOCAL_GATEWAY_PORT: "50251"
+  LOCAL_DIR: "{{.ROOT_DIR}}/.local/crosscodex"
+  LOCAL_CERTS_DIR: "{{.ROOT_DIR}}/.local/crosscodex/pki"
+  # The local stack's gateway: the CLI var or env, else litellm; like
+  # SMOKE_LLM_GATEWAY it ignores deploy/.env. local accepts only litellm (the
+  # Praxis offline overlay needs a probe port the local identity does not
+  # have), so an explicit LLM_GATEWAY=praxis is refused rather than ignored.
+  LOCAL_LLM_GATEWAY: '{{.LLM_GATEWAY | default "litellm"}}'
   # Opt-in fast build path. LOCAL=1 builds the Go binaries on the host and copies
   # them into thin distroless images (deploy/Dockerfile.local), skipping the
   # hermetic in-container Go build. Requires a local Go toolchain and trades
@@ -427,7 +445,21 @@ tasks:
       # This keeps VOLUMES=1 a true full teardown and guarantees the next `up`
       # reloads a freshly generated PKI rather than stale certs (mirrors
       # test:integration's cert teardown).
-      - '{{if eq .VOLUMES "1"}}{{.CONTAINER_ENGINE}} volume rm -f {{range splitList " " .CERT_SERVICES}}{{$.CERTS_VOLUME}}-{{.}} {{end}}{{.CERTS_VOLUME}} {{.CLIENT_CERTS_VOLUME}} {{.ATTESTATION_KEYS_VOLUME}}{{else}}true{{end}}'
+      # Only names that exist exactly are passed to `volume rm`: podman (6.1)
+      # resolves a name with no exact match as a prefix, so the bare
+      # <CERTS_VOLUME>, absent on any stack loaded since #298, matched every
+      # <CERTS_VOLUME>-<service> and failed "more than one result" even with
+      # -f. A listing that fails, or a volume that exists but won't go, fails
+      # the task.
+      - |
+        {{if eq .VOLUMES "1"}}
+        existing="$({{.CONTAINER_ENGINE}} volume ls --format '{{`{{.Name}}`}}')" || exit 1
+        for v in {{range splitList " " .CERT_SERVICES}}{{$.CERTS_VOLUME}}-{{.}} {{end}}{{.CERTS_VOLUME}} {{.CLIENT_CERTS_VOLUME}} {{.ATTESTATION_KEYS_VOLUME}}; do
+          if printf '%s\n' "${existing}" | grep -qxF -- "${v}"; then
+            {{.CONTAINER_ENGINE}} volume rm "${v}" || exit 1
+          fi
+        done
+        {{end}}
 
   logs:
     desc: Tail stack logs
@@ -556,3 +588,81 @@ tasks:
       # missing volume.
       - export ROOT_DIR="{{.ROOT_DIR}}" && . {{.ROOT_DIR}}/test/deploy/podman_env.sh && task deploy:down VOLUMES=1 && {{.CONTAINER_ENGINE}} volume rm -f {{.SMOKE_PROJECT}}_crosscodex-backup
       - rm -rf {{.SMOKE_CERTS_DIR}}
+
+  local:
+    desc: Bring up a persistent, offline stack to try CrossCodex under its own identity (project crosscodex-local, port 50251, PKI in .local/crosscodex/pki), then build the CLI and print how to connect (LOCAL=1 for the fast host-build path)
+    vars:
+      LLM_GATEWAY: "{{.LOCAL_LLM_GATEWAY}}"
+    requires:
+      vars:
+        - name: LLM_GATEWAY
+          enum: [litellm]
+    # Checked before cmds, so nothing is built or started without deploy/.env;
+    # same message as deploy:up, which local_up.sh's child would otherwise
+    # reach only after the provider checks and image builds.
+    preconditions:
+      - sh: "test -f {{.ROOT_DIR}}/deploy/.env"
+        msg: "deploy/.env missing. Copy deploy/.env.example to deploy/.env and fill it in."
+    # The local identity, exported to local_up.sh, its child `task deploy:up`
+    # and compose.yaml exactly as smoke:up exports the smoke identity. OUT_DIR
+    # is where local_up.sh renders the gateway config the offline overlay mounts.
+    env:
+      COMPOSE_PROJECT_NAME: "{{.LOCAL_PROJECT}}"
+      CROSSCODEX_CERTS_VOLUME: "{{.LOCAL_CERTS_VOLUME}}"
+      CROSSCODEX_CLIENT_CERTS_VOLUME: "{{.LOCAL_CLIENT_CERTS_VOLUME}}"
+      CROSSCODEX_ATTESTATION_KEYS_VOLUME: "{{.LOCAL_ATTESTATION_KEYS_VOLUME}}"
+      CROSSCODEX_GATEWAY_PORT: "{{.LOCAL_GATEWAY_PORT}}"
+      CERTS_DIR: "{{.LOCAL_CERTS_DIR}}"
+      OUT_DIR: "{{.LOCAL_DIR}}"
+      ROOT_DIR: "{{.ROOT_DIR}}"
+      LLM_GATEWAY: "{{.LLM_GATEWAY}}"
+      PRAXIS_MODELS_ENDPOINT: "false"
+      # Offline LLM provider knobs, as for smoke:up: the baked-model Ollama
+      # container by default, OLLAMA_HOST for an existing Ollama, or
+      # OPENAI_COMPAT_HOST for another OpenAI-compatible server.
+      OLLAMA_HOST: "{{.OLLAMA_HOST}}"
+      OLLAMA_CHAT_MODEL: "{{.OLLAMA_CHAT_MODEL}}"
+      OLLAMA_EMBED_MODEL: "{{.OLLAMA_EMBED_MODEL}}"
+      OPENAI_COMPAT_HOST: '{{.OPENAI_COMPAT_HOST | default ""}}'
+      OPENAI_COMPAT_CHAT_MODEL: '{{.OPENAI_COMPAT_CHAT_MODEL | default ""}}'
+      OPENAI_COMPAT_EMBED_MODEL: '{{.OPENAI_COMPAT_EMBED_MODEL | default ""}}'
+      OPENAI_COMPAT_PANEL_MODELS: '{{.OPENAI_COMPAT_PANEL_MODELS | default ""}}'
+      OLLAMA_PANEL_MODELS: '{{.OLLAMA_PANEL_MODELS | default ""}}'
+      CONTAINER_ENGINE: "{{.CONTAINER_ENGINE}}"
+    cmds:
+      - LOCAL="{{.LOCAL}}" COMPOSE_CMD="{{.COMPOSE_CMD}}" bash {{.ROOT_DIR}}/deploy/local_up.sh
+      # The host CLI dials the published gateway port over mTLS. Generated API
+      # code is gitignored, so a fresh clone needs it before the build.
+      # CGO_ENABLED=0 mirrors the release binary, as smoke_up.sh does.
+      - task: :dev:generate
+      - CGO_ENABLED=0 go build -o {{.LOCAL_DIR}}/bin/crosscodex {{.ROOT_DIR}}/cmd/crosscodex
+      - |
+        echo
+        echo "CrossCodex is running offline at https://localhost:{{.LOCAL_GATEWAY_PORT}} (compose project {{.LOCAL_PROJECT}})."
+        echo "Run the CLI with the stack's client certificate, for example:"
+        echo
+        echo "  {{.LOCAL_DIR}}/bin/crosscodex --endpoint https://localhost:{{.LOCAL_GATEWAY_PORT}} --tls-ca {{.LOCAL_CERTS_DIR}}/ca.pem --tls-cert {{.LOCAL_CERTS_DIR}}/client.pem --tls-key {{.LOCAL_CERTS_DIR}}/client-key.pem catalog list"
+        echo
+        echo "Stop it with 'task deploy:local:down'; its data is kept for the next 'task deploy:local'."
+
+  local:down:
+    desc: >-
+      Stop the deploy:local stack, keeping its data volumes and PKI. Pass VOLUMES=1 to drop them: it runs
+      deploy:down VOLUMES=1 on the local stack, then removes .local/crosscodex (the PKI and its CA key) only if that succeeded.
+    # Same identity as local, so deploy:down acts on the local stack. The
+    # offline overlay lets compose also remove the ollama service it added;
+    # CROSSCODEX_GATEWAY_CONFIG_DIR keeps its mount on the local dir.
+    env:
+      COMPOSE_PROJECT_NAME: "{{.LOCAL_PROJECT}}"
+      CROSSCODEX_CERTS_VOLUME: "{{.LOCAL_CERTS_VOLUME}}"
+      CROSSCODEX_CLIENT_CERTS_VOLUME: "{{.LOCAL_CLIENT_CERTS_VOLUME}}"
+      CROSSCODEX_ATTESTATION_KEYS_VOLUME: "{{.LOCAL_ATTESTATION_KEYS_VOLUME}}"
+      CROSSCODEX_GATEWAY_PORT: "{{.LOCAL_GATEWAY_PORT}}"
+      COMPOSE_OVERLAY: "{{.ROOT_DIR}}/deploy/compose.offline.yaml"
+      CROSSCODEX_GATEWAY_CONFIG_DIR: "{{.LOCAL_DIR}}"
+    cmds:
+      # Same podman runtime view as local_up.sh (TMPDIR/STORAGE_DRIVER in a
+      # container). Without VOLUMES=1 the data and key volumes survive. With it,
+      # the PKI is removed only after the volumes were, so a failed teardown
+      # keeps the CA key that matches the volumes still there.
+      - export ROOT_DIR="{{.ROOT_DIR}}" && . {{.ROOT_DIR}}/test/deploy/podman_env.sh && task deploy:down{{if eq .VOLUMES "1"}} VOLUMES=1 && rm -rf "{{.LOCAL_DIR}}"{{end}}

@@ -46,13 +46,15 @@ to detect it, and the fix. The user-facing smoke instructions are in
   directory", or `deploy:smoke:down` leaves containers or volumes behind because
   it sees a different podman storage than the one `deploy:smoke:up` built in.
 - **Cause:** inside a container, podman needs a buildah temp dir off the
-  overlay mount and the `vfs` storage driver. `smoke_up.sh` exports
+  overlay mount and the `vfs` storage driver. `deploy/local_up.sh` (sourced by
+  `smoke_up.sh`) exports
   `TMPDIR=<repo>/.test-output/buildtmp` and `STORAGE_DRIVER=vfs`; a task that
   talks to podman without them uses another runtime view.
 - **Detect:** `bash scripts/in-container.sh && echo in-container` (exit 0 means
   a container marker was found). Compare `podman info --format '{{.Store.GraphDriverName}}'`
   in the environment used by each task.
-- **Fix:** both `test/deploy/smoke_up.sh` and the `deploy:smoke:down` task source
+- **Fix:** both `deploy/local_up.sh` (which `test/deploy/smoke_up.sh` sources)
+  and the `deploy:smoke:down` and `deploy:local:down` tasks source
   `test/deploy/podman_env.sh`, the single definition. It acts only when
   `scripts/in-container.sh` reports a container, keeps any `TMPDIR` or
   `STORAGE_DRIVER` you already set, and creates the `TMPDIR` directory. Source

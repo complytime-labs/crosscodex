@@ -12,8 +12,9 @@ import (
 // runs (every other character is a separator), digit runs written with ASCII
 // digits (every Unicode decimal digit maps to its numeric value, so "AC-２" and
 // Arabic-Indic digits match "AC-2") and stripped of leading zeros, joined with
-// ".". It encodes no knowledge of any framework's identifier syntax. An
-// identifier with no letters or digits canonicalises to "".
+// ".". Invalid UTF-8 bytes are separators. It encodes no knowledge of any
+// framework's identifier syntax. An identifier with no letters or digits
+// canonicalises to "".
 func Canonical(id string) string {
 	var parts []string
 	var run []rune
@@ -31,7 +32,7 @@ func Canonical(id string) string {
 		parts = append(parts, s)
 		run = run[:0]
 	}
-	for _, r := range strings.ToLower(norm.NFKC.String(id)) {
+	for _, r := range strings.ToLower(norm.NFKC.String(strings.ToValidUTF8(id, "\uFFFD"))) {
 		isDigit := unicode.IsDigit(r)
 		if !isDigit && !unicode.IsLetter(r) {
 			flush()

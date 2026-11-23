@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"unicode/utf8"
 )
 
 // maxPageTokenLen bounds the client-supplied token before decoding. Three
@@ -31,6 +32,11 @@ func DecodeCursor(token string) (*Cursor, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
 		return nil, fmt.Errorf("%w: not base64url; pass the next_page_token from the previous response unchanged", ErrInvalidPageToken)
+	}
+	// json.Unmarshal silently rewrites invalid UTF-8 in strings to U+FFFD,
+	// so such a token would decode to a cursor whose own token differs.
+	if !utf8.Valid(raw) {
+		return nil, fmt.Errorf("%w: not valid UTF-8; pass the next_page_token from the previous response unchanged", ErrInvalidPageToken)
 	}
 	var parts [3]string
 	var probe []json.RawMessage

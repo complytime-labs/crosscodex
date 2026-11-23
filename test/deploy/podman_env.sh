@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # podman_env.sh — Source this (do not execute it) before any podman/compose call
 # against the smoke stack, so every step sees the same podman runtime view.
-# Sourced by test/deploy/smoke_up.sh and the deploy:smoke:down task.
+# Sourced by deploy/local_up.sh (which test/deploy/smoke_up.sh sources) and by
+# the deploy:local, deploy:local:down and deploy:smoke:down tasks.
 #
 # Podman overlay workaround: point buildah temp to a workspace subdir to avoid
 # "mounting an overlay over build context directory" errors. Applies only inside

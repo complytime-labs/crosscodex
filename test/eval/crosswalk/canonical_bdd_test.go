@@ -31,7 +31,14 @@ var _ = Describe("Canonical", func() {
 		Entry("Devanagari digit", "SA-\u096d", "sa.7"),
 		Entry("fullwidth letters", "\uff21\uff23-2", "ac.2"),
 		Entry("mixed script digits in one run", "x\u0661\uff12\u0663", "x.123"),
+		Entry("invalid byte before a compatibility letter", "\xf3\u03f0", "\u03ba"),
+		Entry("invalid byte between letters is a separator", "a\xffb", "a.b"),
 	)
+
+	It("is idempotent on input with invalid UTF-8", func() {
+		once := crosswalk.Canonical("\xf3\u03f0")
+		Expect(crosswalk.Canonical(once)).To(Equal(once))
+	})
 
 	It("maps every Unicode decimal digit to the ASCII digit of the same value", func() {
 		zeros := 0

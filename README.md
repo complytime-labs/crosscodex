@@ -16,6 +16,14 @@ CrossCodex is in early development. All foundational, domain, and service packag
 
 ## Upgrading
 
+OSCAL mapping export and release readiness (#215, #17). Mostly additive; four behaviours change:
+
+- `crosscodex results export` accepts `--format oscal-mapping`, which writes a completed job as an OSCAL 1.2.3 mapping collection. See [docs/oscal-mapping-export.md](docs/oscal-mapping-export.md).
+- **`--control` is trimmed** of surrounding whitespace for `json` and `csv` exports, and for `results candidates`, so ` AC-1 ` now matches `AC-1`. Otherwise `json` and `csv` output is unchanged.
+- **`task deploy:down VOLUMES=1` removes only the key volumes that exist,** each by exact name and without `-f`. A volume still in use, or a failed volume listing, now fails the task instead of being skipped.
+- **The offline overlays read `CROSSCODEX_GATEWAY_CONFIG_DIR`** for the gateway config directory. It defaults to the previous path, so nothing changes unless you set it.
+- **Embedded-mode `GetJob` returns per-stage panel provenance,** as the daemon does, where it returned none.
+
 Mapping feedback and cleaning re-projection (#230, #289):
 
 - **Database.** Run `crosscodexd migrate` to apply migration `003_mapping_feedback` (the daemon never migrates). It adds `mapping_votes`, `mapping_determinations`, `mapping_reviews` and the view `mapping_cleaning_states`, and lets findings and decisions take the status `stale`. None of these tables is purged by retention.
@@ -316,7 +324,7 @@ Model answers cut off at `max_tokens`:
 
 ## Quick Start
 
-**Prerequisites**: Go >= 1.23, Task (taskfile.dev), container engine (podman or docker)
+**Prerequisites**: Go >= 1.26, Task (taskfile.dev), container engine (podman or docker)
 
 ### 1. Build from source
 
@@ -391,6 +399,25 @@ crosscodex catalog inspect <catalog-id>
 
 ### 8. Start an analysis
 
+Analysis runs in the `crosscodexd` daemon. To try it on this machine without an API key, bring up a persistent, offline stack (a small local model, its own ports, volumes and certificates; see [Try it locally](deploy/README.md#try-it-locally)):
+
+```sh
+cp deploy/.env.example deploy/.env   # then set the three passwords: openssl rand -hex 24
+task deploy:local
+```
+
+The task builds the CLI and prints how to call it with the stack's client certificate. Check that it answers:
+
+```sh
+.local/crosscodex/bin/crosscodex --endpoint https://localhost:50251 \
+  --tls-ca .local/crosscodex/pki/ca.pem \
+  --tls-cert .local/crosscodex/pki/client.pem \
+  --tls-key .local/crosscodex/pki/client-key.pem \
+  catalog list
+```
+
+The stack has its own database, so import the catalogs into it with `catalog import` using the same flags. The commands below take those flags too. `task deploy:local:down` stops the stack and keeps its data; `task deploy:local:down VOLUMES=1` also drops the data, key volumes and PKI.
+
 An analysis maps the controls of a source catalog onto a target catalog (a crosswalk, for example CSF 2.0 onto SP 800-53):
 
 ```sh
@@ -444,7 +471,12 @@ crosscodex results export <job-id> --output mappings.json
 
 # Export one control's high-confidence EQUIVALENT mappings as CSV
 crosscodex results export <job-id> --format csv --control <control-id> --type equivalent --min-confidence 0.8
+
+# Export a completed job as an OSCAL mapping collection (see docs/oscal-mapping-export.md)
+crosscodex results export <job-id> --format oscal-mapping --output mapping.json
 ```
+
+`--format oscal-mapping` writes an OSCAL 1.2.3 mapping collection, marked `draft`. [What it contains, what it leaves out and when it refuses](docs/oscal-mapping-export.md).
 
 | Flag | Applies to | Meaning |
 |------|------------|---------|
@@ -539,7 +571,7 @@ flowchart TD
         docs["Documents<br/>PDF, DOCX, HTML"]
     end
     subgraph processing ["Processing Pipeline"]
-        ingestion["Ingestion Service<br/>Python + Docling"]
+        ingestion["Ingestion Service<br/>Python + Docling<br/>separate repo, not yet wired"]
         catalog["Catalog Service<br/>Go + OSCAL"]
         analysis["Analysis Engine<br/>Go + Plugins"]
         llm["LLM Workers<br/>Go + AI Models"]
@@ -559,7 +591,8 @@ flowchart TD
         telemetry["Telemetry<br/>OpenTelemetry"]
         attestation["Attestation<br/>in-toto"]
     end
-    docs --> ingestion --> catalog --> analysis --> llm
+    docs -.-> ingestion -.-> catalog
+    catalog --> analysis --> llm
     llm --> synthesis --> graphdb
     pipeline --> analysis
     pipeline --> synthesis
@@ -574,18 +607,18 @@ flowchart TD
     classDef sysC fill:#7457b8,color:#ffffff,stroke:#7c8ba1
     classDef sysD fill:#2d747e,color:#ffffff,stroke:#7c8ba1
     classDef sysF fill:#5c6a82,color:#ffffff,stroke:#7c8ba1
-    class ingestion,catalog,analysis,llm sysA
+    class catalog,analysis,llm sysA
     class synthesis,pipeline sysB
     class graphdb,vectordb sysC
     class tenant,tls,authn,telemetry,attestation sysD
-    class docs sysF
+    class docs,ingestion sysF
 ```
 
 ### Service Responsibilities
 
 | Service             | Purpose                                         | Technology          |
 |---------------------|-------------------------------------------------|---------------------|
-| **Ingestion**       | Multi-format document conversion via Docling    | Python gRPC service |
+| **Ingestion**       | Docling conversion; not yet wired, own repo     | Python gRPC service |
 | **Catalog**         | OSCAL parsing, document structuring, validation | Go                  |
 | **Analysis Engine** | Host for analyzer plugins, DAG execution        | Go                  |
 | **LLM Workers**     | Horizontally scalable LLM task execution        | Go                  |
