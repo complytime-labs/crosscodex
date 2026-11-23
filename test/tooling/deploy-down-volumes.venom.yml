@@ -1,0 +1,56 @@
+name: deploy:down VOLUMES=1 removes exactly the key volumes that exist and fails if one stays
+
+vars:
+  root: "."
+
+testcases:
+  - name: Without the pre-298 shared volume every key volume is removed and the task succeeds
+    steps:
+      - type: exec
+        script: |
+          bash {{.root}}/test/tooling/lib/deploy-down-volumes.sh {{.root}}
+        assertions:
+          - result.systemout ShouldContainSubstring task_exit=0
+          - result.systemout ShouldContainSubstring "left=[]"
+          - result.systemout ShouldNotContainSubstring "more than one result"
+
+  - name: The pre-298 shared volume is removed too when it exists
+    steps:
+      - type: exec
+        script: |
+          out=$(EXTRA_VOLUMES=crosscodex-local-certs bash {{.root}}/test/tooling/lib/deploy-down-volumes.sh {{.root}})
+          echo "$out"
+          echo "shared_removed=$(grep -cx removed=crosscodex-local-certs <<<"$out")"
+        assertions:
+          - result.systemout ShouldContainSubstring task_exit=0
+          - result.systemout ShouldContainSubstring shared_removed=1
+          - result.systemout ShouldContainSubstring "left=[]"
+
+  - name: Volumes of other stacks are left alone
+    steps:
+      - type: exec
+        script: |
+          EXTRA_VOLUMES=crosscodex-smoke-certs-db bash {{.root}}/test/tooling/lib/deploy-down-volumes.sh {{.root}}
+        assertions:
+          - result.systemout ShouldContainSubstring task_exit=0
+          - result.systemout ShouldContainSubstring "left=[crosscodex-smoke-certs-db ]"
+
+  - name: A key volume that cannot be removed fails the task
+    steps:
+      - type: exec
+        script: |
+          STUCK=crosscodex-local-client-certs bash {{.root}}/test/tooling/lib/deploy-down-volumes.sh {{.root}}
+        assertions:
+          - result.systemout ShouldNotContainSubstring task_exit=0
+          - result.systemout ShouldContainSubstring "volume crosscodex-local-client-certs is being used"
+          - result.systemout ShouldContainSubstring crosscodex-local-client-certs
+
+  - name: A failing volume listing fails the task and removes nothing
+    steps:
+      - type: exec
+        script: |
+          LS_FAILS=1 bash {{.root}}/test/tooling/lib/deploy-down-volumes.sh {{.root}}
+        assertions:
+          - result.systemout ShouldNotContainSubstring task_exit=0
+          - result.systemout ShouldNotContainSubstring removed=
+          - result.systemout ShouldContainSubstring "left=[crosscodex-local-certs-db "
