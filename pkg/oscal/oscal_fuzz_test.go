@@ -3,8 +3,10 @@ package oscal_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
 )
@@ -145,6 +147,52 @@ func FuzzParse(f *testing.F) {
 			if !seen[tc.Identifier] {
 				t.Fatalf("textless control %q is not an item", tc.Identifier)
 			}
+		}
+	})
+}
+
+// FuzzBuildMappingCollection feeds recorded, uploader-controlled values (catalog
+// names and versions, a relationship, a confidence) to the export. Input the
+// export refuses is fine; accepted input must give valid, deterministic JSON.
+// BuildMappingCollection validates every document it returns against the OSCAL
+// 1.2.3 schema, so an accepted document has passed that check.
+func FuzzBuildMappingCollection(f *testing.F) {
+	f.Add("SP 800-53", "r5", "EQUIVALENT", 0.9)
+	f.Add("SP 800-53", "r5", "NOT_A_RELATIONSHIP", 0.5)
+	f.Add("SP 800-53", "r5", "SUBSET_OF", 0.0)
+	f.Add("SP 800-53", "r5", "PARTIAL", 1.0)
+	f.Add("Cat \"quoted\" \\ name", "v\"1\"", "CONFLICTS_WITH", 0.5)
+	f.Add("line one\nline two\r\n", "\ttab\x00nul", "EQUIVALENT", 0.5)
+	f.Add("# Heading **bold** [link](http://example.com) <script>alert(1)</script>", "`v`", "COMPLEMENTS", 0.25)
+	f.Add("bad utf8 \xff\xfe\xc3\x28", "\xf0\x28\x8c\xbc", "CONTRIBUTES_TO", 0.75)
+
+	f.Fuzz(func(t *testing.T, name, version, relationship string, confidence float64) {
+		in := oscal.MappingExport{
+			JobID:       "job-1",
+			Stage:       "synthesized",
+			Filters:     []oscal.Prop{{Name: "stage", Value: "synthesized"}},
+			CompletedAt: time.Date(2026, 11, 22, 10, 30, 0, 0, time.UTC),
+			Source:      oscal.ExportCatalog{ID: "cat-src", Name: name, Version: version},
+			Target:      oscal.ExportCatalog{ID: "cat-tgt", Name: name, Version: version},
+			Models:      []oscal.ExportModel{{Alias: "fast", Observed: name}},
+			Mappings: []oscal.ExportMapping{{
+				MappingID: "m-1", SourceControlID: "cat-src/ac-1", TargetControlID: "cat-tgt/03.01.01",
+				Relationship: relationship, Confidence: confidence,
+			}},
+		}
+		first, err := oscal.BuildMappingCollection(in)
+		if err != nil {
+			return
+		}
+		if !json.Valid(first) {
+			t.Fatalf("accepted export is not valid JSON: %q", first)
+		}
+		second, err := oscal.BuildMappingCollection(in)
+		if err != nil {
+			t.Fatalf("rebuilding an accepted export failed: %v", err)
+		}
+		if !bytes.Equal(first, second) {
+			t.Fatalf("rebuilding an accepted export gave different bytes")
 		}
 	})
 }

@@ -2,10 +2,15 @@ package oscal_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"math"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 
+	"github.com/defenseunicorns/go-oscal/src/pkg/validation"
 	oscalTypes "github.com/defenseunicorns/go-oscal/src/types/oscal-1-1-3"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -17,7 +22,7 @@ import (
 // Suite bootstrap lives in oscal_bdd_test.go (TestOscalBDD).
 // This file only registers Describe nodes; Ginkgo collects them automatically.
 
-var _ = Describe("Property Specifications", func() {
+var _ = Describe("Property Specifications", Ordered, func() {
 	Context("UsableTitle", func() {
 		It("returns either empty or the trimmed title", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
@@ -230,6 +235,97 @@ var _ = Describe("Property Specifications", func() {
 				s := rapid.StringMatching(`[ \t\n\r]{0,50}`).Draw(t, "whitespace")
 				got := oscal.ExportWordCount(s)
 				Expect(got).To(Equal(0))
+			})
+		})
+	})
+
+	Context("BuildMappingCollection", func() {
+		relationships := []string{"EQUIVALENT", "SUPERSET_OF", "SUBSET_OF", "NO_RELATIONSHIP", "CONTRIBUTES_TO", "COMPLEMENTS", "PARTIAL", "CONFLICTS_WITH"}
+
+		drawExport := func(t *rapid.T) oscal.MappingExport {
+			in := oscal.MappingExport{
+				JobID:       "job",
+				Stage:       rapid.SampledFrom([]string{"synthesized", "analyzer"}).Draw(t, "stage"),
+				CompletedAt: time.Unix(rapid.Int64Range(0, 4_000_000_000).Draw(t, "completed"), 0),
+				Source:      oscal.ExportCatalog{ID: "src", Name: rapid.String().Draw(t, "srcName"), Version: "1"},
+				Target:      oscal.ExportCatalog{ID: "tgt", Name: rapid.String().Draw(t, "tgtName"), VersionDisplay: "v2"},
+			}
+			n := rapid.IntRange(1, 20).Draw(t, "rows")
+			for i := range n {
+				from, to := "src", "tgt"
+				if rapid.Bool().Draw(t, "reverse") {
+					from, to = to, from
+				}
+				in.Mappings = append(in.Mappings, oscal.ExportMapping{
+					MappingID:       fmt.Sprintf("m-%d", i),
+					SourceControlID: from + "/" + rapid.StringMatching(`[a-z0-9][a-z0-9.\-]{0,7}`).Draw(t, "from"),
+					TargetControlID: to + "/" + rapid.StringMatching(`[a-z0-9][a-z0-9.\-]{0,7}`).Draw(t, "to"),
+					Relationship:    rapid.SampledFrom(relationships).Draw(t, "relationship"),
+					Confidence:      rapid.Float64Range(0, 1).Draw(t, "confidence"),
+				})
+			}
+			return in
+		}
+
+		build := func(t *rapid.T, in oscal.MappingExport) []byte {
+			out, err := oscal.BuildMappingCollection(in)
+			if err != nil {
+				t.Fatalf("BuildMappingCollection: %v", err)
+			}
+			return out
+		}
+		docUUID := func(t *rapid.T, in oscal.MappingExport) string {
+			var top map[string]map[string]any
+			if err := json.Unmarshal(build(t, in), &top); err != nil {
+				t.Fatalf("output is not JSON: %v", err)
+			}
+			return top["mapping-collection"]["uuid"].(string)
+		}
+
+		It("is deterministic and always yields a schema-valid document", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				in := drawExport(t)
+				out := build(t, in)
+				if again := build(t, in); string(again) != string(out) {
+					t.Fatalf("same input gave different output")
+				}
+				var model map[string]any
+				if err := json.Unmarshal(out, &model); err != nil {
+					t.Fatalf("output is not JSON: %v", err)
+				}
+				v, err := validation.NewValidatorDesiredVersion(model, "1.2.3")
+				if err != nil {
+					t.Fatalf("NewValidatorDesiredVersion: %v", err)
+				}
+				if err := v.Validate(); err != nil {
+					t.Fatalf("output fails OSCAL 1.2.3 validation: %v", err)
+				}
+			})
+		})
+
+		It("changes the document uuid when one row's confidence changes", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				in := drawExport(t)
+				before := docUUID(t, in)
+				i := rapid.IntRange(0, len(in.Mappings)-1).Draw(t, "row")
+				old := in.Mappings[i].Confidence
+				in.Mappings[i].Confidence = math.Mod(old+0.25, 1.0001)
+				if after := docUUID(t, in); after == before {
+					t.Fatalf("uuid unchanged after confidence %v -> %v", old, in.Mappings[i].Confidence)
+				}
+			})
+		})
+
+		It("changes the document uuid when one row's relationship changes", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				in := drawExport(t)
+				before := docUUID(t, in)
+				i := rapid.IntRange(0, len(in.Mappings)-1).Draw(t, "row")
+				old := in.Mappings[i].Relationship
+				in.Mappings[i].Relationship = rapid.SampledFrom(relationships).Filter(func(r string) bool { return r != old }).Draw(t, "newRelationship")
+				if after := docUUID(t, in); after == before {
+					t.Fatalf("uuid unchanged after relationship %s -> %s", old, in.Mappings[i].Relationship)
+				}
 			})
 		})
 	})

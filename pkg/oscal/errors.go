@@ -13,4 +13,7 @@ var (
 	// ErrInvalidPrintArtifactPattern means a StructureOptions print-artefact
 	// pattern does not compile or matches empty text.
 	ErrInvalidPrintArtifactPattern = errors.New("invalid print-artefact pattern")
+	// ErrMappingExport means a job export cannot be turned into a valid OSCAL
+	// mapping-collection; the wrapped message says what to change.
+	ErrMappingExport = errors.New("oscal mapping export")
 )
