@@ -8,6 +8,8 @@ testcases:
     steps:
       - type: exec
         script: |
+          #!/bin/bash
+          # bash, not sh: the here-strings below are a bashism and CI's sh is dash.
           out=$(bash {{.root}}/test/tooling/lib/deploy-local.sh {{.root}} no deploy:local)
           echo "$out"
           echo "missing_count=$(grep -c 'deploy/.env missing. Copy deploy/.env.example to deploy/.env and fill it in.' <<<"$out")"
@@ -40,6 +42,8 @@ testcases:
     steps:
       - type: exec
         script: |
+          #!/bin/bash
+          # bash, not sh: the here-strings below are a bashism and CI's sh is dash.
           keys='^(COMPOSE_PROJECT_NAME|CROSSCODEX_CERTS_VOLUME|CROSSCODEX_CLIENT_CERTS_VOLUME|CROSSCODEX_ATTESTATION_KEYS_VOLUME|CROSSCODEX_GATEWAY_PORT|CERTS_DIR)='
           local_id=$(bash {{.root}}/test/tooling/lib/deploy-local.sh {{.root}} yes deploy:local | grep -E "$keys" | sort)
           smoke_id=$(bash {{.root}}/test/tooling/lib/deploy-local.sh {{.root}} yes deploy:smoke:up | grep -E "$keys" | sort)

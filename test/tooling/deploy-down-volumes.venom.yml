@@ -18,6 +18,8 @@ testcases:
     steps:
       - type: exec
         script: |
+          #!/bin/bash
+          # bash, not sh: the here-string below is a bashism and CI's sh is dash.
           out=$(EXTRA_VOLUMES=crosscodex-local-certs bash {{.root}}/test/tooling/lib/deploy-down-volumes.sh {{.root}})
           echo "$out"
           echo "shared_removed=$(grep -cx removed=crosscodex-local-certs <<<"$out")"
