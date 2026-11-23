@@ -1,0 +1,33 @@
+test/eval/crosswalk/canonical.go
+  s_f49d97586243d8::t_ee1806333f55ce 15
+  s_f49d97586243d8::t_dfd6f72d4ea133 16-17,35
+test/eval/crosswalk/canonical_bdd_test.go
+  s_f49d97586243d8::t_efc8a4e2b2c0ac 34-35,38-41
+  s_f49d97586243d8::t_7d2423b4eed5f7 42
+test/eval/crosswalk/testdata/fuzz/FuzzCanonical/9be32ac8cbef8296
+  s_7470801c8d7b7c::t_c482b0cc363b13 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "ad4d194166e04d0a97b7ff906307969ba1feaa35",
+  "prompts": {},
+  "sessions": {
+    "s_7470801c8d7b7c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aa84d5c8c583ab5e7",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_f49d97586243d8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4248c1a8-b4c1-4738-9359-f790bfdddf78",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
