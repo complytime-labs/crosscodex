@@ -1,0 +1,23 @@
+docs/dev/adr/index.md
+  s_1963e32741ee2b::t_45e57f182d4f51 5,7-10
+docs/dev/design-principles.md
+  s_1963e32741ee2b::t_4f3608f6d05f6e 323
+deploy/README.md
+  s_1963e32741ee2b::t_92e43b693a689d 265
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d863f5166fe1d6452479928d910184223daba844",
+  "prompts": {},
+  "sessions": {
+    "s_1963e32741ee2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e47dcf4a-928e-4704-9c9c-2ff40f46db28",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
