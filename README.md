@@ -552,7 +552,7 @@ flowchart TD
         docs["Documents<br/>PDF, DOCX, HTML"]
     end
     subgraph processing ["Processing Pipeline"]
-        ingestion["Ingestion Service<br/>Python + Docling"]
+        ingestion["Ingestion Service<br/>Python + Docling<br/>separate repo, not yet wired"]
         catalog["Catalog Service<br/>Go + OSCAL"]
         analysis["Analysis Engine<br/>Go + Plugins"]
         llm["LLM Workers<br/>Go + AI Models"]
@@ -572,7 +572,8 @@ flowchart TD
         telemetry["Telemetry<br/>OpenTelemetry"]
         attestation["Attestation<br/>in-toto"]
     end
-    docs --> ingestion --> catalog --> analysis --> llm
+    docs -.-> ingestion -.-> catalog
+    catalog --> analysis --> llm
     llm --> synthesis --> graphdb
     pipeline --> analysis
     pipeline --> synthesis
@@ -587,18 +588,18 @@ flowchart TD
     classDef sysC fill:#7457b8,color:#ffffff,stroke:#7c8ba1
     classDef sysD fill:#2d747e,color:#ffffff,stroke:#7c8ba1
     classDef sysF fill:#5c6a82,color:#ffffff,stroke:#7c8ba1
-    class ingestion,catalog,analysis,llm sysA
+    class catalog,analysis,llm sysA
     class synthesis,pipeline sysB
     class graphdb,vectordb sysC
     class tenant,tls,authn,telemetry,attestation sysD
-    class docs sysF
+    class docs,ingestion sysF
 ```
 
 ### Service Responsibilities
 
 | Service             | Purpose                                         | Technology          |
 |---------------------|-------------------------------------------------|---------------------|
-| **Ingestion**       | Multi-format document conversion via Docling    | Python gRPC service |
+| **Ingestion**       | Docling conversion; not yet wired, own repo     | Python gRPC service |
 | **Catalog**         | OSCAL parsing, document structuring, validation | Go                  |
 | **Analysis Engine** | Host for analyzer plugins, DAG execution        | Go                  |
 | **LLM Workers**     | Horizontally scalable LLM task execution        | Go                  |
