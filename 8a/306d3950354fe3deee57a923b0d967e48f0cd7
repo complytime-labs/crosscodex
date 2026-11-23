@@ -1,0 +1,43 @@
+test/tooling/certs-load-upgrade.venom.yml
+  s_ae096a3447705c::t_f4f2984c6542f9 1,7,10,14-21,24-26,28,31,35,38-39,42,49,52
+.taskfiles/deploy.yml
+  s_ae096a3447705c::t_dd9bb217ea8d43 84-85,87-92,202,217-221,226,230-244,246-247,252,257,262,264,271-273,280-281,297,299-307,309-312,423-430
+deploy/certgen/gen.go
+  s_ae096a3447705c::t_db5b01eed5e69a 4-7,18-21,24-27,31,40,42-54,59,62-65,84-89
+deploy/compose.gateway-litellm.yaml
+  s_ae096a3447705c::t_bd28e03469db9b 57,74-79
+deploy/compose.gateway-praxis.yaml
+  s_ae096a3447705c::t_4808d71eebb809 10,28-29,32,38,44,67-72
+deploy/compose.yaml
+  s_ae096a3447705c::t_f68a3408151b94 4-11,23,79,105-108,116,185-187,189,215,217-226,229,233
+scripts/check-praxis-compose.sh
+  s_ae096a3447705c::t_dc341da2f203e5 5,8-11,24
+test/tooling/cert-generators.venom.yml
+  s_ae096a3447705c::t_4941409cf3c572 58,66,68,70-71,73-77,80,83-122,124,136
+test/tooling/e2e-daemon-identity.venom.yml
+  s_ae096a3447705c::t_c363ac16f6357e 1-22
+test/tooling/lib/certs-load-upgrade.sh
+  s_ae096a3447705c::t_0cda845cc36d3a 2-7,15-24,26-27,83-99,106-107,109-114,121,129-131,133-136
+test/tooling/lib/tls_probe_server.py
+  s_ae096a3447705c::t_40fa0eb341b9f4 1-31
+test/tooling/tls-name-probe.venom.yml
+  s_ae096a3447705c::t_5bac5041f98c93 1-62
+test/e2e/run-daemon.sh
+  s_ae096a3447705c::t_0355c45695fe8d 75-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "8a306d3950354fe3deee57a923b0d967e48f0cd7",
+  "prompts": {},
+  "sessions": {
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
