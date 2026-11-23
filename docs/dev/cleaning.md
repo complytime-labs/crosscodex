@@ -11,7 +11,8 @@ Code: `pkg/cleaning` (detection, planning, store, engine, graph operations),
 `cmd/crosscodex/admin_cleaning.go` (CLI), `api/proto/crosscodex/v1/cleaning.proto`
 (contract) and the `edge_cleaning_runs` / `edge_findings` /
 `edge_finding_decisions` tables in
-`pkg/db/migrations/001_initial_schema.up.sql`.
+`pkg/db/migrations/001_initial_schema.up.sql` (the `stale` status and verdict
+are added in `003_mapping_feedback.up.sql`).
 
 ## Overview
 
@@ -140,6 +141,7 @@ a separator or newline.
 | `StateToken` | `hashParts(status, evidence_hash, sorted edge IDs…)` | Quoted by a decision; refuses a decision on a finding that changed since it was read. |
 | plan token | canonical JSON of `{scope, policy, findings}`, `policy` the tenant's effective `CleaningTenantConfig` and each finding `[ID, EvidenceHash, Action, Change, To, EdgeIDs]` in ID order | Binds an apply to its preview. `Summary` is not hashed. |
 | policy decision ID | canonical JSON of tenant, finding, verdict, run ID (the plan token), evidence hash, edge IDs, `decided_by` and `decided_at` | Primary key of a run's decision. |
+| stale decision ID | canonical JSON of tenant, finding, verdict (`stale`), reason, missing (the sorted `<job>:<source>:<target>` keys of the finding's targets), evidence hash and `decided_at` | Primary key of re-projection's stale decision, and the material of its `cleaning.reproject` link. |
 | reviewer decision ID | canonical JSON of tenant, finding, verdict, retire verdicts, rationale, reviewer, expected state, `decided_at`, and for a retire `retire_targets_count` and `retire_targets_sha256` (`hashParts` of the sorted `<job>:<source>:<target>` keys it removes; `0` and `""` otherwise) | Primary key of a reviewer's decision, and the material of its link. A job-level retire expands its targets at decide time, and a later decision overwrites the finding row, so the signed count and hash are what proves which verdicts a retire removed: recompute the hash from the finding's targets as stored right after the decision, or from the retired verdicts. |
 
 Evidence is self-contained: each verdict carries its key, the job's
@@ -170,6 +172,7 @@ it projects every outstanding change, and the handler refuses a scope with
 | `dismissed` | a reviewer judged it not a problem | a reviewer's `dismiss` |
 | `restored` | a reviewer reversed a retire | a reviewer's `restore` |
 | `cleared` | a later in-scope pass no longer detects it | a run |
+| `stale` | its verdicts are gone from a rebuilt graph | `Engine.Reproject` |
 
 ### Run transitions (`BuildPlan`)
 
@@ -179,7 +182,7 @@ A detected finding is given the status its signal's action wants
 | Stored | Detected | Evidence hash | Change | Result |
 |---|---|---|---|---|
 | none | yes | | `new` | wanted status |
-| `cleared` | yes | any | `new` | wanted status |
+| `cleared`, `stale` | yes | any | `new` | wanted status |
 | `reported`, `pending` | yes | differs | `changed` | wanted status |
 | `reported`, `pending` | yes | same, status differs from wanted | `status` | wanted status |
 | `reported`, `pending` | yes | same, status as wanted | | omitted |
@@ -214,7 +217,11 @@ status before planning.
 | `dismiss` | `reported`, `pending` | `dismissed` | none |
 | `restore` | `retired` | `restored` | recreate the retired edges |
 
-`cleared` allows no decision. A `retire` removes `retire_verdicts` when given
+`cleared` and `stale` allow no decision. A decision on a `stale` finding is
+refused (`ErrInvalidTransition`) with what to do instead: decide on the
+findings a new cleaning pass raises. No reviewer can decide the `stale`
+verdict: it is not one of `retire`, `dismiss`, `restore`
+(`ErrInvalidDecision`). A `retire` removes `retire_verdicts` when given
 (each must be one of the finding's concerns), else the finding's targets; it
 is refused when neither exists (`ErrRetireNeedsVerdicts`). It re-reads the
 finding's catalog pair and refuses a target without a live edge
@@ -274,7 +281,7 @@ status, targets and edge IDs with `graph_applied = false`. Then project.
 - `retired`: `RetireEdges` at the `decided_at` of its latest `retire` decision;
 - `restored`: `RestoreEdges` with its latest `restore` decision's ID and
   `decided_at` as `valid_from`; the finding's edge IDs become the successors';
-- `reported`, `pending`, `dismissed`, `cleared`: no graph change;
+- `reported`, `pending`, `dismissed`, `cleared`, `stale`: no graph change;
 - any other status: refused, nothing applied for it.
 
 Then `MarkProjected` sets `graph_applied = true` and the edge IDs. A failure
@@ -295,6 +302,113 @@ projection of the same finding writes the same values. Projection is not
 serialized, though: the unprojected guard is check-then-act, so a `Decide`
 and an `Apply` can project at once, and when two findings share an edge the
 later supersede may overwrite its `valid_to` with the other decision's time.
+
+## Re-projection after a rebuild
+
+`--resume` finishes only findings whose `graph_applied` is false. After a full
+graph rebuild (the #148 runbook in `design-principles.md`) every finding reads
+`graph_applied = true`, but the graph no longer reflects the retires and
+restores: rebuilt `SEMANTIC_MATCH` edges are live again under new IDs, and the
+findings' `edge_ids` name edges that may no longer exist.
+`Engine.Reproject(ctx, tenant, dryRun)` replays the stored decisions into the
+graph. It calls no LLM and reads no policy.
+
+1. Refuse while any finding is unprojected (`ErrUnprojected`, resume first),
+   and without a signer unless `dryRun` (`ErrSigningDisabled`). Nothing is
+   written before both checks.
+2. Read every finding in `retired` or `restored`, in ID order, and its latest
+   `retire` or `restore` decision (`latestDecision`; none fails closed).
+3. **Govern each verdict.** Several findings can target one verdict: a run
+   that retires a job-level finding and a `conflicts_with` finding retires the
+   same verdict twice, and a reviewer may restore only one of them. Each
+   target verdict is governed by the latest of those decisions (`decided_at`;
+   on a tie the lowest decision ID), so the latest change wins whatever the
+   findings' ID order. A finding changes the graph only for verdicts it
+   governs; a finding whose verdicts are all governed by others is `in_sync`
+   for itself, apart from naming edges it lost (below).
+4. Read, once for the whole run:
+   *live*, the live edges, both stages, of every finding's targets
+   (`VerdictEdges`, one read per catalog pair). One read suffices because
+   only a verdict's governor changes its edges. A job-level retired finding
+   uses its stored targets, the verdicts the retire expanded to. A target
+   whose job is not a completed job of the tenant (retention purged it) has no
+   verdicts left to read and counts as having no live edge; `VerdictEdges` is
+   called only with completed jobs' keys, because it refuses any other
+   (`ErrVerdictJobNotFound`).
+   Then per finding, *existing*: its stored edge IDs the graph still holds,
+   live or superseded, each with its verdict (the edge's `job_id` and
+   endpoints).
+5. Compute the finding's next edge IDs, per target verdict: a governed
+   retired verdict keeps its existing edges and adds its live ones, which are
+   retired, together with any existing edge that is live again (a graph
+   restored from a backup); a governed restored verdict takes its live edges;
+   any other verdict keeps its existing edges, or takes its live ones when
+   none is left. Existing edges under none of its targets are kept (and
+   retired when live, for a retired finding). Then:
+
+| Condition | Action | Writes |
+|---|---|---|
+| no target has a live edge, no stored edge is in the graph, and `PresentVerdicts` finds no edge of any target | `stale` | a signed decision and `MarkStale` |
+| no target has a live edge and no stored edge is in the graph, but `PresentVerdicts` finds an edge of a target | `in_sync` | none |
+| something to retire | `retire` | `MarkReprojected(next)`, then `RetireRebuiltEdges` at the governing decision's time |
+| next edge IDs differ from the stored ones | `relink` | `MarkReprojected(next)` |
+| otherwise | `in_sync` | none |
+
+A verdict is gone only when the graph holds no `SEMANTIC_MATCH` edge of it at
+all: none from its source to its target with its `job_id`, live or superseded,
+in either stage, under any edge ID (`PresentVerdicts`, one `Traverse` per
+source; `QueryRelationships` returns only live edges and cannot tell). This
+matters because the two re-projection engines govern a verdict independently:
+cleaning by its latest finding decision, feedback (#230) by its latest mapping
+determination, and the CLI runs cleaning first. When a reviewer restored a
+mapping and cleaning later retired it, cleaning retires the rebuilt edge, and
+feedback then sees no live edge, none of its stored edge IDs (the rebuild
+wrote another ID kind) and no original edge. Without the presence test it
+would mark the review `stale` with a false reason. The mirror case (feedback
+retires, then a restored finding sees nothing live) is the same. A purged
+job's verdict that the graph still holds is likewise not gone.
+
+`FindingStore.MarkReprojected(ctx, tenant, finding, expectState, edgeIDs)`
+replaces only the edge IDs, in one transaction: lock the finding `FOR
+UPDATE`, compare its state token (`ErrStateChanged`), require `graph_applied`
+(`ErrUnprojected`). It leaves `updated_at` unchanged, because the finding's
+status and latest change are unchanged and `mapping_cleaning_states` orders
+changes by it.
+
+`RetireRebuiltEdges` supersedes at the decision's time, or at the latest live
+edge's `valid_from` when that is later, because a rebuilt edge did not exist
+before it and retiring earlier would invert its validity interval. The
+retire records the edge IDs first: if the supersede then fails, the stored IDs
+still name the live edges and a rerun retires them; the other order would
+leave IDs the graph does not hold, and a rerun would mark the finding `stale`.
+
+A `stale` finding gets a decision with verdict `stale`, `decided_by =
+'reproject'` and no run ID. Its rationale is the reason, "the graph no longer
+holds verdicts <keys>: it was rebuilt from new jobs. Decide again on the
+findings a new cleaning pass raises". Its ID is the SHA-256 of the canonical
+request (see "Identity and hashing"), and its attestation a `cleaning.reproject`
+link with material `crosscodex:cleaning-decision/<id>` and product
+`crosscodex:finding/<id>` carrying the evidence hash. `FindingStore.MarkStale`
+records it in one transaction: lock the finding `FOR UPDATE`, compare its
+state token (`ErrStateChanged`), insert the decision, set status `stale` with
+`graph_applied = true`, keeping targets and edge IDs, so the finding still
+says what was retired or restored. Decisions are not mapped onto the new jobs'
+verdicts for the same control pair: that needs an equivalence rule between
+different jobs' judgements, which the data cannot decide.
+
+`ReprojectReport` lists one `ReprojectItem` per finding (its status as read,
+action, edge IDs afterwards and, for `stale`, the missing verdicts) and counts
+per action. A dry run computes the same report and writes nothing, so a
+rebuild still materializing, whose verdicts look gone, shows the findings it
+would mark `stale` first. Each action leaves the finding in a state the next
+run reports `in_sync`, and `stale` findings are not read again, so a second
+run changes nothing. A failure part-way names the finding and how many were
+done; running again finishes the rest. Re-projection is not serialized with
+`Decide`, so every write it makes (`MarkReprojected`, `MarkStale`) quotes the
+state token it read: a decision recorded meanwhile stops the run with
+`ErrStateChanged` naming the finding ("changed during re-projection; rerun
+--reproject"). The findings before it stand, and a rerun judges the new
+state.
 
 ## Graph operations (shared with #230)
 
@@ -335,6 +449,12 @@ func CheckLive(ctx context.Context, g graphdb.GraphDB, tenantID string, edgeIDs 
   edge that is missing or superseded; any other graph failure is returned as
   is, so an outage is not reported as a missing edge.
 
+`PresentVerdicts(ctx, g, tenantID, keys) (map[VerdictKey]bool, error)` is a
+read shared the same way: both re-projection engines call it as their test
+for a gone verdict (see "Re-projection after a rebuild"). It reads each
+source's outbound `SEMANTIC_MATCH` edges once with `Traverse` (no `AsOf`, so
+superseded edges are included, depth 1) and returns any graph failure.
+
 The engine passes the decision's own time as `at`, not the current time, so
 a retry repeats the same change; other callers need to do the same.
 
@@ -370,15 +490,8 @@ an edited decision would silently change history and make a resumed
 projection disagree with the first one. A decision is reversed by recording
 another (`restore` reverses `retire`).
 
-Projection does not rebuild the graph from this table. `--resume` only
-finishes findings whose `graph_applied` is false, and nothing re-applies
-cleaning decisions after a full graph rebuild (the #148 runbook in
-`design-principles.md`). After a rebuild, the new jobs' `SEMANTIC_MATCH`
-edges are live, while the old findings still read `retired` or `restored`
-with `graph_applied = true`, and their `edge_ids` name edges that no longer
-exist. Decisions do not carry over to the new jobs' verdicts: a pass under a
-`retire` policy retires matching verdicts again, but reviewer decisions must
-be made again on the new findings.
+After a full graph rebuild, `Engine.Reproject` replays these decisions into
+the graph; see "Re-projection after a rebuild".
 
 Enforcement, from the outside in:
 
@@ -393,6 +506,10 @@ Enforcement, from the outside in:
   names the run that made it, a reviewer's names none. `Decision.Validate`,
   `ApplyRun` (policy decisions only) and `Decide` (reviewer decisions only)
   enforce the same before writing.
+- `CHECK ((verdict = 'stale') = (decided_by = 'reproject'))`: only
+  re-projection records a `stale` decision, and it records nothing else.
+  `Decision.Validate` refuses either mismatch, `Decide` and `ApplyRun` refuse
+  a re-projection decision, and `MarkStale` records only that one.
 - A foreign key ties each decision to its finding, and a policy decision's
   `(run_id, decided_at)` to its run; RLS on all three tables keys on
   `app.current_tenant`. `RunWrite.Validate` refuses a policy decision whose
@@ -487,7 +604,8 @@ directly sees the `pipeline.endpoint` text. See [Service Runtime](service-runtim
 ## Telemetry
 
 `WithEngineTelemetry` gives each public engine method a span
-`cleaning.<Method>` with `tenant.id` and `cleaning.operation`, and records:
+`cleaning.<Method>` with `tenant.id` and `cleaning.operation` (`Reproject`:
+`reproject`), and records:
 
 - `cleaning.operation.duration_ms` by `operation` and `outcome` (`ok`,
   `error`). Its count serves as the operations counter, so there is no
@@ -496,6 +614,10 @@ directly sees the `pipeline.endpoint` text. See [Service Runtime](service-runtim
   `action`.
 - `cleaning.findings.pending`: the tenant's `pending` findings, set after a
   successful apply or decision. A failed count is logged, not returned.
+
+`Reproject` also logs its start and a summary (findings, and counts retired,
+relinked, staled and in sync, with `dry_run`), and each stale marking with
+the finding and decision IDs.
 
 `WithFindingStoreTelemetry` gives each store method a span
 `cleaning.findingstore.<Op>` and records

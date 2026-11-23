@@ -16,6 +16,20 @@ CrossCodex is in early development. All foundational, domain, and service packag
 
 ## Upgrading
 
+Mapping feedback and cleaning re-projection (#230, #289):
+
+- **Database.** Run `crosscodexd migrate` to apply migration `003_mapping_feedback` (the daemon never migrates). It adds `mapping_votes`, `mapping_determinations`, `mapping_reviews` and the view `mapping_cleaning_states`, and lets findings and decisions take the status `stale`. None of these tables is purged by retention.
+- **`GetReviewQueue`, `SubmitVote` and `RecordDetermination` take a required `job_id`.** `GetReviewQueue` listed no particular job and needed `admin`; it now lists one completed job's mappings and allows `reviewer` or `admin`. `RecordDetermination` is a new RPC. A request without `job_id` gets `InvalidArgument`. See [Mapping Feedback](#mapping-feedback-crosscodex-results).
+- **`mapping_id` is a stable verdict key.** It names one job's judgement of one control pair and never moves: a restored mapping lives under new edge IDs, so resolve a mapping by its verdict (`job_id` and `mapping_id`), not by following edge IDs.
+- **The standalone gateway and the embedded daemon serve `AdminService`** (retention, legal holds); before, only role `all` did. With `database.purge_dsn` set on the `gateway` role, purges and catalog retire work there, so the internet-facing process then holds purge credentials; leave it unset to keep them off the gateway, and purges fail closed. The embedded daemon serves holds, stats and dry-run scans only: a scan or policy apply without `dry_run` is refused with `FailedPrecondition`, and stats report no stream drift.
+- **The embedded daemon's client certificate has roles `admin` and `reviewer`,** so its single local user can vote and read the review queue. The embedded daemon refuses determinations (see below).
+- **New `feedback` config section** (`min_agreement`, `low_confidence`, both default 0.5, global only).
+- **New `crosscodexd admin cleaning --reproject`** re-applies stored cleaning findings and determinations to a rebuilt graph. See [Re-projecting after a graph rebuild](#re-projecting-after-a-graph-rebuild).
+
+Results show cleaning state (#291). Additive:
+
+- **`ListJobMappings` and `results export` show what cleaning or a reviewer did to a mapping.** `ControlMapping` gained `cleaning` (state `retired`, `restored` or `stale`; source `finding` or `determination`; `ref_id`; `changed_at`; `graph_applied`), unset for a mapping nothing changed; the latest change wins (`changed_at`, then source, then `ref_id`). `results export` JSON adds a `cleaning` key only on such mappings, and CSV (both stages) appends a last `cleaning_state` column, empty otherwise, so scripts that read the analyzer-stage `critique` column as the last one must use its header name. `results debug` prints a `Cleaning:` line (`retired: finding 1a2b3c4d5e6f`, ID cut to 12 characters).
+
 Health checks follow each role's dependencies (#226):
 
 - **`/healthz` now fails when NATS (or, for `graph` and `all`, the graph database) is down.** Each role checks only what it uses: `worker` NATS; `pipeline` database and NATS; `graph` database, NATS and graph database; `gateway` database and NATS; `all` database, NATS and graph database. The LLM is not checked. A role that used to report healthy while it had lost NATS now reports 503 and is restarted by its orchestrator.
@@ -39,7 +53,7 @@ Compose services are hardened and limited (#236). `task deploy:up` applies these
 
 Client certificates get roles only from `auth.x509_mappings` (#232):
 
-- **Every client certificate needs a mapping; none is admin implicitly.** Roles `all` and `gateway` (and the embedded CLI daemon) used to grant `admin` to any certificate the CA signed. Now a certificate gets the roles of the first `auth.x509_mappings` entry it matches and is refused if it matches none, and the daemon refuses to start while `auth.x509_mappings` is empty. For the certificates `task deploy:certs` generates (deploy/certgen), add `auth.x509_mappings: [{match: {cn: client, organization: CrossCodex}, roles: [admin]}]`; the shipped `deploy/config.yaml` already has it. Roles must be `admin` or `reviewer`, and every match needs at least one field. The embedded CLI daemon grants `admin` only to its own client certificate, matched by its exact common name and organization.
+- **Every client certificate needs a mapping; none is admin implicitly.** Roles `all` and `gateway` (and the embedded CLI daemon) used to grant `admin` to any certificate the CA signed. Now a certificate gets the roles of the first `auth.x509_mappings` entry it matches and is refused if it matches none, and the daemon refuses to start while `auth.x509_mappings` is empty. For the certificates `task deploy:certs` generates (deploy/certgen), add `auth.x509_mappings: [{match: {cn: client, organization: CrossCodex}, roles: [admin]}]`; the shipped `deploy/config.yaml` already has it. Roles must be `admin` or `reviewer`, and every match needs at least one field. The embedded CLI daemon grants `admin` and `reviewer` only to its own client certificate, matched by its exact common name and organization.
 - **`tenants.enabled` is honoured.** With `false`, every identity is in `tenants.default_tenant`, and a mapping's `tenant` must be empty or that tenant. With `true`, each mapping must name a `tenant`, and a caller works in its mapping's tenant.
 - **A reviewer needs a certificate of their own.** `crosscodex admin cleaning decide` needs the `reviewer` role, which `admin` does not include, so issue each reviewer a separate certificate and map it with `roles: [reviewer]`. Don't add `reviewer` to the shared admin mapping: one certificate holding both roles would let one person both apply a cleaning pass and decide its findings.
 - **A split pipeline role needs `tls.service_identities`.** The standalone `pipeline` role now honors the `x-tenant-id` header only from a client certificate listed there, and refuses to start with the list empty or with a `tenants.default_tenant` that `crosscodexd migrate` has not provisioned (or that is deleted). List the gateway's outbound client certificate, e.g. `tls.service_identities: [{cn: client, organization: CrossCodex}]`; the shipped `deploy/config.yaml` already has it. That deployment uses one `client.pem` for every role, the operator and the gateway's service identity, so there the list separates nothing: anyone holding `client.pem` can assert any tenant. With `tenants.enabled: true`, give the gateway a dedicated client certificate, issued to no user and no other role, and list it alone in `tls.service_identities`. Roles `all` and the embedded CLI daemon are unaffected.
@@ -349,7 +363,7 @@ crosscodex catalog import --document nist-800-53 --version-label "Rev 5" catalog
 
 A slug is 1-63 characters of `a-z`, `0-9` and `-`. Without `--version-label` the label is the OSCAL metadata version, else the import date and a short content hash. Re-importing content the document already holds keeps its version and label; giving it a different `--version-label` is refused (relabelling is not supported). `catalog list` then shows `slug @ label (date · hash)` with the current version marked; catalogs imported without `--document` list as before.
 
-Retire old versions you no longer need (admin role; the server must run role `all` with `database.purge_dsn` and `retention.archive` set):
+Retire old versions you no longer need (admin role; the server must run role `all` or `gateway` with `database.purge_dsn` and `retention.archive` set):
 
 ```sh
 crosscodex catalog retire --yes "nist-800-53@Rev 3" "nist-800-53@Rev 4"
@@ -431,7 +445,7 @@ crosscodex results export <job-id> --format csv --control <control-id> --type eq
 | `--type <type>` | both | Only this relationship type; repeat for several. Case-insensitive. `NO_RELATIONSHIP` is excluded unless named here. |
 | `--control <id>` | both | Only mappings whose source or target is this control. |
 | `--include-non-viable` | both | Also return pairs synthesis filtered out (`synthesized` stage only). By default only viable mappings are returned. |
-| `--include-vetoed` | `export` | Also list pairs the critique stage vetoed (`analyzer` stage only; synthesis never receives them). By default a vetoed pair is not a mapping, and `summary` refuses the flag because it counts only mappings. Their `critique` CSV cell reads `vetoed: 0 upheld, 3 rejected, 0 failed; <reasons>`. Every analyzer-stage CSV export ends with that `critique` column, whose cell starts with the outcome (`rejected: ...`, `split: ...`) and is empty for an unreviewed mapping; JSON carries every reviewed mapping's `critique` with its outcome, votes and reasons. |
+| `--include-vetoed` | `export` | Also list pairs the critique stage vetoed (`analyzer` stage only; synthesis never receives them). By default a vetoed pair is not a mapping, and `summary` refuses the flag because it counts only mappings. Their `critique` CSV cell reads `vetoed: 0 upheld, 3 rejected, 0 failed; <reasons>`. Every analyzer-stage CSV export has that `critique` column (followed by `cleaning_state`), whose cell starts with the outcome (`rejected: ...`, `split: ...`) and is empty for an unreviewed mapping; JSON carries every reviewed mapping's `critique` with its outcome, votes and reasons. |
 | `--exclude-rejected` | `export`, `summary` | Leave out pairs the critique rejected without veto (outcome `rejected`, from a job run with `analysis.critique.veto: false`), for the strict view of that job (`analyzer` stage only; synthesized mappings are listed without their critique). Combines with `--include-vetoed`, which selects a different outcome. |
 | `--format json\|csv` | `export` | Output format (default `json`). |
 | `--output <file>` | `export` | Write to a file instead of stdout. |
@@ -447,6 +461,8 @@ crosscodex results candidates <job-id> --format csv --control <control-id>
 `--format json|csv` (default `json`), `--output <file>` and `--control <id>` (source or target) work as in `export`. JSON has `job_id`, `analysis` and `candidates` (proto JSON, camelCase: `sourceControlId`, `targetControlId`, `similarityScore`, `contributions`). CSV has the columns `source_control_id`, `target_control_id`, `similarity_score` and `generators`, where `generators` joins the proposing generators with `;`. `similarityScore` is the embedding cosine similarity on a 0 to 100 scale, and 0 when no embedding exists for the pair. `contributions` (one per proposing generator, with its score and fusion weight) is empty unless the candidate strategy is rank fusion. `run status --json` also lists each stage's `name`, `status`, `started_at` and `completed_at` (RFC 3339; empty until set) under `stages`.
 
 A job that is still pending or running returns an error saying mappings are available once it completes. A failed or cancelled job never produces mappings; start a new job. An unknown job ID returns not found. `mapping_id` equals the ID of the mapping's `SEMANTIC_MATCH` graph edge. `REQUIRES` is not a mapping and is not returned.
+
+**Cleaning state.** A mapping that [edge cleaning](#edge-cleaning-crosscodex-admin-cleaning) or a reviewer's [determination](#mapping-feedback-crosscodex-results) changed is marked, and the stored results are unchanged. `export` JSON adds a `cleaning` object (`state` `retired`, `restored` or `stale`; `source` `finding` or `determination`; `refId`, the finding or determination ID; `changedAt`; `graphApplied`) only on such mappings. CSV ends with a `cleaning_state` column, empty for a mapping nothing changed. `crosscodex results debug <job-id> <control-id>` prints a `Cleaning: retired: finding 1a2b3c4d5e6f` line under such a mapping, with the ID cut to 12 characters; it shows the synthesized stage only. The latest change wins. A restored mapping lives under new edge IDs, but `mapping_id` is a stable key for the verdict and is unchanged.
 
 **Confidence.** A mapping's confidence (0 to 1) is the relationship panel's agreement times how sure the agreeing votes said they were: (votes for the winning type / valid votes) × the mean of `analysis.relationship.confidence_weights` over the winning votes' reported `CONFIDENCE` (HIGH 1.0, MEDIUM 0.67, LOW 0.33 by default; a vote that reports none counts as LOW). Three samples that agree, all HIGH, give 1.0; two of three, HIGH and MEDIUM, give 0.557; a one-sample panel gives exactly its vote's weight. The winning type is still chosen by vote count alone. `--min-confidence` and `synthesis.confidence_threshold` (default 0.5) filter on this value, so with the default weights a one-sample panel's LOW mappings fall below the threshold. The agreement alone is kept as the `agreement_fraction` property of each `SEMANTIC_MATCH` graph edge.
 
@@ -1200,9 +1216,57 @@ crosscodex admin hold list --tenant acme
 crosscodex admin hold release --tenant acme --name "litigation-2026-014"
 ```
 
+### Mapping Feedback (`crosscodex results`)
+
+Reviewers vote on a completed job's mappings and, when a mapping is wrong, determine it invalid. A mapping is one synthesized verdict of the job; its `mapping_id` is the ID `results export` prints. The commands need the `reviewer` role (see [Key Configuration Examples](#key-configuration-examples)) and a completed job.
+
+```sh
+# List the job's mappings that need review. --filter is contested (the default: escalated,
+# highly disputed or low-confidence), low-confidence, high-disagreement, escalated or unvoted.
+crosscodex results review <job-id> --filter unvoted --page-size 20
+
+# Vote: --vote is agree, disagree, refine or escalate. refine needs --suggest <relationship type>.
+crosscodex results vote <job-id> <mapping-id> --vote refine --suggest SUBSET_OF \
+  --rationale 'target is narrower' --evidence source=audit-2026
+
+# Decide. Exactly one of --valid or --invalid, with a --rationale.
+crosscodex results determine <job-id> <mapping-id> --invalid --rationale 'different scope' --evidence ticket=SEC-17
+```
+
+- **Votes are signals.** A reviewer's latest vote on a mapping is the one counted. `agreement_score` is agree votes over counted votes. A mapping `needs_escalation` with any `escalate` vote, or with at least one vote and an agreement score below `feedback.min_agreement`. `--rationale` is required except for `agree` (at most 4096 bytes); `--evidence key=value` may repeat (at most 32 entries).
+- **The queue.** Items are ordered by (source, target). `review` prints the next page's command when more remain; `--page-size` is 1 to 1000 (default 50). `--filter` `low-confidence` lists mappings below `feedback.low_confidence`; `high-disagreement`, voted mappings below `feedback.min_agreement`; `unvoted`, mappings with no vote. Each item names why it is listed.
+- **Determinations decide.** Votes alone never change a mapping. The rationale is required and permanent; the determination is signed (a `feedback.determination` in-toto link, which needs `attestation.private_key_path` and `attestation.public_key_path`) and recorded, then applied to the graph. `determine` prints the status and whether the graph changed. The caller must be an active registered reviewer (`crosscodexd admin reviewer add`), as for cleaning decisions.
+
+| Review now | `--invalid` | `--valid` |
+|---|---|---|
+| none, `valid`, `stale` | retires the mapping's live edges; refused when it has none (cleaning retired it, or its job's edges are gone) | recorded; no graph change |
+| `invalid` | refused: already invalid, naming the determination | restores the retired edges; refused when a graph rebuild removed them (run `crosscodexd admin cleaning --reproject` first) |
+
+A valid determination on an already restored mapping stores no edge IDs, so `results` stops showing it as `restored`; the restore stays in the audit record. Determinations never change a mapping's relationship type: to change it, record `--invalid` and re-run the analysis.
+
+Mapping reads are tenant-wide: a reviewer can act on a mapping of a job another user started.
+
+Where each call works:
+
+| Shape | Votes, queue | Determinations |
+|---|---|---|
+| role `all` | in process | in process |
+| `gateway` + `graph` | the gateway forwards to the graph role | same |
+| embedded daemon | in process | refused with `FailedPrecondition`: "mapping determinations need the crosscodexd daemon (role all, or gateway with a graph role)" |
+
+Configuration (global only: a review threshold belongs to the deployment's review process, not to a tenant's data):
+
+```yaml
+feedback:
+  min_agreement: 0.5    # [0, 1]; below this a voted mapping needs escalation and lists as high disagreement
+  low_confidence: 0.5   # [0, 1]; the review queue lists a mapping below this confidence as low confidence
+```
+
+See [Mapping Feedback](docs/dev/feedback.md) for the tables, transitions, write order and errors.
+
 ### Edge Cleaning (`crosscodex admin cleaning`)
 
-Detect redundant, contradictory and stale mapping verdicts, then review them. A verdict is one job's judgement of one control pair, written as `<job>:<source>:<target>`; a finding is what a signal raised about one or more verdicts. Retiring a verdict supersedes its graph edges (sets `valid_to`); nothing is deleted, so as-of queries still show the history. Retiring changes only the graph (the `crosscodex crosswalk` export and graph queries): `crosscodex results`, which reads `vote_summaries`, still lists retired verdicts, unmarked.
+Detect redundant, contradictory and stale mapping verdicts, then review them. A verdict is one job's judgement of one control pair, written as `<job>:<source>:<target>`; a finding is what a signal raised about one or more verdicts. Retiring a verdict supersedes its graph edges (sets `valid_to`); nothing is deleted, so as-of queries still show the history. Retiring changes only the graph (the `crosscodex crosswalk` export and graph queries): `crosscodex results`, which reads `vote_summaries`, still lists retired verdicts, each marked with its cleaning state (see [Reading a job's mappings](#9-read-a-jobs-mappings)).
 
 `crosscodexd` serves `EdgeCleaningService` in role `all`, and in role `gateway`, which forwards it to the `graph` role (see "Upgrading"). The embedded daemon fails the commands with `Unavailable` and says edge cleaning needs the crosscodexd daemon; the daemon's other roles serve no gateway, so they have nothing to call.
 
@@ -1269,6 +1333,23 @@ Every field is tenant-overridable: `max_retire_per_run` and each signal's `actio
 
 See [Edge Cleaning](docs/dev/cleaning.md) for the signal rules, tokens, write order and the audit record.
 
+#### Re-projecting after a graph rebuild
+
+A rebuilt graph (the rebuild runbook in the #148 upgrade note of [`docs/dev/design-principles.md`](docs/dev/design-principles.md)) holds every new job's edges live again, while the stored findings and determinations still say `retired` or `restored`. `crosscodexd admin cleaning --reproject` writes them back. It runs on the host like the other one-shots, opens the database and graph, and makes no LLM call and no NATS connection.
+
+```sh
+crosscodexd admin cleaning --reproject --tenant acme --dry-run   # preview, writes nothing
+crosscodexd admin cleaning --reproject --tenant acme
+crosscodexd admin cleaning --reproject --all-tenants
+```
+
+- **Preview first.** Both engines (cleaning findings, then mapping reviews) print counts, `retired N, relinked N, staled N, in_sync N`, and one line per item that is not in sync; with `--dry-run` each line starts with `would`. Without `--dry-run`, both engines first run as a dry run, and if either refuses, nothing is written.
+- **Actions.** `retire`: a retired finding's or invalid review's verdict has a live edge again, so it is superseded (at the decision's time, or at the edge's `valid_from` when that is later). `relink`: a restored verdict's stored edge IDs are replaced with its live edges. `stale`: the verdict is gone, because the graph was rebuilt from new jobs. `in_sync`: nothing to do.
+- **Which decision wins.** Within each engine the latest decision wins: among the findings that target a verdict, its latest retire or restore decision; for a mapping, its latest determination. The engines do not compare decisions with each other. Each replays its own latest decision, cleaning first, so when both have decided on one verdict, the verdict ends up retired if either engine's latest decision retires it.
+- **Stale.** A verdict is gone, and its finding or review `stale`, only when the graph holds no `SEMANTIC_MATCH` edge of it at all (its source, target and job), live or superseded, under any edge ID. An edge the other engine retired in the same run counts as present. For a review, its original edge (ID equal to `mapping_id`) or any of its stored edge IDs also count, and the review stays `in_sync`. A finding or review whose job retention purged has no verdicts left to read, so its live edges cannot be retired. It is judged by its stored edge IDs and the graph's edges of its verdict, and is `stale` only when the graph holds none of them. A stale finding or review takes a signed record (`decided_by` is `reproject`, naming the missing verdicts) and no decision. A later cleaning pass that detects the finding again raises it as `new`. Run a new pass afterwards (`crosscodex admin cleaning run`, then `--apply`) to raise findings on the new jobs' verdicts.
+- **Refusals.** It refuses, writing nothing, while a finding or determination is not yet applied to the graph (run `crosscodex admin cleaning run --resume`, or record a determination, which first applies the outstanding ones). Without `--dry-run` it needs `attestation.private_key_path` and `attestation.public_key_path`.
+- **`--all-tenants`** covers active tenants only and needs [`database.tenant_admin_dsn`](#tenant-administration); a failing tenant does not stop the rest, as for the other one-shots. A second run reports every item `in_sync`.
+
 ### Database Migration (`crosscodexd migrate`)
 
 `crosscodexd` never migrates. Before the first start, and after every upgrade, run:
@@ -1302,6 +1383,8 @@ crosscodexd admin adjudicate artifacts --tenant acme
 crosscodexd admin adjudicate artifacts --tenant acme --dry-run
 crosscodexd admin adjudicate artifacts --tenant acme --reproject
 crosscodexd admin adjudicate artifacts --all-tenants --max-pairs 500
+
+crosscodexd admin cleaning --reproject --tenant acme --dry-run
 
 crosscodexd admin adjudicate artifacts review --tenant acme
 crosscodexd admin adjudicate artifacts show --tenant acme --pair 3f9c0a1b2d4e5f60
@@ -1793,6 +1876,11 @@ backup:
     postgres: 26h
     objects: 26h
     nats: 26h
+
+feedback:
+  # Review queue thresholds, fractions in [0, 1]; global only (see Mapping Feedback).
+  min_agreement: 0.5     # below this a voted mapping needs escalation and lists as high disagreement
+  low_confidence: 0.5    # below this confidence the queue lists a mapping as low confidence
 ```
 
 ### External Cron Example

@@ -159,7 +159,7 @@ func (s *Service) RetireCatalogVersions(ctx context.Context, slug string, labels
 		}
 	}
 	if !s.retention.configured() || s.store == nil || s.storage == nil {
-		return nil, fmt.Errorf("%w: it needs the purge_user connection (database.purge_dsn) and the retention archive, which only role all wires. Run the retire against a crosscodexd role all server with database.purge_dsn and retention.archive configured", ErrRetireUnavailable)
+		return nil, fmt.Errorf("%w: it needs the purge_user connection (database.purge_dsn) and the retention archive, which only role all and role gateway wire, and only when database.purge_dsn is set. Run the retire against a crosscodexd role all or role gateway server with database.purge_dsn and retention.archive configured", ErrRetireUnavailable)
 	}
 
 	targets, err := s.resolveVersions(ctx, slug, labels)

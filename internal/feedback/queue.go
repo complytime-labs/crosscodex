@@ -16,6 +16,8 @@ import (
 const (
 	// defaultPageSize and maxPageSize bound review queue pages as the other
 	// listings do; a larger or negative page_size is refused, not clamped.
+	// The page size does not bound the work: each page reads and aggregates
+	// the whole job (see docs/dev/feedback.md, "Known limit").
 	defaultPageSize = 50
 	maxPageSize     = 1000
 )

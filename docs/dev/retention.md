@@ -232,8 +232,9 @@ materialized view of the relational tables (see AGENTS.md), and the retention
 purge does not touch it either.
 
 Retire needs the `purge_user` connection and an archive backend, so only the
-`all` role offers it, and only when `database.purge_dsn` is set. Elsewhere,
-for example on the standalone `gateway` role, it fails closed with
+`all` and `gateway` roles offer it, and only when `database.purge_dsn` is set
+(wiring: [service-runtime.md](service-runtime.md)). Elsewhere, including a
+`gateway` role without `database.purge_dsn`, it fails closed with
 `FailedPrecondition` and says so. Cost: one read of the document's versions,
 one read of the tenant's job configs, one object listing per job that
 references a version, then the archive and the purge. No LLM calls are made.
