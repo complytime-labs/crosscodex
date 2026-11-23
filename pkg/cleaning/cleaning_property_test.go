@@ -347,6 +347,64 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			}
 		})
 	})
+
+	It("RetireRebuiltEdges retires every live edge at one time no earlier than the decision or any live edge's valid_from", func() {
+		ctx := context.Background()
+		rapid.Check(GinkgoT(), func(t *rapid.T) {
+			g := memdriver.New()
+			if err := g.CreateGraph(ctx, "tenant-prop"); err != nil {
+				t.Fatalf("CreateGraph: %v", err)
+			}
+			for _, id := range []string{"a1", "b1"} {
+				if err := g.CreateNode(ctx, "tenant-prop", graphdb.Node{ID: id, Label: "Control", ValidFrom: t1}); err != nil {
+					t.Fatalf("CreateNode: %v", err)
+				}
+			}
+			hour := func(label string) time.Time {
+				return t1.Add(time.Duration(rapid.IntRange(0, 48).Draw(t, label)) * time.Hour)
+			}
+			decidedAt := hour("decided_at")
+			var ids, live []string
+			validFrom := map[string]time.Time{}
+			for i := range rapid.IntRange(1, 6).Draw(t, "edges") {
+				id := "e" + strconv.Itoa(i)
+				validFrom[id] = hour("valid_from")
+				if err := g.CreateEdge(ctx, "tenant-prop", "a1", "b1", graphdb.Edge{ID: id, Label: "SEMANTIC_MATCH", ValidFrom: validFrom[id]}); err != nil {
+					t.Fatalf("CreateEdge: %v", err)
+				}
+				ids = append(ids, id)
+				if rapid.Bool().Draw(t, "superseded") {
+					if _, err := cleaning.RetireEdges(ctx, g, "tenant-prop", []string{id}, validFrom[id]); err != nil {
+						t.Fatalf("RetireEdges: %v", err)
+					}
+				} else {
+					live = append(live, id)
+				}
+			}
+			retired, at, err := cleaning.RetireRebuiltEdges(ctx, g, "tenant-prop", ids, decidedAt)
+			if err != nil {
+				t.Fatalf("RetireRebuiltEdges: %v", err)
+			}
+			if !slices.Equal(retired, live) {
+				t.Fatalf("retired %v, want the live edges %v", retired, live)
+			}
+			if at.Before(decidedAt) {
+				t.Fatalf("retired at %s, before the decision at %s", at, decidedAt)
+			}
+			for _, id := range live {
+				if at.Before(validFrom[id]) {
+					t.Fatalf("retired at %s, before live edge %s became valid at %s", at, id, validFrom[id])
+				}
+				e, err := g.GetEdge(ctx, "tenant-prop", id)
+				if err != nil {
+					t.Fatalf("GetEdge: %v", err)
+				}
+				if e.ValidTo == nil || !e.ValidTo.Equal(at) {
+					t.Fatalf("edge %s valid_to = %v, want %s", id, e.ValidTo, at)
+				}
+			}
+		})
+	})
 })
 
 func compareVerdictKeys(x, y cleaning.VerdictKey) int {

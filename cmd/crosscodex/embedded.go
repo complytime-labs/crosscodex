@@ -19,7 +19,9 @@ import (
 	connectrpc "connectrpc.com/connect"
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
+	"github.com/complytime-labs/crosscodex/internal/admin"
 	"github.com/complytime-labs/crosscodex/internal/catalog"
+	"github.com/complytime-labs/crosscodex/internal/feedback"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/internal/gateway/backend"
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
@@ -30,6 +32,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
+	"github.com/complytime-labs/crosscodex/pkg/retention"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -181,9 +184,12 @@ const (
 // (filepath.Match) interpret, so a subject value matches only itself.
 var globLiteral = strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`)
 
-// embeddedAuthRegistry grants admin of embeddedTenantID to the client
-// certificate at clientCertPath, the one the CLI presents, matched by its
-// exact common name and organization. Any other certificate the embedded CA
+// embeddedAuthRegistry grants admin and reviewer of embeddedTenantID to the
+// client certificate at clientCertPath, the one the CLI presents, matched by
+// its exact common name and organization. The embedded daemon has a single
+// local user, so the separation between administering and reviewing that the
+// crosscodexd daemon enforces through auth.x509_mappings does not apply here:
+// the one user votes and reads the review queue. Any other certificate the embedded CA
 // signs, including the daemon's own server certificate, gets no identity.
 // The subject is read from the certificate, so a PKI set the operator
 // supplied works too.
@@ -213,7 +219,7 @@ func embeddedAuthRegistry(clientCertPath string) (*authn.Registry, error) {
 	x509Auth, err := authn.NewX509Authenticator(authn.X509Config{
 		SingleTenant:  true,
 		DefaultTenant: embeddedTenantID,
-		Mappings:      []authn.X509Mapping{{Match: match, Roles: []string{authn.RoleAdmin}}},
+		Mappings:      []authn.X509Mapping{{Match: match, Roles: []string{authn.RoleAdmin, authn.RoleReviewer}}},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create X.509 authenticator: %w", err)
@@ -480,9 +486,16 @@ func (r *embeddedResources) close() {
 	}
 }
 
-func buildEmbeddedService(ctx context.Context, cfg *config.Config, clientCertPath string, logger *slog.Logger) (*gateway.Service, *embeddedResources, error) {
+// embeddedNoPurge is why the embedded daemon's AdminService refuses every
+// retention scan that is not a dry run (admin.WithoutPurge).
+const embeddedNoPurge = "the embedded daemon has no purge_user connection or audit stream, so it cannot archive or purge. " +
+	"Rerun with --dry-run, or run the scan against crosscodexd (role all or gateway) configured with database.purge_dsn"
+
+// buildEmbeddedService builds the embedded daemon's gateway service and its
+// AdminService handler (holds, stats and dry-run scans; see embeddedNoPurge).
+func buildEmbeddedService(ctx context.Context, cfg *config.Config, clientCertPath string, logger *slog.Logger) (*gateway.Service, crosscodexv1connect.AdminServiceHandler, *embeddedResources, error) {
 	if cfg.Database.DSN == "" {
-		return nil, nil, fmt.Errorf("database not configured for embedded mode\n\n" +
+		return nil, nil, nil, fmt.Errorf("database not configured for embedded mode\n\n" +
 			"  Set a database DSN:\n" +
 			// secretlint-disable-next-line @secretlint/secretlint-rule-database-connection-string -- error-message example DSN with dev-only credentials (user: postgres, password: integration, host: localhost)
 			"    crosscodex config set database.dsn \"postgres://postgres:integration@localhost:15432/crosscodex_test?sslmode=disable\"\n\n" +
@@ -499,7 +512,11 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, clientCertPat
 	attTracer, attMeter := telemetry.Instrumentation("pkg/attestation")
 	attestors, err := pipeline.NewAttestors(cfg.Attestation, cfg.TLS.FIPS.Enabled, attTracer, attMeter)
 	if err != nil {
-		return nil, nil, fmt.Errorf("embedded daemon: %w", err)
+		return nil, nil, nil, fmt.Errorf("embedded daemon: %w", err)
+	}
+	retentionPolicy, err := retention.NewPolicy(cfg.Retention)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("embedded daemon: build retention policy: %w", err)
 	}
 
 	resources := &embeddedResources{}
@@ -507,11 +524,11 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, clientCertPat
 	// Run migrations
 	migrator, err := dbpkg.NewMigrator(cfg.Database.DSN)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create migrator: %w", err)
+		return nil, nil, nil, fmt.Errorf("create migrator: %w", err)
 	}
 	if err := migrator.Up(ctx); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		migrator.Close()
-		return nil, nil, fmt.Errorf("run migrations: %w", err)
+		return nil, nil, nil, fmt.Errorf("run migrations: %w", err)
 	}
 	migrator.Close()
 
@@ -526,14 +543,14 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, clientCertPat
 	dbTracer, dbMeter := telemetry.Instrumentation("pkg/db")
 	pool, err := dbpkg.NewPool(poolCfg, dbpkg.WithTelemetry(dbTracer, dbMeter))
 	if err != nil {
-		return nil, nil, fmt.Errorf("connect to database: %w", err)
+		return nil, nil, nil, fmt.Errorf("connect to database: %w", err)
 	}
 	resources.dbPool = pool
 
 	// Verify required extensions
 	if err := pool.VerifyExtensions(ctx); err != nil {
 		resources.close()
-		return nil, nil, fmt.Errorf("verify database extensions: %w", err)
+		return nil, nil, nil, fmt.Errorf("verify database extensions: %w", err)
 	}
 
 	// Provision the embedded tenant so tenant-scoped writes (catalogs, jobs, …)
@@ -541,7 +558,7 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, clientCertPat
 	// the tenants RLS policy (see pkg/db.EnsureTenant). Idempotent across restarts.
 	if err := dbpkg.EnsureTenant(ctx, pool, embeddedTenantID, embeddedTenantDisplayName); err != nil {
 		resources.close()
-		return nil, nil, fmt.Errorf("provision embedded tenant: %w", err)
+		return nil, nil, nil, fmt.Errorf("provision embedded tenant: %w", err)
 	}
 
 	// Create local storage
@@ -550,7 +567,7 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, clientCertPat
 	localStorage, err := storage.NewLocal(dataDir, "embedded", storage.WithLocalTelemetry(storageTracer, storageMeter))
 	if err != nil {
 		resources.close()
-		return nil, nil, fmt.Errorf("create local storage: %w", err)
+		return nil, nil, nil, fmt.Errorf("create local storage: %w", err)
 	}
 	resources.storage = localStorage
 
@@ -591,8 +608,35 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, clientCertPat
 	registry, err := embeddedAuthRegistry(clientCertPath)
 	if err != nil {
 		resources.close()
-		return nil, nil, fmt.Errorf("create auth registry: %w", err)
+		return nil, nil, nil, fmt.Errorf("create auth registry: %w", err)
 	}
+
+	// Votes and the review queue only: without feedback.WithDeterminations
+	// the service refuses determinations with FailedPrecondition, since they retire
+	// graph edges and the embedded daemon has no graph.
+	tp, mp := otel.GetTracerProvider(), otel.GetMeterProvider()
+	feedbackSvc := feedback.NewService(
+		feedback.NewPGStore(tenantConn, feedback.WithStoreTelemetry(tp, mp)),
+		cfg.Feedback, feedback.WithTelemetry(tp, mp))
+
+	// Holds and collectors use the retention pool, as in role all: it reaches
+	// a deleted tenant's data as retention must. WithoutPurge refuses every
+	// non-dry-run scan before an engine is built; the engine's nil scan lock
+	// would refuse one again. No audit stream runs here, so there is no
+	// stream drift to report.
+	retentionConn := dbpkg.NewRetentionTenantPool(pool)
+	holds := retention.NewPgHoldStore(retentionConn)
+	engineFor := func(tenantID string, policy retention.Policy) (*retention.Engine, error) {
+		collectors := []retention.Collector{
+			retention.NewDBCollector(retentionConn),
+			retention.NewCatalogCollector(retentionConn),
+			retention.NewObjectCollector(localStorage, retention.ClassAttestation, tenantID),
+		}
+		return retention.NewEngine(collectors, holds, nil, nil, nil, policy, nil), nil
+	}
+	adminSvc := admin.NewService(engineFor, retentionPolicy, holds,
+		func(context.Context) ([]retention.StreamDrift, error) { return nil, nil },
+		admin.WithoutPurge(embeddedNoPurge))
 
 	// Build gateway service with real backends
 	gatewayTracer, gatewayMeter := telemetry.Instrumentation("internal/gateway")
@@ -603,6 +647,7 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, clientCertPat
 		gateway.WithPipelineBackend(localPipeline),
 		gateway.WithMappingsBackend(mappings),
 		gateway.WithCandidatesBackend(mappings),
+		gateway.WithFeedbackBackend(feedbackSvc),
 		gateway.WithAdminBackend(gateway.NewPoolAdminBackend(pool)),
 		gateway.WithAttestor(func(tenantID string) attestation.Generator {
 			if att := attestors.ForTenant(tenantID); att != nil {
@@ -615,7 +660,7 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, clientCertPat
 		gateway.WithTelemetry(gatewayTracer, gatewayMeter),
 	)
 
-	return svc, resources, nil
+	return svc, adminSvc, resources, nil
 }
 
 func embeddedDataDir() string {

@@ -342,7 +342,7 @@ var _ = Describe("embeddedAuthRegistry", func() {
 		return &pkigen.CertKeyPair{CertPEM: certPEM, KeyPEM: keyPEM, Cert: parsePEM(certPEM)}
 	}
 
-	It("authenticates the embedded CLI's own certificate as admin", func() {
+	It("authenticates the embedded CLI's own certificate as admin and reviewer", func() {
 		pkiDir := filepath.Join(GinkgoT().TempDir(), "pki")
 		Expect(ensurePKI(pkiDir)).To(Succeed())
 		paths := pkiPaths(pkiDir)
@@ -353,7 +353,7 @@ var _ = Describe("embeddedAuthRegistry", func() {
 		identity, err := authenticate(registry, readCert(paths.ClientCert))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(identity.TenantID).To(Equal(embeddedTenantID))
-		Expect(identity.Roles).To(Equal([]string{authn.RoleAdmin}))
+		Expect(identity.Roles).To(Equal([]string{authn.RoleAdmin, authn.RoleReviewer}))
 		Expect(identity.Method).To(Equal(authn.AuthMethodMTLS))
 	})
 
@@ -402,7 +402,7 @@ var _ = Describe("embeddedAuthRegistry", func() {
 
 		identity, err := authenticate(registry, supplied.Cert)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(identity.Roles).To(Equal([]string{authn.RoleAdmin}))
+		Expect(identity.Roles).To(Equal([]string{authn.RoleAdmin, authn.RoleReviewer}))
 		identity, err = authenticate(registry, mint("anyone").Cert)
 		Expect(identity).To(BeNil())
 		Expect(err).To(MatchError(authn.ErrAuthenticationFailed))
@@ -539,9 +539,22 @@ var _ = Describe("localPipelineBackend.RetryJob", func() {
 var _ = Describe("buildEmbeddedService", func() {
 	It("returns an error when database DSN is empty", func() {
 		cfg := &config.Config{}
-		_, _, err := buildEmbeddedService(context.Background(), cfg, "", nil)
+		_, _, _, err := buildEmbeddedService(context.Background(), cfg, "", nil)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("database not configured"))
+	})
+
+	// The DSN is never dialled: the AdminService's retention policy is
+	// checked before the database is touched.
+	It("refuses an invalid retention tier before touching the database, naming the policy", func() {
+		cfg := &config.Config{}
+		cfg.Database.DSN = "postgres://unused@127.0.0.1:1/unused?sslmode=disable"
+		cfg.Retention.Defaults.JobResults = "not-a-duration"
+		svc, adminSvc, resources, err := buildEmbeddedService(context.Background(), cfg, "", nil)
+		Expect(svc).To(BeNil())
+		Expect(adminSvc).To(BeNil())
+		Expect(resources).To(BeNil())
+		Expect(err).To(MatchError(And(ContainSubstring("retention policy"), ContainSubstring("not-a-duration"))))
 	})
 })
 
@@ -636,8 +649,9 @@ var _ = Describe("embedded attestation key guard", func() {
 			Enabled: true, PrivateKeyPath: missing, PublicKeyPath: filepath.Join(dir, "absent-pub.pem"),
 		}
 
-		svc, resources, err := buildEmbeddedService(context.Background(), cfg, "", nil)
+		svc, adminSvc, resources, err := buildEmbeddedService(context.Background(), cfg, "", nil)
 		Expect(svc).To(BeNil())
+		Expect(adminSvc).To(BeNil())
 		Expect(resources).To(BeNil())
 		Expect(err).To(MatchError(attestation.ErrKeyNotFound))
 		Expect(err.Error()).To(And(ContainSubstring("attestation.private_key_path"), ContainSubstring(missing),

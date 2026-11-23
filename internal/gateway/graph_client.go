@@ -14,8 +14,9 @@ import (
 )
 
 // ConnectGraphBackend reaches a standalone graph role over mutual TLS. It is
-// the gateway role's GraphBackend and CrosswalkBackend, and Cleaning returns
-// the EdgeCleaningService handler that forwards to that role.
+// the gateway role's GraphBackend and CrosswalkBackend, Cleaning returns the
+// EdgeCleaningService handler that forwards to that role, and Feedback the
+// FeedbackBackend that does.
 //
 // Every method sends the request message in a new request rather than the
 // one it was given: a gateway handler may pass the request it received, and
@@ -26,6 +27,7 @@ type ConnectGraphBackend struct {
 	graph     crosscodexv1connect.GraphServiceClient
 	crosswalk crosscodexv1connect.CrosswalkServiceClient
 	cleaning  graphRoleCleaning
+	feedback  graphRoleFeedback
 }
 
 var (
@@ -60,6 +62,7 @@ func NewConnectGraphBackend(ctx context.Context, endpoint string, tlsCfg config.
 		graph:     crosscodexv1connect.NewGraphServiceClient(httpClient, baseURL, opts),
 		crosswalk: crosscodexv1connect.NewCrosswalkServiceClient(httpClient, baseURL, opts),
 		cleaning:  graphRoleCleaning{client: crosscodexv1connect.NewEdgeCleaningServiceClient(httpClient, baseURL, opts)},
+		feedback:  graphRoleFeedback{client: crosscodexv1connect.NewFeedbackServiceClient(httpClient, baseURL, opts)},
 	}, nil
 }
 
@@ -116,6 +119,31 @@ func (c graphRoleCleaning) GetFinding(ctx context.Context, req *connect.Request[
 
 func (c graphRoleCleaning) DecideFinding(ctx context.Context, req *connect.Request[pb.DecideFindingRequest]) (*connect.Response[pb.DecideFindingResponse], error) {
 	return forwardMessage(ctx, req, c.client.DecideFinding)
+}
+
+// Feedback returns the gateway's FeedbackBackend for a split deployment
+// (WithFeedbackBackend): it forwards each RPC to the graph role, whose
+// feedback service checks the caller's roles and records the caller as a
+// vote's voter or a determination's reviewer.
+func (b *ConnectGraphBackend) Feedback() FeedbackBackend {
+	return b.feedback
+}
+
+// graphRoleFeedback forwards the gateway's feedback RPCs to the graph role.
+type graphRoleFeedback struct {
+	client crosscodexv1connect.FeedbackServiceClient
+}
+
+func (c graphRoleFeedback) SubmitVote(ctx context.Context, req *connect.Request[pb.SubmitVoteRequest]) (*connect.Response[pb.SubmitVoteResponse], error) {
+	return forwardMessage(ctx, req, c.client.SubmitVote)
+}
+
+func (c graphRoleFeedback) GetReviewQueue(ctx context.Context, req *connect.Request[pb.GetReviewQueueRequest]) (*connect.Response[pb.GetReviewQueueResponse], error) {
+	return forwardMessage(ctx, req, c.client.GetReviewQueue)
+}
+
+func (c graphRoleFeedback) RecordDetermination(ctx context.Context, req *connect.Request[pb.RecordDeterminationRequest]) (*connect.Response[pb.RecordDeterminationResponse], error) {
+	return forwardMessage(ctx, req, c.client.RecordDetermination)
 }
 
 // needsGraphRole is the refusal for an RPC family that only a graph role

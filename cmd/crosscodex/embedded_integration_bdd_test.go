@@ -345,7 +345,7 @@ var _ = Describe("Error paths", func() {
 	It("returns an actionable error when the database is unreachable", func() {
 		cfg := &config.Config{}
 		cfg.Database.DSN = "postgres://invalid:invalid@127.0.0.1:1/nope?sslmode=disable"
-		_, _, err := buildEmbeddedService(ctx, cfg, "", nil)
+		_, _, _, err := buildEmbeddedService(ctx, cfg, "", nil)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(MatchRegexp("(?i)databas|connect|dial"))
 	})
@@ -645,5 +645,153 @@ var _ = Describe("Bug record #9 — catalog tenant scoping", func() {
 
 		_, err = getCatalog(ctx, sharedState.client, otherCatalog)
 		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeNotFound))
+	})
+})
+
+// The embedded daemon serves AdminService for holds, stats and dry runs, and
+// feedback without determinations (#230).
+var _ = Describe("Embedded AdminService and feedback", func() {
+	const unknownJob = "00000000-0000-0000-0000-000000000000"
+
+	var (
+		ctx context.Context
+		tc  *pb.TenantContext
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		tc = &pb.TenantContext{TenantId: embeddedTenantID}
+	})
+
+	listHolds := func() []*pb.Hold {
+		resp, err := sharedState.adminClient.ListHolds(ctx, connectrpc.NewRequest(&pb.ListHoldsRequest{TenantContext: tc}))
+		Expect(err).NotTo(HaveOccurred(), "ListHolds must reach the hold store; Unimplemented means AdminService is not mounted")
+		return resp.Msg.GetHolds()
+	}
+
+	// A job and a catalog two years old: expired under any realistic tier, so a
+	// scan that purged would remove them. The jobs row is inserted directly
+	// (the embedded pool is the table owner); both are removed after each spec.
+	const expiredJob, expiredCatalog = "expired-job-retention-spec", "expired-catalog-retention-spec"
+
+	rowCount := func(query string, args ...any) int {
+		var n int
+		Expect(sharedState.daemon.resources.dbPool.QueryRow(ctx, query, args...).Scan(&n)).To(Succeed())
+		return n
+	}
+
+	// retentionState is every row and object a purge would remove.
+	type retentionState struct{ jobs, catalogs, objects int }
+	snapshot := func() retentionState {
+		objects, err := sharedState.daemon.resources.storage.List(ctx, "")
+		Expect(err).NotTo(HaveOccurred())
+		return retentionState{
+			jobs:     rowCount("SELECT count(*) FROM jobs WHERE tenant_id = $1", embeddedTenantID),
+			catalogs: rowCount("SELECT count(*) FROM catalogs WHERE tenant_id = $1", embeddedTenantID),
+			objects:  len(objects),
+		}
+	}
+
+	BeforeEach(func() {
+		pool := sharedState.daemon.resources.dbPool
+		Expect(pool.Exec(ctx,
+			"INSERT INTO jobs (job_id, tenant_id, status, created_by, created_at) VALUES ($1, $2, 'completed', 'retention-spec', now() - interval '2 years')",
+			expiredJob, embeddedTenantID)).To(Succeed())
+		Expect(pool.Exec(ctx,
+			"INSERT INTO catalogs (catalog_id, tenant_id, name, version, source_type, object_path, created_at) VALUES ($1, $2, 'Expired', '1.0', 'oscal', 'expired', now() - interval '2 years')",
+			expiredCatalog, embeddedTenantID)).To(Succeed())
+	})
+
+	AfterEach(func() {
+		pool := sharedState.daemon.resources.dbPool
+		Expect(pool.Exec(ctx, "DELETE FROM jobs WHERE job_id = $1", expiredJob)).To(Succeed())
+		Expect(pool.Exec(ctx, "DELETE FROM catalogs WHERE catalog_id = $1", expiredCatalog)).To(Succeed())
+	})
+
+	// The embedded config sets no retention tier, so the default policy keeps
+	// everything: the seeded rows are reported only under a policy that
+	// expires them, and a dry run never removes them.
+	It("answers stats and a dry-run scan, reporting expired rows only under a policy that expires them", func() {
+		before := snapshot()
+
+		stats, err := sharedState.adminClient.GetRetentionStats(ctx, connectrpc.NewRequest(&pb.GetRetentionStatsRequest{TenantContext: tc}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(stats.Msg.GetEligible()).NotTo(BeNil())
+		Expect(stats.Msg.GetEligible().GetScanned()).To(BeZero(), "no tier is configured, so nothing is eligible")
+		Expect(stats.Msg.GetStreamDrifts()).To(BeEmpty(), "the embedded daemon runs no audit streams")
+
+		scan, err := sharedState.adminClient.ScanRetention(ctx, connectrpc.NewRequest(&pb.ScanRetentionRequest{TenantContext: tc, DryRun: true}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(scan.Msg.GetReport().GetScanned()).To(BeZero())
+
+		applied, err := sharedState.adminClient.ApplyRetentionPolicy(ctx, connectrpc.NewRequest(&pb.ApplyRetentionPolicyRequest{
+			TenantContext: tc, DryRun: true, Policy: &pb.RetentionPolicy{JobResults: "30d", Catalogs: "30d"},
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		report := applied.Msg.GetReport()
+		expiredJobs := rowCount("SELECT count(*) FROM jobs WHERE tenant_id = $1 AND status = 'completed' AND created_at < now() - interval '30 days'", embeddedTenantID)
+		Expect(expiredJobs).To(BeNumerically(">=", 1), "the seeded job is expired")
+		Expect(report.GetPerClass()).To(HaveKey("job_results"))
+		Expect(report.GetPerClass()["job_results"].GetScanned()).To(BeEquivalentTo(expiredJobs))
+		Expect(report.GetPerClass()).To(HaveKey("catalogs"))
+		Expect(report.GetPerClass()["catalogs"].GetScanned()).To(BeNumerically(">=", 1), "the seeded catalog is expired")
+		Expect(report.GetArchived()).To(BeZero(), "a dry run archives nothing")
+		Expect(report.GetPurged()).To(BeZero(), "a dry run purges nothing")
+
+		Expect(snapshot()).To(Equal(before), "a dry run must not remove rows or objects")
+		Expect(rowCount("SELECT count(*) FROM jobs WHERE job_id = $1", expiredJob)).To(Equal(1))
+		Expect(rowCount("SELECT count(*) FROM catalogs WHERE catalog_id = $1", expiredCatalog)).To(Equal(1))
+	})
+
+	DescribeTable("refuses a scan that would archive or purge with FailedPrecondition naming what to do, and changes nothing",
+		func(call func() error) {
+			before := snapshot()
+			beforeHolds := listHolds()
+			err := call()
+			Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeFailedPrecondition), "got: %v", err)
+			Expect(err).To(MatchError(And(ContainSubstring("--dry-run"), ContainSubstring("database.purge_dsn"))))
+			Expect(snapshot()).To(Equal(before), "a refused scan must not remove rows or objects")
+			Expect(rowCount("SELECT count(*) FROM jobs WHERE job_id = $1", expiredJob)).To(Equal(1), "the expired job must survive")
+			Expect(rowCount("SELECT count(*) FROM catalogs WHERE catalog_id = $1", expiredCatalog)).To(Equal(1), "the expired catalog must survive")
+			Expect(listHolds()).To(HaveLen(len(beforeHolds)))
+		},
+		Entry("ScanRetention", func() error {
+			_, err := sharedState.adminClient.ScanRetention(ctx, connectrpc.NewRequest(&pb.ScanRetentionRequest{TenantContext: tc}))
+			return err
+		}),
+		Entry("ApplyRetentionPolicy", func() error {
+			_, err := sharedState.adminClient.ApplyRetentionPolicy(ctx, connectrpc.NewRequest(&pb.ApplyRetentionPolicyRequest{
+				TenantContext: tc, Policy: &pb.RetentionPolicy{JobResults: "30d", Catalogs: "30d"},
+			}))
+			return err
+		}),
+	)
+
+	It("serves the review queue: an unknown job is NotFound, proving the feedback backend is attached", func() {
+		_, err := sharedState.client.GetReviewQueue(ctx, connectrpc.NewRequest(&pb.GetReviewQueueRequest{JobId: unknownJob}))
+		// CodeUnavailable ("feedback backend not configured") would mean
+		// gateway.WithFeedbackBackend is missing from the embedded service.
+		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeNotFound), "got: %v", err)
+	})
+
+	It("serves votes: SubmitVote for an unknown job reaches the store and is NotFound", func() {
+		_, err := sharedState.client.SubmitVote(ctx, connectrpc.NewRequest(&pb.SubmitVoteRequest{
+			JobId: unknownJob, MappingId: "map-1", VoteType: pb.VoteType_VOTE_TYPE_AGREE,
+		}))
+		// PermissionDenied would mean the embedded certificate lacks the
+		// reviewer role; Unavailable that no feedback backend is attached.
+		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeNotFound), "got: %v", err)
+	})
+
+	// The service refuses before reading the job; one built with
+	// determinations would answer NotFound for the unknown job. The refusal is
+	// FailedPrecondition, so its text survives the gateway's error policy.
+	It("refuses a determination through the CLI's client with FailedPrecondition naming the crosscodexd daemon", func() {
+		_, err := sharedState.client.RecordDetermination(ctx, connectrpc.NewRequest(&pb.RecordDeterminationRequest{
+			JobId: unknownJob, MappingId: "map-1", DeterminationRationale: "checked",
+		}))
+		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeFailedPrecondition), "got: %v", err)
+		Expect(err).To(MatchError(ContainSubstring(
+			"mapping determinations need the crosscodexd daemon (role all, or gateway with a graph role)")))
 	})
 })

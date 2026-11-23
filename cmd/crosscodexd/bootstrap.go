@@ -19,6 +19,7 @@ import (
 	"github.com/complytime-labs/crosscodex/internal/analysis"
 	"github.com/complytime-labs/crosscodex/internal/catalog"
 	intcleaning "github.com/complytime-labs/crosscodex/internal/cleaning"
+	"github.com/complytime-labs/crosscodex/internal/feedback"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/internal/gateway/backend"
 	"github.com/complytime-labs/crosscodex/internal/graph"
@@ -60,7 +61,7 @@ type runtime struct {
 	// retentionPurgePool is a dedicated purge_user pool built from
 	// config.Database.PurgeDSN for the retention Purger. It is nil when
 	// retention is not wired or when PurgeDSN is unset (in which case the
-	// Purger reuses the shared app pool and fails closed at the DB trigger).
+	// admin service refuses non-dry-run scans, see buildRetentionAdmin).
 	retentionPurgePool dbpkg.Pool
 }
 
@@ -347,9 +348,9 @@ func checkDefaultTenant(ctx context.Context, role string, cfg *config.Config, po
 // load refuses startup) and stored in the same object storage. It holds no graph credentials; the
 // graph role projects Control nodes. Refuses a default tenant that
 // `crosscodexd migrate` has not provisioned or that is deleted. retire, when
-// non-nil, lets the catalog service retire catalog versions (role all with
-// database.purge_dsn); nil makes retire fail closed. extra appends
-// role-specific backends (role all adds graph queries).
+// non-nil, lets the catalog service retire catalog versions (role all or
+// gateway with database.purge_dsn); nil makes retire fail closed. extra
+// appends role-specific backends (graph queries and feedback).
 func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, shared *sharedResources, pipelineBackend gateway.PipelineBackend, retire *catalog.Retention, extra ...gateway.ServiceOption) (*gateway.Service, error) {
 	if cfg.Tenants.DefaultTenant == "" {
 		return nil, fmt.Errorf("%s role: tenants.default_tenant must be set", role)
@@ -442,7 +443,8 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 
 // attachAllGateway wires the all-in-one role's gateway: buildIngestGateway's
 // authn, pass-through ingestion and catalog import, the in-process pipeline,
-// and retention admin. It also confirms the default tenant's AGE graph exists
+// retention admin, edge cleaning and mapping feedback with determinations
+// (one signer and one cleaning engine serve both). It also confirms the default tenant's AGE graph exists
 // so the co-located graph role can project into it.
 func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedResources, rt *runtime, backendPipeline gateway.PipelineBackend) error {
 	if rt.graphService == nil {
@@ -454,9 +456,16 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 	}
 	rt.retentionPurgePool = wiring.purgePool
 
+	signer, err := newCleaningSigner(cfg)
+	if err != nil {
+		return err
+	}
+	cleaningEngine := newCleaningEngine(cfg, shared, rt.pipelineService.CurrentStageRecord, signer)
+
 	gatewaySvc, err := buildIngestGateway(ctx, config.RoleAll, cfg, shared, backendPipeline, wiring.retire,
 		gateway.WithGraphBackend(rt.graphService),
-		gateway.WithCrosswalkBackend(rt.graphService))
+		gateway.WithCrosswalkBackend(rt.graphService),
+		gateway.WithFeedbackBackend(newFeedbackService(cfg, shared, cleaningEngine, signer)))
 	if err != nil {
 		return err
 	}
@@ -469,11 +478,6 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 	}
 
 	adminSvc := buildRetentionAdmin(cfg, shared, wiring)
-
-	cleaningEngine, err := newCleaningEngine(cfg, shared, rt.pipelineService.CurrentStageRecord)
-	if err != nil {
-		return err
-	}
 
 	server, err := gateway.NewServer(ctx, gateway.ServerConfig{
 		TenantStatus: gateway.NewPoolTenantStatus(shared.appPool),
@@ -491,17 +495,26 @@ func attachAllGateway(ctx context.Context, cfg *config.Config, shared *sharedRes
 }
 
 // newCleaningEngine builds the edge-cleaning engine over the app pool and the
-// graph, signing with newCleaningSigner. current reads a stage's current
-// prompt and models: in-process for role all, from the pipeline role for role
-// graph.
-func newCleaningEngine(cfg *config.Config, shared *sharedResources, current cleaning.CurrentFunc) (*cleaning.Engine, error) {
-	signer, err := newCleaningSigner(cfg)
-	if err != nil {
-		return nil, err
-	}
+// graph, signing with signer (newCleaningSigner). current reads a stage's
+// current prompt and models: in-process for role all, from the pipeline role
+// for role graph.
+func newCleaningEngine(cfg *config.Config, shared *sharedResources, current cleaning.CurrentFunc, signer attestation.Generator) *cleaning.Engine {
 	tp, mp := otel.GetTracerProvider(), otel.GetMeterProvider()
 	store := cleaning.NewPGFindingStore(dbpkg.NewTenantPool(shared.appPool), cleaning.WithFindingStoreTelemetry(tp, mp))
-	return cleaning.NewEngine(store, shared.graphDB_, &cfg.Cleaning, current, signer, cleaning.WithEngineTelemetry(tp, mp)), nil
+	return cleaning.NewEngine(store, shared.graphDB_, &cfg.Cleaning, current, signer, cleaning.WithEngineTelemetry(tp, mp))
+}
+
+// newFeedbackService builds the mapping-feedback service role all and the
+// graph role serve: votes and the review queue over the app pool, and
+// determinations over the graph, reading verdicts' live edges through
+// engine and signing with signer (the cleaning engine and signer of the same
+// role). A nil signer refuses every determination with an actionable message.
+func newFeedbackService(cfg *config.Config, shared *sharedResources, engine *cleaning.Engine, signer attestation.Generator) *feedback.Service {
+	tp, mp := otel.GetTracerProvider(), otel.GetMeterProvider()
+	store := feedback.NewPGStore(dbpkg.NewTenantPool(shared.appPool), feedback.WithStoreTelemetry(tp, mp))
+	return feedback.NewService(store, cfg.Feedback,
+		feedback.WithDeterminations(shared.graphDB_, engine, signer),
+		feedback.WithTelemetry(tp, mp))
 }
 
 // newCleaningSigner builds the generator that signs edge-cleaning decisions.
@@ -552,9 +565,16 @@ func (disabledArchive) Stat(context.Context, string) (*storage.ObjectMetadata, e
 }
 func (disabledArchive) Close() error { return nil }
 
-// buildRetentionAdmin constructs the AdminService handler for the all-in-one
-// role from wiring (see buildRetentionWiring, whose caller owns the purge_user
-// pool).
+// noPurgeDSNReason is the admin.WithoutPurge refusal for a daemon whose
+// retention wiring has no dedicated purge pool.
+const noPurgeDSNReason = "database.purge_dsn is unset, so this daemon cannot purge. " +
+	"Set database.purge_dsn to a role able to purge (purge_user), or rerun the scan with dry_run"
+
+// buildRetentionAdmin constructs the AdminService handler for role all and
+// the gateway role from wiring (see buildRetentionWiring, whose caller owns the purge_user
+// pool). Without a purge pool every scan that is not a dry run is refused up
+// front (admin.WithoutPurge): archiving would otherwise copy objects the DB
+// immutability trigger then refuses to purge.
 func buildRetentionAdmin(cfg *config.Config, shared *sharedResources, wiring retentionWiring) crosscodexv1connect.AdminServiceHandler {
 	driftSource := func(ctx context.Context) ([]retention.StreamDrift, error) {
 		configured := natsbus.ConfiguredAuditRetention(cfg.NATS.Streams)
@@ -564,7 +584,11 @@ func buildRetentionAdmin(cfg *config.Config, shared *sharedResources, wiring ret
 		}
 		return retention.VerifyStreamRetention(configured, live), nil
 	}
-	return admin.NewService(wiring.engineFor, wiring.defaultPolicy, wiring.holds, driftSource)
+	var opts []admin.ServiceOption
+	if wiring.purgePool == nil {
+		opts = append(opts, admin.WithoutPurge(noPurgeDSNReason))
+	}
+	return admin.NewService(wiring.engineFor, wiring.defaultPolicy, wiring.holds, driftSource, opts...)
 }
 
 // retentionWiring bundles the shared retention resources both the gateway
@@ -580,8 +604,8 @@ type retentionWiring struct {
 	// nil when PurgeDSN is unset, so retire fails closed.
 	retire *catalog.Retention
 	// purgePool is the dedicated purge_user pool (nil when PurgeDSN is unset, in
-	// which case the Purger reuses the app pool and fails closed at the DB
-	// immutability trigger). The caller owns it and must Close it.
+	// which case buildRetentionAdmin refuses non-dry-run scans up front). The
+	// caller owns it and must Close it.
 	purgePool dbpkg.Pool
 }
 
@@ -629,7 +653,7 @@ func buildRetentionWiring(ctx context.Context, cfg *config.Config, shared *share
 		purgePool = pool
 		purgeConn = pool
 	} else {
-		logger.Warn("database.purge_dsn is unset; retention purges will fail closed at the DB immutability trigger (configure purge_dsn as purge_user to enable purging)")
+		logger.Warn("database.purge_dsn is unset; non-dry-run retention scans are refused (configure purge_dsn as purge_user to enable purging)")
 	}
 
 	// tenantAppConn scopes the DBCollector and hold store to the tenant carried
@@ -787,15 +811,17 @@ func attachGraphListener(ctx context.Context, cfg *config.Config, shared *shared
 		return err
 	}
 
-	cleaningEngine, err := newCleaningEngine(cfg, shared, remoteStageRecord(pipelineClient))
+	signer, err := newCleaningSigner(cfg)
 	if err != nil {
 		return err
 	}
+	cleaningEngine := newCleaningEngine(cfg, shared, remoteStageRecord(pipelineClient), signer)
 	server, err := graph.NewServer(ctx, graph.ServerConfig{
 		Addr:              cfg.Graph.Addr,
 		TLS:               cfg.TLS,
 		Service:           rt.graphService,
 		Cleaning:          intcleaning.NewService(cleaningEngine),
+		Feedback:          newFeedbackService(cfg, shared, cleaningEngine, signer),
 		ServiceIdentities: serviceIdentities,
 		Logger:            slog.Default(),
 	})
@@ -1058,12 +1084,13 @@ func attachPipeline(ctx context.Context, cfg *config.Config, shared *sharedResou
 	return nil
 }
 
-// Compile-time proof that the results service can back the gateway. It lives
-// here, the composition root, because internal/results must not import
-// internal/gateway.
+// Compile-time proof that the results and feedback services can back the
+// gateway. It lives here, the composition root, because internal/results and
+// internal/feedback must not import internal/gateway.
 var (
 	_ gateway.MappingsBackend   = (*results.Service)(nil)
 	_ gateway.CandidatesBackend = (*results.Service)(nil)
+	_ gateway.FeedbackBackend   = (*feedback.Service)(nil)
 )
 
 // newMappingsBackend builds the results reader both gateway wirings share. It
@@ -1083,8 +1110,11 @@ func newMappingsBackend(shared *sharedResources) *results.Service {
 // that is a Connect client reaching a separately-deployed pipeline role over
 // the network. Catalog import persists controls and publishes them over NATS
 // for the graph role to project, so this role holds no graph credentials:
-// graph, crosswalk and edge-cleaning RPCs go to the graph role's listener
-// through a Connect client. Fails closed if cfg.Pipeline.Endpoint or
+// graph, crosswalk, edge-cleaning and feedback RPCs go to the graph role's
+// listener through a Connect client. It serves AdminService from the same
+// retention wiring as role all: database.purge_dsn enables purges and catalog
+// retire here, and leaving it unset keeps purge credentials off this
+// internet-facing process, so purges and retire fail closed. Fails closed if cfg.Pipeline.Endpoint or
 // cfg.Graph.Endpoint isn't configured -- there is no in-process
 // pipeline.Service or graph.Service to fall back to once the roles are split.
 func attachGateway(ctx context.Context, cfg *config.Config, shared *sharedResources, rt *runtime) error {
@@ -1108,11 +1138,16 @@ func attachGateway(ctx context.Context, cfg *config.Config, shared *sharedResour
 		return fmt.Errorf("create graph backend: %w", err)
 	}
 
-	// No retention wiring: the standalone gateway role holds no purge_user
-	// connection, so catalog retire fails closed there.
-	gatewaySvc, err := buildIngestGateway(ctx, config.RoleGateway, cfg, shared, pipelineBackend, nil,
+	wiring, err := buildRetentionWiring(ctx, cfg, shared, slog.Default())
+	if err != nil {
+		return fmt.Errorf("build retention wiring: %w", err)
+	}
+	rt.retentionPurgePool = wiring.purgePool
+
+	gatewaySvc, err := buildIngestGateway(ctx, config.RoleGateway, cfg, shared, pipelineBackend, wiring.retire,
 		gateway.WithGraphBackend(graphBackend),
-		gateway.WithCrosswalkBackend(graphBackend))
+		gateway.WithCrosswalkBackend(graphBackend),
+		gateway.WithFeedbackBackend(graphBackend.Feedback()))
 	if err != nil {
 		return err
 	}
@@ -1122,6 +1157,7 @@ func attachGateway(ctx context.Context, cfg *config.Config, shared *sharedResour
 		Addr:         cfg.Server.Addr,
 		TLS:          cfg.TLS,
 		Service:      gatewaySvc,
+		Admin:        buildRetentionAdmin(cfg, shared, wiring),
 		Cleaning:     graphBackend.Cleaning(),
 	})
 	if err != nil {

@@ -252,4 +252,180 @@ var _ = Describe("Graph retire and restore", func() {
 			Expect(err).NotTo(MatchError(cleaning.ErrEdgeNotLive))
 		})
 	})
+
+	Describe("RetireRebuiltEdges", func() {
+		// addEdge adds a live a1->b1 edge starting at from.
+		addEdge := func(id string, from time.Time) {
+			Expect(g.CreateEdge(ctx, opsTenant, "a1", "b1", graphdb.Edge{
+				ID: id, Label: results.SemanticMatchEdgeLabel, ValidFrom: from,
+			})).To(Succeed())
+		}
+		validTo := func(id string) *time.Time {
+			e, err := g.GetEdge(ctx, opsTenant, id)
+			Expect(err).NotTo(HaveOccurred())
+			return e.ValidTo
+		}
+
+		It("retires at the decision time when every edge was valid before it", func() {
+			ids, used, err := cleaning.RetireRebuiltEdges(ctx, g, opsTenant, []string{"e1"}, at)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ids).To(Equal([]string{"e1"}))
+			Expect(used).To(BeTemporally("==", at))
+			Expect(validTo("e1")).To(HaveValue(BeTemporally("==", at)))
+		})
+
+		It("retires every edge at the latest valid_from when an edge was rebuilt after the decision", func() {
+			addEdge("e2", restoreAt)
+			ids, used, err := cleaning.RetireRebuiltEdges(ctx, g, opsTenant, []string{"e1", "e2"}, at)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ids).To(Equal([]string{"e1", "e2"}))
+			Expect(used).To(BeTemporally("==", restoreAt))
+			Expect(validTo("e1")).To(HaveValue(BeTemporally("==", restoreAt)))
+			Expect(validTo("e2")).To(HaveValue(BeTemporally("==", restoreAt)))
+		})
+
+		It("skips an already superseded edge and does not let its valid_from move the time", func() {
+			addEdge("e2", restoreAt)
+			_, err := cleaning.RetireEdges(ctx, g, opsTenant, []string{"e2"}, restoreAt.Add(time.Hour))
+			Expect(err).NotTo(HaveOccurred())
+			ids, used, err := cleaning.RetireRebuiltEdges(ctx, g, opsTenant, []string{"e1", "e2"}, at)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ids).To(Equal([]string{"e1"}))
+			Expect(used).To(BeTemporally("==", at))
+			Expect(validTo("e2")).To(HaveValue(BeTemporally("==", restoreAt.Add(time.Hour))))
+		})
+
+		It("changes nothing when run a second time", func() {
+			_, _, err := cleaning.RetireRebuiltEdges(ctx, g, opsTenant, []string{"e1"}, at)
+			Expect(err).NotTo(HaveOccurred())
+			ids, _, err := cleaning.RetireRebuiltEdges(ctx, g, opsTenant, []string{"e1"}, at.Add(time.Hour))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ids).To(BeEmpty())
+			Expect(validTo("e1")).To(HaveValue(BeTemporally("==", at)))
+		})
+
+		It("refuses a missing edge before retiring any, naming it", func() {
+			ids, _, err := cleaning.RetireRebuiltEdges(ctx, g, opsTenant, []string{"e1", "nope"}, at)
+			Expect(err).To(MatchError(graphdb.ErrEdgeNotFound))
+			Expect(err).To(MatchError(ContainSubstring(`"nope"`)))
+			Expect(ids).To(BeEmpty())
+			Expect(validTo("e1")).To(BeNil())
+		})
+
+		It("refuses a zero decision time, changing nothing", func() {
+			_, _, err := cleaning.RetireRebuiltEdges(ctx, g, opsTenant, []string{"e1"}, time.Time{})
+			Expect(err).To(MatchError(ContainSubstring("decision time is required")))
+			Expect(validTo("e1")).To(BeNil())
+		})
+	})
+
+	Describe("ExistingEdges", func() {
+		It("returns the live and superseded edges that exist, in input order", func() {
+			Expect(g.CreateEdge(ctx, opsTenant, "a1", "b1", graphdb.Edge{
+				ID: "e2", Label: results.SemanticMatchEdgeLabel, ValidFrom: t1,
+			})).To(Succeed())
+			_, err := cleaning.RetireEdges(ctx, g, opsTenant, []string{"e2"}, at)
+			Expect(err).NotTo(HaveOccurred())
+			ids, err := cleaning.ExistingEdges(ctx, g, opsTenant, []string{"e2", "nope", "e1"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ids).To(Equal([]string{"e2", "e1"}))
+		})
+
+		It("returns none when no edge exists", func() {
+			ids, err := cleaning.ExistingEdges(ctx, g, opsTenant, []string{"nope"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ids).To(BeEmpty())
+		})
+
+		It("returns a driver failure instead of reporting the edge absent", func() {
+			ids, err := cleaning.ExistingEdges(ctx, failingGetEdge{GraphDB: g}, opsTenant, []string{"e1"})
+			Expect(err).To(MatchError(errInjected))
+			Expect(err).To(MatchError(ContainSubstring(`"e1"`)))
+			Expect(ids).To(BeEmpty())
+		})
+	})
+
+	Describe("PresentVerdicts", func() {
+		j1a1b1 := cleaning.VerdictKey{JobID: "j1", SourceID: "a1", TargetID: "b1"}
+		addEdge := func(src, tgt string, e graphdb.Edge) {
+			Expect(g.CreateEdge(ctx, opsTenant, src, tgt, e)).To(Succeed())
+		}
+		match := func(id, job string) graphdb.Edge {
+			return graphdb.Edge{ID: id, Label: results.SemanticMatchEdgeLabel, ValidFrom: t1, Properties: map[string]any{"job_id": job}}
+		}
+
+		DescribeTable("reports whether the graph holds a SEMANTIC_MATCH edge of the verdict, live or superseded",
+			func(key cleaning.VerdictKey, prepare func(), want bool) {
+				prepare()
+				got, err := cleaning.PresentVerdicts(ctx, g, opsTenant, []cleaning.VerdictKey{key})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got).To(Equal(map[cleaning.VerdictKey]bool{key: want}))
+			},
+			Entry("a live edge", j1a1b1, func() {}, true),
+			Entry("only a superseded edge, of another edge ID kind", j1a1b1, func() {
+				_, err := cleaning.RetireEdges(ctx, g, opsTenant, []string{"e1"}, at)
+				Expect(err).NotTo(HaveOccurred())
+				addEdge("a1", "b1", match("semantic-match-rebuild-x", "j1"))
+				_, err = cleaning.RetireEdges(ctx, g, opsTenant, []string{"semantic-match-rebuild-x"}, at)
+				Expect(err).NotTo(HaveOccurred())
+			}, true),
+			Entry("no edge of the verdict's job on the pair", cleaning.VerdictKey{JobID: "j2", SourceID: "a1", TargetID: "b1"}, func() {}, false),
+			Entry("an edge of the job from the source to another target", cleaning.VerdictKey{JobID: "j1", SourceID: "a1", TargetID: "c1"}, func() {}, false),
+			Entry("an edge of the job in the other direction", cleaning.VerdictKey{JobID: "j1", SourceID: "b1", TargetID: "a1"}, func() {}, false),
+			Entry("an edge of the verdict under another label", cleaning.VerdictKey{JobID: "j3", SourceID: "a1", TargetID: "b1"}, func() {
+				addEdge("a1", "b1", graphdb.Edge{ID: "other", Label: "RELATED", ValidFrom: t1, Properties: map[string]any{"job_id": "j3"}})
+			}, false),
+			Entry("a source node the graph does not hold", cleaning.VerdictKey{JobID: "j1", SourceID: "nope", TargetID: "b1"}, func() {}, false),
+		)
+
+		It("answers every key, reading each source once", func() {
+			addEdge("a1", "b1", match("e-j2", "j2"))
+			keys := []cleaning.VerdictKey{j1a1b1, {JobID: "j2", SourceID: "a1", TargetID: "b1"}, {JobID: "j9", SourceID: "a1", TargetID: "b1"}}
+			counting := &countingTraverse{GraphDB: g}
+			got, err := cleaning.PresentVerdicts(ctx, counting, opsTenant, keys)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(Equal(map[cleaning.VerdictKey]bool{keys[0]: true, keys[1]: true, keys[2]: false}))
+			Expect(counting.calls).To(Equal(1))
+		})
+
+		It("reads nothing for no keys", func() {
+			counting := &countingTraverse{GraphDB: g}
+			got, err := cleaning.PresentVerdicts(ctx, counting, opsTenant, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(BeEmpty())
+			Expect(counting.calls).To(BeZero())
+		})
+
+		It("returns a driver failure instead of reporting the verdict gone", func() {
+			got, err := cleaning.PresentVerdicts(ctx, failingTraverse{GraphDB: g}, opsTenant, []cleaning.VerdictKey{j1a1b1})
+			Expect(err).To(MatchError(errInjected))
+			Expect(err).To(MatchError(ContainSubstring("a1")))
+			Expect(got).To(BeNil())
+		})
+	})
 })
+
+// failingGetEdge fails every GetEdge as a graph outage would.
+type failingGetEdge struct{ graphdb.GraphDB }
+
+func (failingGetEdge) GetEdge(context.Context, string, string) (*graphdb.EdgeWithEndpoints, error) {
+	return nil, errInjected
+}
+
+// failingTraverse fails every Traverse as a graph outage would.
+type failingTraverse struct{ graphdb.GraphDB }
+
+func (failingTraverse) Traverse(context.Context, string, graphdb.TraversalQuery) ([]graphdb.Path, error) {
+	return nil, errInjected
+}
+
+// countingTraverse counts Traverse calls.
+type countingTraverse struct {
+	graphdb.GraphDB
+	calls int
+}
+
+func (c *countingTraverse) Traverse(ctx context.Context, tenantID string, q graphdb.TraversalQuery) ([]graphdb.Path, error) {
+	c.calls++
+	return c.GraphDB.Traverse(ctx, tenantID, q)
+}

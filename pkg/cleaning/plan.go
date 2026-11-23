@@ -38,6 +38,7 @@ const (
 	StatusDismissed Status = "dismissed" // a reviewer judged it not a problem
 	StatusRestored  Status = "restored"  // a reviewer reversed a retire
 	StatusCleared   Status = "cleared"   // a later pass no longer detects it
+	StatusStale     Status = "stale"     // re-projection found its verdicts gone from a rebuilt graph
 )
 
 // Action is what the policy does with a signal's findings. Values match the
@@ -57,7 +58,7 @@ var desired = map[Action]Status{ActionReport: StatusReported, ActionHuman: Statu
 type Change string
 
 const (
-	ChangeNew      Change = "new"      // not stored, or stored and cleared
+	ChangeNew      Change = "new"      // not stored, or stored and cleared or stale
 	ChangeChanged  Change = "changed"  // reported or pending, evidence changed
 	ChangeReraised Change = "reraised" // dismissed or restored, evidence changed
 	ChangeStatus   Change = "status"   // reported or pending, policy now wants the other status
@@ -254,7 +255,7 @@ func targetEdgeIDs(f Finding) []string {
 // returns what a run over scope would write. A finding gets the status its
 // signal's action wants (report: reported, human: pending, retire: retired):
 //
-//   - not stored, or stored cleared: ChangeNew;
+//   - not stored, or stored cleared or stale: ChangeNew;
 //   - stored reported or pending: ChangeChanged when the evidence hash
 //     differs, else ChangeStatus when the status differs, else omitted;
 //   - stored dismissed or restored: ChangeReraised when the evidence hash
@@ -383,7 +384,7 @@ func planDetected(f Finding, id string, byID map[string]StoredFinding, pol confi
 	p.From = s.Status
 	changed := hash != s.EvidenceHash
 	switch s.Status {
-	case StatusCleared:
+	case StatusCleared, StatusStale:
 		p.Change = ChangeNew
 	case StatusReported, StatusPending:
 		switch {

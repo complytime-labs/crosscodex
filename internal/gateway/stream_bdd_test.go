@@ -183,6 +183,10 @@ func (s *stubFeedback) SubmitVote(_ context.Context, _ *connect.Request[pb.Submi
 	return connect.NewResponse(&pb.SubmitVoteResponse{}), nil
 }
 
+func (s *stubFeedback) RecordDetermination(_ context.Context, _ *connect.Request[pb.RecordDeterminationRequest]) (*connect.Response[pb.RecordDeterminationResponse], error) {
+	return connect.NewResponse(&pb.RecordDeterminationResponse{}), nil
+}
+
 func (s *stubFeedback) GetReviewQueue(_ context.Context, _ *connect.Request[pb.GetReviewQueueRequest]) (*connect.Response[pb.GetReviewQueueResponse], error) {
 	return connect.NewResponse(&pb.GetReviewQueueResponse{}), nil
 }

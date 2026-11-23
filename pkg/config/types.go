@@ -34,6 +34,7 @@ type Config struct {
 	Graph         GraphConfig         `yaml:"graph"         json:"graph"`
 	Synthesis     SynthesisConfig     `yaml:"synthesis"     json:"synthesis"`
 	Cleaning      CleaningConfig      `yaml:"cleaning"      json:"cleaning"`
+	Feedback      FeedbackConfig      `yaml:"feedback"      json:"feedback"`
 	Retention     RetentionConfig     `yaml:"retention"     json:"retention"`
 	Backup        BackupConfig        `yaml:"backup"        json:"backup"`
 	Role          string              `yaml:"role"          json:"role"`
@@ -1389,6 +1390,20 @@ type CleaningSignals struct {
 	ConflictsWith         SignalPolicy `yaml:"conflicts_with"          json:"conflicts_with"`
 	StalePrompt           SignalPolicy `yaml:"stale_prompt"            json:"stale_prompt"`
 	StaleModel            SignalPolicy `yaml:"stale_model"             json:"stale_model"`
+}
+
+// FeedbackConfig configures the review queue over reviewers' mapping votes.
+// Both thresholds are fractions in [0, 1]. They are global only: a review
+// threshold is a property of the deployment's review process, not of a
+// tenant's data, so there are no tenant overrides.
+type FeedbackConfig struct {
+	// MinAgreement is the agreement score (agree votes over counted votes)
+	// below which a mapping with at least one vote needs escalation and is
+	// listed as high disagreement.
+	MinAgreement float64 `yaml:"min_agreement" json:"min_agreement"`
+	// LowConfidence is the confidence below which a mapping is listed as low
+	// confidence.
+	LowConfidence float64 `yaml:"low_confidence" json:"low_confidence"`
 }
 
 // CleaningConfig configures the edge-cleaning passes.

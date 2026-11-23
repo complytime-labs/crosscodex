@@ -35,7 +35,7 @@ func mustExec(ctx context.Context, tx *sql.Tx, stmt string) {
 
 var _ = Describe("Schema version and restricted role checks", func() {
 	It("LatestMigrationVersion returns the highest embedded migration", func() {
-		Expect(db.LatestMigrationVersion()).To(Equal(uint(2)))
+		Expect(db.LatestMigrationVersion()).To(Equal(uint(3)))
 	})
 
 	Describe("CheckSchemaVersion", func() {

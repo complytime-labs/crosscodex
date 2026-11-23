@@ -25,16 +25,27 @@
 //     not stored (foreign key) or an ID already stored in the tenant
 //     (primary key). It is all or nothing.
 //   - Decide refuses a next whose ID is not the decision's finding, a policy
-//     decision, and a decision or next the validators refuse; then checks
+//     or re-projection decision, and a decision or next the validators refuse; then checks
 //     the reviewer in Fake.Reviewers (absent: ErrReviewerNotRegistered;
 //     ReviewerDeleted: ErrReviewerDeleted), the finding (absent:
 //     ErrFindingNotFound) and its state token (different: ErrStateChanged),
 //     then the decision's ID as ApplyRun does. On success the finding takes
 //     next's Status, Targets and EdgeIDs with GraphApplied false.
+//   - MarkStale refuses any decision but a valid cleaning.VerdictStale by
+//     cleaning.DecidedByReproject, then checks the finding and its state token
+//     as Decide does and the decision's ID as ApplyRun does. On success the
+//     finding becomes cleaning.StatusStale with GraphApplied true, its
+//     Targets and EdgeIDs unchanged.
+//   - MarkReprojected checks the finding (absent: ErrFindingNotFound), its
+//     state token (different: ErrStateChanged) and that it is projected
+//     (else cleaning.ErrUnprojected), then replaces its EdgeIDs, refusing
+//     edge IDs over the stored-JSON bound. UpdatedAt is left unchanged.
 //   - Refusals the real store words itself (a stale run, a run already
 //     recorded, a decision on a
 //     finding not stored or already recorded, a non-policy decision in a
-//     run, a policy decision in Decide) use the same text in the Fake.
+//     run, a policy or re-projection decision in Decide, a decision
+//     MarkStale does not record, a changed finding in MarkStale) use the same
+//     text in the Fake.
 //   - Times are stored as the database stores them, in UTC. A time the
 //     caller passes (Decision.DecidedAt, RunRecord.AppliedAt) is truncated
 //     to the microsecond, as the pgx driver encodes it; a zero

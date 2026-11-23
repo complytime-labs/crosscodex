@@ -15,9 +15,11 @@ pkg/db/migrations/
   001_initial_schema.down.sql    # drops everything the baseline creates, roles included
   002_catalog_documents.up.sql   # catalog_documents table; version-lineage columns on catalogs; purge_user lineage grants (#204)
   002_catalog_documents.down.sql # drops them; catalogs rows and their dependents are untouched
+  003_mapping_feedback.up.sql    # mapping_votes, mapping_determinations, mapping_reviews; 'stale' finding status and verdict; mapping_cleaning_states view (#230, #291, #289)
+  003_mapping_feedback.down.sql  # drops them and restores the original status and verdict checks (fails while a 'stale' row exists)
 ```
 
-`001_initial_schema` is the whole pre-release schema in one baseline, grouped by domain (roles; tenants and identity; jobs; catalogs; retention; verdicts; tenant administration; restricted-role access; the AGE graph lifecycle). `002_catalog_documents` is the first append-only migration: it adds nullable columns and one table, so databases at version 1 upgrade with `crosscodexd migrate`. It also grants `purge_user` `SELECT` on `catalog_documents` and `UPDATE (supersedes_catalog_id)` on `catalogs`, so retention purge and catalog retire can re-point the version chain (see [retention.md](retention.md#role-based-purge-carve-out)); those grants were added to `002` in place before the first release, so a development database already at version 2 must be recreated to get them. The next migration is `003`.
+`001_initial_schema` is the whole pre-release schema in one baseline, grouped by domain (roles; tenants and identity; jobs; catalogs; retention; verdicts; tenant administration; restricted-role access; the AGE graph lifecycle). `002_catalog_documents` is the first append-only migration: it adds nullable columns and one table, so databases at version 1 upgrade with `crosscodexd migrate`. It also grants `purge_user` `SELECT` on `catalog_documents` and `UPDATE (supersedes_catalog_id)` on `catalogs`, so retention purge and catalog retire can re-point the version chain (see [retention.md](retention.md#role-based-purge-carve-out)); those grants were added to `002` in place before the first release, so a development database already at version 2 must be recreated to get them. `003_mapping_feedback` is append-only too: three new tables, a view, and widened `edge_findings.status` and `edge_finding_decisions.verdict` checks. The next migration is `004`.
 
 Each migration is a pair of SQL files:
 

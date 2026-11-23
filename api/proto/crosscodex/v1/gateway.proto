@@ -183,6 +183,21 @@ service GatewayService {
     };
   }
 
+  // Record a reviewer's determination on a mapping. The feedback backend
+  // enforces the reviewer role (an active registered reviewer); the gateway
+  // only authenticates the caller. is_valid=false retires the mapping's live graph
+  // edges; is_valid=true after an invalid determination restores them.
+  // Refused when cleaning already retired the mapping or the mapping is
+  // already invalid. Needs the graph: the embedded daemon refuses with
+  // FailedPrecondition.
+  // INTERNAL: feedback.RecordDetermination
+  rpc RecordDetermination(RecordDeterminationRequest) returns (RecordDeterminationResponse) {
+    option (google.api.http) = {
+      post: "/v1/mappings/{mapping_id}/determination"
+      body: "*"
+    };
+  }
+
   // Get review queue
   // INTERNAL: feedback.GetReviewQueue
   rpc GetReviewQueue(GetReviewQueueRequest) returns (GetReviewQueueResponse) {

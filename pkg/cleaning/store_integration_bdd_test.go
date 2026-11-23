@@ -290,6 +290,29 @@ var _ = Describe("PGFindingStore against Postgres", func() {
 			Entry("a reviewer's decision with a run ID", "alice", "run-1"),
 		)
 
+		DescribeTable("refuses a stale verdict not decided by re-projection, and re-projection deciding anything else, even written directly",
+			func(verdict, decidedBy string) {
+				before := tableJSON("edge_finding_decisions")
+				var finding string
+				Expect(suPool.QueryRow(context.Background(), `SELECT finding_id FROM edge_findings WHERE tenant_id = $1`, tenantA).
+					Scan(&finding)).To(Succeed())
+				ctx := context.Background()
+				tx, err := appDB.BeginTx(ctx, nil)
+				Expect(err).NotTo(HaveOccurred())
+				defer func() { _ = tx.Rollback() }()
+				_, err = tx.ExecContext(ctx, "SELECT public.enter_tenant($1)", tenantA)
+				Expect(err).NotTo(HaveOccurred())
+				_, err = tx.ExecContext(ctx, `INSERT INTO edge_finding_decisions
+					(tenant_id, decision_id, finding_id, verdict, decided_by, rationale, request, attestation)
+					VALUES ($1, 'd-direct', $2, $3, $4, 'r', '\x00', '\x00')`, tenantA, finding, verdict, decidedBy)
+				Expect(db.IsPgErrorCode(err, "23514")).To(BeTrue(), "got %v", err)
+				Expect(err).To(MatchError(ContainSubstring("edge_finding_decisions_reproject")))
+				Expect(tableJSON("edge_finding_decisions")).To(Equal(before))
+			},
+			Entry("a stale verdict by a reviewer", cleaning.VerdictStale, "alice"),
+			Entry("a retire by re-projection", cleaning.VerdictRetire, cleaning.DecidedByReproject),
+		)
+
 		It("hides the rows from another tenant's app_user session", func() {
 			ctx := context.Background()
 			tx, err := appDB.BeginTx(ctx, nil)
@@ -302,6 +325,49 @@ var _ = Describe("PGFindingStore against Postgres", func() {
 				Expect(tx.QueryRowContext(ctx, `SELECT count(*) FROM `+table).Scan(&n)).To(Succeed())
 				Expect(n).To(BeZero(), table)
 			}
+		})
+	})
+
+	Describe("mapping_cleaning_states", func() {
+		type stateRow struct{ job, source, target, state, origin, ref string }
+		// inTenant returns the view's rows for the tenant's app_user session.
+		inTenant := func(tenantID string) []stateRow {
+			ctx := context.Background()
+			tx, err := appDB.BeginTx(ctx, nil)
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = tx.Rollback() }()
+			_, err = tx.ExecContext(ctx, "SELECT public.enter_tenant($1)", tenantID)
+			Expect(err).NotTo(HaveOccurred())
+			rows, err := tx.QueryContext(ctx, `SELECT job_id, source_id, target_id, state, source, ref_id
+				FROM mapping_cleaning_states ORDER BY job_id, source_id, target_id`)
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = rows.Close() }()
+			var out []stateRow
+			for rows.Next() {
+				var r stateRow
+				Expect(rows.Scan(&r.job, &r.source, &r.target, &r.state, &r.origin, &r.ref)).To(Succeed())
+				out = append(out, r)
+			}
+			Expect(rows.Err()).NotTo(HaveOccurred())
+			return out
+		}
+
+		It("returns one retired row per target of a retired finding to its tenant only", func() {
+			f := cleaningtest.ContractFinding(1, cleaning.SignalConflictsWith, cleaning.StatusRetired, "cat-x", "cat-y")
+			f.Targets = append(f.Targets, cleaning.VerdictKey{JobID: "job-1", SourceID: "s1b", TargetID: "t1b"})
+			run := cleaningtest.ContractRun(1)
+			Expect(store.ApplyRun(ctxA, tenantA, cleaning.RunWrite{
+				Run:     run,
+				Upserts: cleaningtest.NewUpserts(f),
+				Decisions: []cleaning.Decision{cleaningtest.PolicyDecision(cleaning.Decision{ID: "d-1", FindingID: f.ID,
+					Verdict: cleaning.VerdictRetire, Rationale: "policy", Request: []byte("{}"), Attestation: []byte("sig")}, run)},
+			})).To(Succeed())
+
+			Expect(inTenant(tenantA)).To(Equal([]stateRow{
+				{"job-1", "s1", "t1", "retired", "finding", f.ID},
+				{"job-1", "s1b", "t1b", "retired", "finding", f.ID},
+			}))
+			Expect(inTenant(tenantB)).To(BeEmpty())
 		})
 	})
 

@@ -570,7 +570,7 @@ var _ = Describe("EdgeCleaningService", func() {
 					`low_agreement, conflicts_with, stale_prompt, stale_model, or leave it empty for all`),
 			Entry("an unknown status, listing the accepted statuses", &pb.ListFindingsRequest{Status: "retierd"},
 				`status "retierd" is not a finding status: use one of reported, pending, retired, dismissed, restored, cleared, `+
-					`or leave it empty for all`),
+					`stale, or leave it empty for all`),
 		)
 
 		It("filters by signal", func() {
@@ -579,6 +579,23 @@ var _ = Describe("EdgeCleaningService", func() {
 			}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.Msg.GetFindings()).To(HaveExactElements(HaveField("FindingId", conflict)))
+		})
+
+		It("filters by status stale", func() {
+			ctx := tenantCtx(tenantA)
+			f, _, err := store.GetFinding(ctx, tenantA, conflict)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(store.MarkStale(ctx, tenantA, cleaning.Decision{
+				ID: "d-stale", FindingID: conflict, Verdict: cleaning.VerdictStale, DecidedBy: cleaning.DecidedByReproject,
+				Rationale: "the graph no longer holds verdicts", Request: []byte("{}"), Attestation: []byte("sig"),
+			}, cleaning.StateToken(f))).To(Succeed())
+
+			resp, err := svc.ListFindings(rev, connect.NewRequest(&pb.ListFindingsRequest{
+				TenantContext: tc(tenantA), Status: string(cleaning.StatusStale),
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.GetFindings()).To(HaveExactElements(And(
+				HaveField("FindingId", conflict), HaveField("Status", string(cleaning.StatusStale)))))
 		})
 	})
 

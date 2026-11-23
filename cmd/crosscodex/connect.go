@@ -149,7 +149,7 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 	}))
 
 	// Build service with real backends
-	svc, resources, err := buildEmbeddedService(ctx, state.fullCfg, paths.ClientCert, embeddedLogger)
+	svc, adminSvc, resources, err := buildEmbeddedService(ctx, state.fullCfg, paths.ClientCert, embeddedLogger)
 	if err != nil {
 		return err
 	}
@@ -167,6 +167,7 @@ func startEmbeddedDaemon(ctx context.Context, state *cliState, stateDir, pidPath
 		Addr:         "localhost:0",
 		TLS:          tlsCfg,
 		Service:      svc,
+		Admin:        adminSvc,
 		Logger:       embeddedLogger,
 	})
 	if err != nil {

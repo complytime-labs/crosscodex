@@ -249,7 +249,11 @@ message Finding {
   string finding_id = 1;
   // Name of the signal that raised it.
   string signal = 2;
-  // Lifecycle status. The status decides which decisions are allowed.
+  // Lifecycle status: reported, pending, retired, dismissed, restored,
+  // cleared or stale. The status decides which decisions are allowed. stale
+  // means a re-projection found the finding's verdicts gone from a rebuilt
+  // graph (see its stale decision); it allows no decision, and a later pass
+  // that detects the finding again raises it as new.
   string status = 3;
   // The verdicts the finding is about. Empty for a job-level finding, which
   // sets job instead.
@@ -307,7 +311,8 @@ message ListFindingsRequest {
   // stale_model. Empty for all; any other value is INVALID_ARGUMENT.
   string signal = 2;
   // Only findings in this status: reported, pending, retired, dismissed,
-  // restored or cleared. Empty for all; any other value is INVALID_ARGUMENT.
+  // restored, cleared or stale. Empty for all; any other value is
+  // INVALID_ARGUMENT.
   string status = 3;
   // Only findings over this catalog pair. Set both catalogs or neither.
   CatalogPairScope scope = 4;
@@ -331,10 +336,13 @@ message GetFindingRequest {
 // an applied cleaning run, or a reviewer's decision made with DecideFinding.
 message Decision {
   string decision_id = 1;
-  // retire, dismiss or restore.
+  // retire, dismiss or restore; or stale, which only a re-projection records,
+  // with decided_by "reproject", when the finding's verdicts are gone from a
+  // rebuilt graph.
   string verdict = 2;
   // "policy" for a decision an applied run made under the cleaning policy;
-  // otherwise the authenticated subject of the reviewer who decided.
+  // "reproject" for a re-projection's stale decision; otherwise the
+  // authenticated subject of the reviewer who decided.
   string decided_by = 3;
   // The applied cleaning run that recorded a policy decision; empty for a
   // reviewer's decision.
@@ -360,7 +368,7 @@ message DecideFindingRequest {
   // Required (INVALID_ARGUMENT when empty).
   string finding_id = 2;
   // retire, dismiss or restore. Which are allowed depends on the finding's
-  // status; see Finding.status.
+  // status; see Finding.status. A stale finding allows none.
   string verdict = 3;
   // Why. Required: an empty or whitespace-only rationale is INVALID_ARGUMENT.
   // Stored with the decision and signed.

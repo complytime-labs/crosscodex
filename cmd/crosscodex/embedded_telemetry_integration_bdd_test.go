@@ -70,7 +70,7 @@ var _ = Describe("embedded service telemetry wiring", func() {
 		Expect(ensurePKI(pkiDir)).To(Succeed())
 
 		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-		svc, resources, err := buildEmbeddedService(ctx, cfg, pkiPaths(pkiDir).ClientCert, logger)
+		svc, _, resources, err := buildEmbeddedService(ctx, cfg, pkiPaths(pkiDir).ClientCert, logger)
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(resources.close)
 

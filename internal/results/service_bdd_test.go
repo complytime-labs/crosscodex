@@ -11,6 +11,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
@@ -19,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/results"
@@ -310,6 +312,20 @@ var _ = Describe("Service.ListMappings", func() {
 				Reasons: []string{"panel-1 s0 UPHOLD: ok", "panel-2 s0 REJECT: no", "panel-3 s0 REJECT: no"}}
 			Expect(proto.Equal(resp.Mappings[0].Critique, want)).To(BeTrue(), "critique %v", resp.Mappings[0].Critique)
 			Expect(resp.Mappings[1].Critique).To(BeNil())
+		})
+
+		It("carries a mapping's cleaning state and leaves it unset on a mapping without one", func() {
+			changed := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+			reader.page = results.Page{Mappings: []results.Mapping{
+				{JobID: "j", SourceID: "s", TargetID: "t", RelationshipType: "SUBSET_OF",
+					Cleaning: &results.CleaningState{State: "retired", Source: "finding", RefID: "f1", ChangedAt: changed, GraphApplied: true}},
+				{JobID: "j", SourceID: "s", TargetID: "u", RelationshipType: "SUBSET_OF"},
+			}}
+			resp, err := call(context.Background(), validRequest())
+			Expect(err).NotTo(HaveOccurred())
+			want := &pb.MappingCleaning{State: "retired", Source: "finding", RefId: "f1", ChangedAt: timestamppb.New(changed), GraphApplied: true}
+			Expect(proto.Equal(resp.Mappings[0].Cleaning, want)).To(BeTrue(), "cleaning %v", resp.Mappings[0].Cleaning)
+			Expect(resp.Mappings[1].Cleaning).To(BeNil())
 		})
 
 		It("leaves the next token empty on the last page", func() {

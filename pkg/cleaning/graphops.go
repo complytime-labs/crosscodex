@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/graphdb"
 )
 
@@ -62,6 +63,117 @@ func RetireEdges(ctx context.Context, g graphdb.GraphDB, tenantID string, edgeID
 		retired = append(retired, id)
 	}
 	return retired, nil
+}
+
+// RetireRebuiltEdges retires the live edges among edgeIDs at one time, the
+// later of decidedAt and every live edge's valid_from, and returns the IDs it
+// superseded and the time it used. Only re-projection uses it: after a graph
+// rebuild a verdict's edge may start after the decision that retired the
+// verdict, and a rebuilt edge did not exist before its valid_from, so retiring
+// it at decidedAt would invert its validity interval. Superseded edges are
+// skipped and do not move the time, so a second call changes nothing.
+//
+// Every edge is read before anything is written: a missing edge wraps
+// graphdb.ErrEdgeNotFound, and a zero decidedAt is an error.
+func RetireRebuiltEdges(ctx context.Context, g graphdb.GraphDB, tenantID string, edgeIDs []string, decidedAt time.Time) ([]string, time.Time, error) {
+	if decidedAt.IsZero() {
+		return nil, time.Time{}, errors.New("retire rebuilt edges: the decision time is required, because no edge may be retired before it; nothing was written")
+	}
+	at := decidedAt
+	for _, id := range edgeIDs {
+		e, err := g.GetEdge(ctx, tenantID, id)
+		if err != nil {
+			return nil, time.Time{}, fmt.Errorf("retire rebuilt edge %q: %w", id, err)
+		}
+		if e.ValidTo == nil && e.ValidFrom.After(at) {
+			at = e.ValidFrom
+		}
+	}
+	retired, err := RetireEdges(ctx, g, tenantID, edgeIDs, at)
+	return retired, at, err
+}
+
+// ExistingEdges returns the IDs among edgeIDs that are in the graph, live or
+// superseded, in input order. An edge the graph reports as
+// graphdb.ErrEdgeNotFound is absent; any other failure is returned, so an
+// outage is not reported as a missing edge.
+func ExistingEdges(ctx context.Context, g graphdb.GraphDB, tenantID string, edgeIDs []string) ([]string, error) {
+	edges, err := lookupEdges(ctx, g, tenantID, edgeIDs)
+	if err != nil {
+		return nil, err
+	}
+	var found []string
+	for _, le := range edges {
+		found = append(found, le.id)
+	}
+	return found, nil
+}
+
+// lookedUpEdge is an edge id and the edge the graph holds under it.
+type lookedUpEdge struct {
+	id   string
+	edge *graphdb.EdgeWithEndpoints
+}
+
+// lookupEdges reads each of ids from the graph, in input order, and leaves out
+// those the graph reports as graphdb.ErrEdgeNotFound. Any other failure is
+// returned, so an outage is not reported as a missing edge.
+func lookupEdges(ctx context.Context, g graphdb.GraphDB, tenantID string, ids []string) ([]lookedUpEdge, error) {
+	var out []lookedUpEdge
+	for _, id := range ids {
+		ed, err := g.GetEdge(ctx, tenantID, id)
+		if errors.Is(err, graphdb.ErrEdgeNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("look up edge %q: %w", id, err)
+		}
+		out = append(out, lookedUpEdge{id: id, edge: ed})
+	}
+	return out, nil
+}
+
+// PresentVerdicts reports, for each of keys, whether the graph holds any
+// SEMANTIC_MATCH edge of that verdict: from its source to its target with its
+// job_id, live or superseded, of either stage and under any edge ID. It is the
+// re-projection engines' test for a verdict that is gone: an edge another
+// engine retired, or one a rebuild wrote under another ID kind, still counts,
+// so only a graph rebuilt without the verdict's job reports it gone. The job
+// need not be a completed job of the tenant.
+//
+// Each distinct source is read once, as its outbound SEMANTIC_MATCH edges
+// (Traverse without AsOf, depth 1). Any graph failure is returned, so an
+// outage is not taken for a gone verdict.
+func PresentVerdicts(ctx context.Context, g graphdb.GraphDB, tenantID string, keys []VerdictKey) (map[VerdictKey]bool, error) {
+	out := make(map[VerdictKey]bool, len(keys))
+	var sources []string
+	seenSource := map[string]struct{}{}
+	for _, k := range keys {
+		out[k] = false
+		if _, dup := seenSource[k.SourceID]; !dup {
+			seenSource[k.SourceID] = struct{}{}
+			sources = append(sources, k.SourceID)
+		}
+	}
+	for _, src := range sources {
+		paths, err := g.Traverse(ctx, tenantID, graphdb.TraversalQuery{
+			StartNode: src, Direction: "outbound", EdgeLabels: []string{results.SemanticMatchEdgeLabel}, MaxDepth: 1,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("read the %s edges of control %q: %w", results.SemanticMatchEdgeLabel, src, err)
+		}
+		for _, p := range paths {
+			if len(p.Edges) != 1 || len(p.Nodes) != 2 {
+				continue
+			}
+			job, _ := p.Edges[0].Properties["job_id"].(string)
+			k := VerdictKey{JobID: job, SourceID: src, TargetID: p.Nodes[1].ID}
+			if _, wanted := out[k]; wanted {
+				out[k] = true
+			}
+		}
+	}
+	return out, nil
 }
 
 // RestoreEdges recreates each retired edge as a new live edge starting at at

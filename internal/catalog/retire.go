@@ -60,8 +60,8 @@ func (r Retention) configured() bool {
 }
 
 // WithRetention lets the service retire catalog versions. Wiring contract:
-// cmd/crosscodexd sets it only for role all and only when database.purge_dsn
-// is set, from the same retention wiring (holds, per-tenant archiver and
+// cmd/crosscodexd sets it only for role all and role gateway, and only when
+// database.purge_dsn is set, from the same retention wiring (holds, per-tenant archiver and
 // purger, audit publisher) the retention engine uses; every other deployment
 // leaves it unset, so retire fails closed. It has no pkg/config field of its
 // own: database.purge_dsn and retention.archive decide it.
@@ -159,7 +159,7 @@ func (s *Service) RetireCatalogVersions(ctx context.Context, slug string, labels
 		}
 	}
 	if !s.retention.configured() || s.store == nil || s.storage == nil {
-		return nil, fmt.Errorf("%w: it needs the purge_user connection (database.purge_dsn) and the retention archive, which only role all wires. Run the retire against a crosscodexd role all server with database.purge_dsn and retention.archive configured", ErrRetireUnavailable)
+		return nil, fmt.Errorf("%w: it needs the purge_user connection (database.purge_dsn) and the retention archive, which only role all and role gateway wire, and only when database.purge_dsn is set. Run the retire against a crosscodexd role all or role gateway server with database.purge_dsn and retention.archive configured", ErrRetireUnavailable)
 	}
 
 	targets, err := s.resolveVersions(ctx, slug, labels)

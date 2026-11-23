@@ -10,8 +10,8 @@ import (
 // superseded at its latest retire decision's time, and a restored finding's
 // edges are recreated under its latest restore decision, so a retry repeats
 // the same change: retire skips superseded edges and restore finds the edges
-// it already made. Reported, pending, dismissed and cleared findings change
-// no edge; an unknown status is refused. A failure part-way is a
+// it already made. Reported, pending, dismissed, cleared and stale findings
+// change no edge; an unknown status is refused. A failure part-way is a
 // *ProjectionError saying how far it got and to resume.
 func (e *Engine) project(ctx context.Context, tenantID string) (int, error) {
 	uns, err := e.store.Unprojected(ctx, tenantID)
@@ -75,7 +75,7 @@ func (e *Engine) projectOne(ctx context.Context, tenantID string, s StoredFindin
 		if edges, err = RestoreEdges(ctx, e.g, tenantID, s.EdgeIDs, d.ID, d.DecidedAt); err != nil {
 			return fmt.Errorf("finding %s: %w", s.ID, err)
 		}
-	case StatusReported, StatusPending, StatusDismissed, StatusCleared:
+	case StatusReported, StatusPending, StatusDismissed, StatusCleared, StatusStale:
 		// No graph change: only the row is marked projected.
 	default:
 		return fmt.Errorf("finding %s has unknown status %q, so its graph change is unknown and nothing was applied for it. "+

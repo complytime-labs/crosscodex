@@ -1740,6 +1740,17 @@ func GraphDBContractBehavior(setup GraphDBSetup) func() {
 				gomega.Expect(traverse(graphdb.TraversalQuery{StartNode: "nope"})).To(gomega.BeEmpty())
 			})
 
+			ginkgo.It("includes superseded edges without AsOf", func() {
+				ok, err := db.SupersedeFact(ctx, tenant, graphdb.SupersedeRequest{EdgeID: "ab", SupersededAt: contractT0.Add(time.Minute)})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(ok).To(gomega.BeTrue())
+				paths, err := db.Traverse(ctx, tenant, graphdb.TraversalQuery{StartNode: "a", MaxDepth: 1})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(pathNodeIDs(paths)).To(gomega.Equal([][]string{{"a", "b"}}))
+				gomega.Expect(paths[0].Edges[0].ID).To(gomega.Equal("ab"))
+				gomega.Expect(paths[0].Edges[0].ValidTo).NotTo(gomega.BeNil())
+			})
+
 			ginkgo.It("never reuses an edge within a path", func() {
 				mustEdge("b", "a", graphdb.Edge{ID: "ba", Label: "NEXT", ValidFrom: contractT0})
 				gomega.Expect(traverse(graphdb.TraversalQuery{StartNode: "a", EdgeLabels: []string{"NEXT"}})).To(gomega.ConsistOf(

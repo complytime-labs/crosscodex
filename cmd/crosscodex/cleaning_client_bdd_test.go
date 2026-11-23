@@ -55,7 +55,7 @@ var _ = Describe("EdgeCleaningService client construction", func() {
 		Expect(list(cleaningClient)).To(Succeed())
 	})
 
-	It("reports an unmounted cleaning service as an error, as the embedded daemon's missing AdminService is", func() {
+	It("reports an unmounted cleaning service as Unimplemented", func() {
 		bare := httptest.NewServer(http.NewServeMux())
 		DeferCleanup(bare.Close)
 

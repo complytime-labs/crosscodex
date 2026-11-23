@@ -155,6 +155,10 @@ func checkTransition(f StoredFinding, verdict string) error {
 	if slices.Contains(from, f.Status) {
 		return nil
 	}
+	if f.Status == StatusStale {
+		return fmt.Errorf("%w: finding %s is stale: its verdicts are no longer in the graph (see its stale decision). "+
+			"Decide on the findings a new cleaning pass raises", ErrInvalidTransition, f.ID)
+	}
 	var now []string
 	for _, v := range verdicts {
 		if slices.Contains(transitions[v], f.Status) {

@@ -100,7 +100,8 @@ import (
 //   - Traverse returns every path of length 1..MaxDepth (0 = unlimited) that
 //     does not reuse an edge. Direction "inbound" and "both" are honored; any
 //     other value means outbound. A missing start node yields no paths and no
-//     error. AsOf filters paths with Path.ValidAt.
+//     error. AsOf filters paths with Path.ValidAt; without AsOf, paths
+//     through superseded edges are returned too.
 //   - SupersedeFact overwrites valid_to unconditionally and records
 //     superseded_by when SupersededByJobID is set. A request that sets both
 //     NodeID and EdgeID is rejected and changes nothing.
