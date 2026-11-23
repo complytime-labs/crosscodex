@@ -545,6 +545,26 @@ var _ = Describe("Engine.Reproject", func() {
 		})
 	})
 
+	// Decision IDs are content hashes, so an engine-level spec cannot choose
+	// which of two simultaneous decisions has the lower ID; this drives the
+	// choice directly with both input orders.
+	DescribeTable("picks the decision that governs a shared verdict",
+		func(xAt, yAt time.Time, xID, yID string, xFirst bool, want string) {
+			shared := cleaning.VerdictKey{JobID: "j1", SourceID: "a2", TargetID: "b1"}
+			fs := []cleaning.StoredFinding{{ID: "x", Targets: []cleaning.VerdictKey{shared}}, {ID: "y", Targets: []cleaning.VerdictKey{shared}}}
+			ds := []cleaning.Decision{{ID: xID, FindingID: "x", DecidedAt: xAt}, {ID: yID, FindingID: "y", DecidedAt: yAt}}
+			if !xFirst {
+				slices.Reverse(fs)
+				slices.Reverse(ds)
+			}
+			Expect(cleaning.Governors(fs, ds)).To(Equal(map[cleaning.VerdictKey]string{shared: want}))
+		},
+		Entry("the later decision, listed first", engNow.Add(time.Minute), engNow, "d2", "d1", true, "x"),
+		Entry("the later decision, listed second", engNow.Add(time.Minute), engNow, "d2", "d1", false, "x"),
+		Entry("on equal times the lower decision ID, listed first", engNow, engNow, "d1", "d2", true, "x"),
+		Entry("on equal times the lower decision ID, listed second", engNow, engNow, "d1", "d2", false, "x"),
+	)
+
 	It("records a span with the tenant and operation", func() {
 		tp, err := telemetrytest.NewTestProvider()
 		Expect(err).NotTo(HaveOccurred())

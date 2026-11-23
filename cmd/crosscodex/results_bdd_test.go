@@ -12,6 +12,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
@@ -256,7 +258,7 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 		Expect(lines[0]).To(Equal("mapping_id,source_control_id,target_control_id,relationship_type,confidence,viability_score,is_viable," +
 			"job_source_catalog_id,job_source_catalog_name,job_source_catalog_version," +
 			"job_target_catalog_id,job_target_catalog_name,job_target_catalog_version,job_bidirectional," +
-			"job_source_catalog_snapshot,job_target_catalog_snapshot"))
+			"job_source_catalog_snapshot,job_target_catalog_snapshot,cleaning_state"))
 		Expect(lines[1]).To(HavePrefix("a,s-a,t-a,RELATIONSHIP_TYPE_EQUIVALENT,0.900,0.800,true"))
 		Expect(lines[2]).To(HavePrefix("b,s-b,t-b,RELATIONSHIP_TYPE_SUBSET_OF"))
 	})
@@ -307,7 +309,7 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			Expect(err).NotTo(HaveOccurred())
 			rows, err := csv.NewReader(strings.NewReader(stdout)).ReadAll()
 			Expect(err).NotTo(HaveOccurred())
-			last := len(rows[0]) - 1
+			last := slices.Index(rows[0], "critique")
 			Expect(rows[2][last]).To(Equal("rejected: 1 upheld, 2 rejected, 0 failed; panel-2 s0 REJECT: too broad"))
 		})
 
@@ -327,7 +329,7 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			rows, err := csv.NewReader(strings.NewReader(stdout)).ReadAll()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(rows).To(HaveLen(3))
-			last := len(rows[0]) - 1
+			last := slices.Index(rows[0], "critique")
 			Expect(rows[1][0]).To(Equal("a"))
 			Expect(rows[1][last]).To(BeEmpty(), "a mapping without a critique has an empty cell")
 			Expect(rows[2][0]).To(Equal("v"))
@@ -335,13 +337,13 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 				"panel-1 s0 UPHOLD: fine | panel-2 s0 REJECT: scope\ndiffers | panel-3 s0 REJECT: =unrelated"))
 		})
 
-		It("ends every analyzer-stage CSV header with the critique column, keeping the other columns in place", func() {
+		It("ends every analyzer-stage CSV header with the critique and cleaning_state columns, keeping the other columns in place", func() {
 			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "csv", "--stage", "analyzer")
 			Expect(err).NotTo(HaveOccurred())
 			header := strings.Split(strings.Split(stdout, "\n")[0], ",")
 			Expect(header[:8]).To(Equal([]string{"mapping_id", "source_control_id", "target_control_id", "relationship_type", "confidence",
 				"viability_score", "is_viable", "job_source_catalog_id"}))
-			Expect(header[len(header)-1]).To(Equal("critique"))
+			Expect(header[len(header)-2:]).To(Equal([]string{"critique", "cleaning_state"}))
 		})
 
 		It("exports a mapping's critique in JSON", func() {
@@ -370,6 +372,91 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			Expect(out.Mappings[0]).NotTo(HaveKey("critique"))
 			Expect(out.Mappings[0]).NotTo(HaveKey("isViable"))
 		})
+	})
+
+	Describe("cleaning state", func() {
+		cleaned := func() *pb.ControlMapping {
+			m := mapping("c", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT)
+			m.Cleaning = &pb.MappingCleaning{State: "retired", Source: "finding", RefId: "1a2b3c4d5e6f7a8b9c0d",
+				ChangedAt: timestamppb.New(time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)), GraphApplied: true}
+			return m
+		}
+
+		DescribeTable("shows a cleaned mapping in the human debug output with the ID shortened to 12 characters",
+			func(c *pb.MappingCleaning, want string) {
+				m := mapping("c", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT)
+				m.Cleaning = c
+				fake.pages = []*pb.ListJobMappingsResponse{mappingsPage("", m)}
+				stdout, _, err := execute(newCmd(), "debug", "job-1", "s-c")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stdout).To(ContainSubstring("  Cleaning: " + want + "\n"))
+			},
+			Entry("retired by a finding", &pb.MappingCleaning{State: "retired", Source: "finding", RefId: "1a2b3c4d5e6f7a8b9c0d"}, "retired: finding 1a2b3c4d5e6f"),
+			Entry("restored by a determination", &pb.MappingCleaning{State: "restored", Source: "determination", RefId: "abc"}, "restored: determination abc"),
+			Entry("stale", &pb.MappingCleaning{State: "stale", Source: "finding", RefId: "ffffffffffff1"}, "stale: finding ffffffffffff"),
+		)
+
+		It("keeps the cleaning line on one line without escape bytes when server fields are hostile", func() {
+			m := mapping("c", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT)
+			m.Cleaning = &pb.MappingCleaning{State: "re\x1b[2Jtired\nforged: line", Source: "fin\x07ding", RefId: "ééééééééééééééé"}
+			fake.pages = []*pb.ListJobMappingsResponse{mappingsPage("", m)}
+			stdout, _, err := execute(newCmd(), "debug", "job-1", "s-c")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stdout).NotTo(ContainSubstring("\x1b"))
+			Expect(stdout).NotTo(ContainSubstring("\x07"))
+			Expect(stdout).NotTo(ContainSubstring("\nforged"))
+			Expect(stdout).To(ContainSubstring(" éééééééééééé\n"), "the ID is cut at 12 characters, not 12 bytes")
+			Expect(stdout).NotTo(ContainSubstring("é\xc3\n"))
+		})
+
+		It("neutralises a formula-leading cleaning state in the CSV", func() {
+			m := mapping("c", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT)
+			m.Cleaning = &pb.MappingCleaning{State: "=HYPERLINK(\"x\")", Source: "finding", RefId: "r"}
+			fake.pages = []*pb.ListJobMappingsResponse{mappingsPage("", m)}
+			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "csv")
+			Expect(err).NotTo(HaveOccurred())
+			rows, err := csv.NewReader(strings.NewReader(stdout)).ReadAll()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rows[1][len(rows[1])-1]).To(Equal("'=HYPERLINK(\"x\")"))
+		})
+
+		It("prints no cleaning line for a mapping nothing changed", func() {
+			fake.pages = []*pb.ListJobMappingsResponse{mappingsPage("", mapping("a", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT))}
+			stdout, _, err := execute(newCmd(), "debug", "job-1", "s-a")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stdout).NotTo(ContainSubstring("Cleaning"))
+		})
+
+		It("exports the cleaning object in JSON for a cleaned mapping only", func() {
+			fake.pages = []*pb.ListJobMappingsResponse{mappingsPage("", cleaned(), mapping("a", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT))}
+			stdout, _, err := execute(newCmd(), "export", "job-1", "--format", "json")
+			Expect(err).NotTo(HaveOccurred())
+			var out struct {
+				Mappings []map[string]any `json:"mappings"`
+			}
+			Expect(json.Unmarshal([]byte(stdout), &out)).To(Succeed(), "export output is valid JSON: %s", stdout)
+			Expect(out.Mappings[0]).To(HaveKeyWithValue("cleaning", SatisfyAll(
+				HaveKeyWithValue("state", "retired"), HaveKeyWithValue("source", "finding"),
+				HaveKeyWithValue("refId", "1a2b3c4d5e6f7a8b9c0d"), HaveKeyWithValue("graphApplied", true),
+				HaveKeyWithValue("changedAt", "2026-03-04T05:06:07Z"))))
+			Expect(out.Mappings[1]).NotTo(HaveKey("cleaning"))
+		})
+
+		DescribeTable("ends the CSV with the cleaning state only, empty for an unchanged mapping",
+			func(args ...string) {
+				fake.pages = []*pb.ListJobMappingsResponse{mappingsPage("", cleaned(), mapping("a", pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT))}
+				stdout, _, err := execute(newCmd(), append([]string{"export", "job-1", "--format", "csv"}, args...)...)
+				Expect(err).NotTo(HaveOccurred())
+				rows, err := csv.NewReader(strings.NewReader(stdout)).ReadAll()
+				Expect(err).NotTo(HaveOccurred())
+				last := len(rows[0]) - 1
+				Expect(rows[0][last]).To(Equal("cleaning_state"))
+				Expect(rows[1][last]).To(Equal("retired"))
+				Expect(rows[2][last]).To(BeEmpty())
+			},
+			Entry("synthesized stage"),
+			Entry("analyzer stage", "--stage", "analyzer"),
+		)
 	})
 
 	Describe("export of a crosswalk job", func() {
@@ -423,7 +510,7 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			Expect(err).NotTo(HaveOccurred())
 			lines := strings.Split(strings.TrimSpace(stdout), "\n")
 			Expect(lines).To(HaveLen(2))
-			Expect(lines[1]).To(HaveSuffix(",cat-src,CSF 2.0,2.0,cat-tgt,NIST SP 800-53,,false,true,true"))
+			Expect(lines[1]).To(HaveSuffix(",cat-src,CSF 2.0,2.0,cat-tgt,NIST SP 800-53,,false,true,true,"))
 		})
 
 		// A job created before snapshots reports its catalogs' current
@@ -438,8 +525,8 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 				Expect(lines).To(HaveLen(2))
 				Expect(lines[1]).To(HaveSuffix(wantSuffix))
 			},
-			Entry("a job that recorded both labels", true, true, ",false,true,true"),
-			Entry("a job from before snapshots", false, false, ",false,false,false"),
+			Entry("a job that recorded both labels", true, true, ",false,true,true,"),
+			Entry("a job from before snapshots", false, false, ",false,false,false,"),
 		)
 
 		DescribeTable("says in JSON whether each side's label was recorded when the job was created",
@@ -467,7 +554,7 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			Expect(err).NotTo(HaveOccurred())
 			lines := strings.Split(strings.TrimSpace(stdout), "\n")
 			Expect(lines).To(HaveLen(3))
-			Expect(lines[2]).To(HaveSuffix(",cat-src,CSF 2.0,2.0,cat-tgt,NIST SP 800-53,,false,true,true"))
+			Expect(lines[2]).To(HaveSuffix(",cat-src,CSF 2.0,2.0,cat-tgt,NIST SP 800-53,,false,true,true,"))
 		})
 
 		It("guards uploader-derived CSV cells against formulas, leaving server-generated ones alone", func() {
@@ -481,7 +568,7 @@ var _ = Describe("Results mappings via ListJobMappings", func() {
 			lines := strings.Split(strings.TrimSpace(stdout), "\n")
 			Expect(lines).To(HaveLen(2))
 			Expect(lines[1]).To(Equal(`a,'=cmd|' /C calc'!A0,'-AC-1,RELATIONSHIP_TYPE_EQUIVALENT,0.900,0.800,true,` +
-				`'@cat,'+CSF,'-2.0,cat-tgt,NIST SP 800-53,,false,true,true`))
+				`'@cat,'+CSF,'-2.0,cat-tgt,NIST SP 800-53,,false,true,true,`))
 		})
 
 		It("keeps formula characters as stored in JSON", func() {

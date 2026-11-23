@@ -14,6 +14,7 @@ import (
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	crosscodexv1connect "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
+	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/tlsconfig"
 )
@@ -29,15 +30,16 @@ func gatewayClient(ctx context.Context, rt *runtime) crosscodexv1connect.Gateway
 
 // The standalone gateway role is not covered here. It gets its mappings
 // backend from the same buildIngestGateway as role all, and its graph,
-// crosswalk and cleaning backends from Connect clients to the graph role
-// (graph.endpoint, required by attachGateway).
+// crosswalk, cleaning and feedback backends from Connect clients to the graph
+// role (graph.endpoint, required by attachGateway); graph_role_integration_test.go
+// covers those and its AdminService.
 //
 // An unwired backend answers CodeUnavailable. A wired one reaches its store,
 // so an unknown job is CodeNotFound.
 var _ = Describe("gateway backend wiring", func() {
 	const unknownJob = "00000000-0000-0000-0000-000000000000"
 
-	It("role all attaches the mappings, crosswalk and graph backends", func() {
+	It("role all attaches the mappings, crosswalk, graph and feedback backends, with determinations", func() {
 		dsn := os.Getenv("TEST_DATABASE_DSN")
 		if dsn == "" {
 			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
@@ -53,6 +55,11 @@ var _ = Describe("gateway backend wiring", func() {
 		cfg.Attestation.PrivateKeyPath = testAttestationPrivateKeyPath
 		cfg.Attestation.PublicKeyPath = testAttestationPublicKeyPath
 		cfg.Storage.Objects.BasePath = GinkgoT().TempDir()
+		// Determinations need the reviewer role.
+		cfg.Auth.X509Mappings = []config.X509MappingConfig{{
+			Match: testClientX509Mappings[0].Match,
+			Roles: []string{authn.RoleAdmin, authn.RoleReviewer},
+		}}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -82,6 +89,20 @@ var _ = Describe("gateway backend wiring", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound),
 			"GetCrosswalk for an unknown job must reach the store; Unavailable means gateway.WithCrosswalkBackend is not wired: %v", err)
+
+		_, err = client.GetReviewQueue(ctx, connect.NewRequest(&pb.GetReviewQueueRequest{JobId: unknownJob}))
+		Expect(err).To(HaveOccurred())
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound),
+			"GetReviewQueue for an unknown job must reach the store; Unavailable means gateway.WithFeedbackBackend is not wired: %v", err)
+
+		// The feedback service refuses a determination Unavailable, before
+		// reading the job, unless it was built with WithDeterminations.
+		_, err = client.RecordDetermination(ctx, connect.NewRequest(&pb.RecordDeterminationRequest{
+			JobId: unknownJob, MappingId: "map-1", DeterminationRationale: "checked",
+		}))
+		Expect(err).To(HaveOccurred())
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound),
+			"RecordDetermination for an unknown job must reach the store; Unavailable means feedback.WithDeterminations is not wired: %v", err)
 
 		_, err = client.QueryGraph(ctx, connect.NewRequest(&pb.QueryGraphRequest{Cypher: "MATCH (n) RETURN n"}))
 		if err != nil {

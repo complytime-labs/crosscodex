@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	analyzerresults "github.com/complytime-labs/crosscodex/pkg/analyzer/results"
@@ -420,6 +421,10 @@ func (s *Service) toResponse(ctx context.Context, page Page) *pb.ListJobMappings
 			// critique result, so the conversions cannot overflow.
 			cm.Critique = &pb.MappingCritique{Vetoed: c.Vetoed, Upheld: int32(c.Upheld), Rejected: int32(c.Rejected),
 				Failed: int32(c.Failed), Reasons: c.Reasons, Outcome: c.Outcome}
+		}
+		if c := m.Cleaning; c != nil {
+			cm.Cleaning = &pb.MappingCleaning{State: c.State, Source: c.Source, RefId: c.RefID,
+				ChangedAt: timestamppb.New(c.ChangedAt), GraphApplied: c.GraphApplied}
 		}
 		resp.Mappings = append(resp.Mappings, cm)
 	}

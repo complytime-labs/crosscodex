@@ -182,6 +182,9 @@ func (s *PGStore) ListMappings(ctx context.Context, f Filter) (Page, error) {
 			}
 			page = paginate(rows, f.PageSize)
 			page.Analysis = analysis
+			if err := attachCleaning(ctx, tx, f.TenantID, page.Mappings); err != nil {
+				return err
+			}
 			return nil
 		})
 	})
@@ -189,6 +192,53 @@ func (s *PGStore) ListMappings(ctx context.Context, f Filter) (Page, error) {
 		return Page{}, err
 	}
 	return page, nil
+}
+
+// cleaningSQL picks, for each listed mapping, the latest row of
+// mapping_cleaning_states: the one rule for what cleaning and reviewers did to
+// a mapping. Ties break on source, then ref_id, so the choice is deterministic.
+// The view runs with the caller's row-level security, and tenant_id is
+// repeated as the defence-in-depth predicate every query here carries.
+const cleaningSQL = `
+SELECT DISTINCT ON (job_id, source_id, target_id)
+       job_id, source_id, target_id, state, source, ref_id, changed_at, graph_applied
+FROM mapping_cleaning_states
+WHERE tenant_id = $1
+  AND (job_id, source_id, target_id) IN (SELECT * FROM unnest($2::text[], $3::text[], $4::text[]))
+ORDER BY job_id, source_id, target_id, changed_at DESC, source, ref_id`
+
+// attachCleaning sets Cleaning on each of mappings that cleaning or a reviewer
+// changed, in the transaction that read the page.
+func attachCleaning(ctx context.Context, tx db.Transaction, tenantID string, mappings []Mapping) error {
+	if len(mappings) == 0 {
+		return nil
+	}
+	jobs := make([]string, len(mappings))
+	sources := make([]string, len(mappings))
+	targets := make([]string, len(mappings))
+	index := make(map[Cursor]int, len(mappings))
+	for i, m := range mappings {
+		jobs[i], sources[i], targets[i] = m.JobID, m.SourceID, m.TargetID
+		index[Cursor{JobID: m.JobID, SourceID: m.SourceID, TargetID: m.TargetID}] = i
+	}
+	rs, err := tx.Query(ctx, cleaningSQL, tenantID, jobs, sources, targets)
+	if err != nil {
+		return fmt.Errorf("list mappings: query cleaning states: %w", err)
+	}
+	for rs.Next() {
+		var key Cursor
+		var c CleaningState
+		if err := rs.Scan(&key.JobID, &key.SourceID, &key.TargetID, &c.State, &c.Source, &c.RefID, &c.ChangedAt, &c.GraphApplied); err != nil {
+			return errors.Join(fmt.Errorf("list mappings: scan cleaning state: %w", err), rs.Close())
+		}
+		if i, ok := index[key]; ok {
+			mappings[i].Cleaning = &c
+		}
+	}
+	if err := errors.Join(rs.Err(), rs.Close()); err != nil {
+		return fmt.Errorf("list mappings: read cleaning states: %w", err)
+	}
+	return nil
 }
 
 // requireCompleted fails unless jobID names a completed job of the tenant,

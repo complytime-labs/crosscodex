@@ -297,6 +297,14 @@ var _ = Describe("Backend errors at the gateway boundary", func() {
 			})).SubmitVote(ctx, connect.NewRequest(&pb.SubmitVoteRequest{MappingId: "m-1"}))
 			return e
 		})),
+		Entry("RecordDetermination", "RecordDetermination", func() context.Context { return userCtx("user-a") }, call(func(ctx context.Context, err error) error {
+			_, e := newService(gateway.WithFeedbackBackend(&mockFeedback{
+				recordDetermFn: func(context.Context, *connect.Request[pb.RecordDeterminationRequest]) (*connect.Response[pb.RecordDeterminationResponse], error) {
+					return nil, err
+				},
+			})).RecordDetermination(ctx, connect.NewRequest(&pb.RecordDeterminationRequest{MappingId: "m-1"}))
+			return e
+		})),
 		Entry("GetReviewQueue", "GetReviewQueue", adminCtx, call(func(ctx context.Context, err error) error {
 			_, e := newService(gateway.WithFeedbackBackend(&mockFeedback{
 				getReviewQueueFn: func(context.Context, *connect.Request[pb.GetReviewQueueRequest]) (*connect.Response[pb.GetReviewQueueResponse], error) {

@@ -43,6 +43,21 @@ type Service struct {
 	// max age). It is assembled in bootstrap from the natsbus client and the
 	// configured stream retention so Service stays decoupled from both.
 	driftSource func(ctx context.Context) ([]retention.StreamDrift, error)
+	// noPurge, when set, is why this daemon cannot archive or purge: every
+	// scan that is not a dry run is refused with it (WithoutPurge).
+	noPurge string
+}
+
+// ServiceOption configures a Service.
+type ServiceOption func(*Service)
+
+// WithoutPurge marks a daemon that cannot archive or purge (no purge role, no
+// audit stream): ScanRetention and ApplyRetentionPolicy refuse every request
+// that is not a dry run with FailedPrecondition before building an engine,
+// and the message carries reason, which should name what can purge instead.
+// Dry runs, stats and holds are unaffected.
+func WithoutPurge(reason string) ServiceOption {
+	return func(s *Service) { s.noPurge = reason }
 }
 
 var _ crosscodexv1connect.AdminServiceHandler = (*Service)(nil)
@@ -57,13 +72,28 @@ func NewService(
 	defaultPolicy retention.Policy,
 	holds retention.HoldStore,
 	driftSource func(ctx context.Context) ([]retention.StreamDrift, error),
+	opts ...ServiceOption,
 ) *Service {
-	return &Service{
+	s := &Service{
 		engineFor:     engineFor,
 		defaultPolicy: defaultPolicy,
 		holds:         holds,
 		driftSource:   driftSource,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// refusePurge returns the WithoutPurge refusal for a scan that is not a dry
+// run, or nil.
+func (s *Service) refusePurge(dryRun bool) error {
+	if dryRun || s.noPurge == "" {
+		return nil
+	}
+	return connect.NewError(connect.CodeFailedPrecondition,
+		fmt.Errorf("refused a retention scan that would archive or purge: %s", s.noPurge))
 }
 
 // requireAdmin enforces the admin RBAC gate. A nil identity yields
@@ -121,6 +151,9 @@ func (s *Service) ScanRetention(ctx context.Context, req *connect.Request[pb.Sca
 	if err != nil {
 		return nil, err
 	}
+	if err := s.refusePurge(req.Msg.GetDryRun()); err != nil {
+		return nil, err
+	}
 
 	engine, err := s.engineFor(resolved, s.defaultPolicy)
 	if err != nil {
@@ -145,6 +178,9 @@ func (s *Service) ApplyRetentionPolicy(ctx context.Context, req *connect.Request
 	}
 	if req.Msg.GetPolicy() == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("policy is required"))
+	}
+	if err := s.refusePurge(req.Msg.GetDryRun()); err != nil {
+		return nil, err
 	}
 
 	policy, err := retention.NewPolicy(policyConfigFromProto(req.Msg.GetPolicy()))

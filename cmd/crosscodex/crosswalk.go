@@ -228,7 +228,7 @@ func crosswalkRequestFromFlags(cmd *cobra.Command, args []string) (*pb.GetCrossw
 
 	typeNames, _ := cmd.Flags().GetStringSlice("type")
 	for _, name := range typeNames {
-		t, err := parseRelationshipType(name)
+		t, err := parseRelationshipType("--type", name)
 		if err != nil {
 			return nil, err
 		}

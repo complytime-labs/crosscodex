@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	connectrpc "connectrpc.com/connect"
@@ -37,6 +38,8 @@ func newResultsCmd(state *cliState) *cobra.Command {
 	resultsCmd.AddCommand(newResultsQueryCmd(state))
 	resultsCmd.AddCommand(newResultsDebugCmd(state))
 	resultsCmd.AddCommand(newResultsReviewCmd(state))
+	resultsCmd.AddCommand(newResultsVoteCmd(state))
+	resultsCmd.AddCommand(newResultsDetermineCmd(state))
 	resultsCmd.AddCommand(newResultsVerifyCmd(state))
 
 	return resultsCmd
@@ -179,7 +182,7 @@ func mappingRequestFromFlags(cmd *cobra.Command, jobID string) (*pb.ListJobMappi
 	typeNames, _ := cmd.Flags().GetStringSlice("type")
 	types := make([]pb.RelationshipType, 0, len(typeNames))
 	for _, name := range typeNames {
-		t, err := parseRelationshipType(name)
+		t, err := parseRelationshipType("--type", name)
 		if err != nil {
 			return nil, err
 		}
@@ -201,7 +204,7 @@ func mappingRequestFromFlags(cmd *cobra.Command, jobID string) (*pb.ListJobMappi
 
 // parseRelationshipType accepts a relationship type with or without the
 // RELATIONSHIP_TYPE_ prefix, in any case. UNSPECIFIED is not a filter.
-func parseRelationshipType(name string) (pb.RelationshipType, error) {
+func parseRelationshipType(flag, name string) (pb.RelationshipType, error) {
 	full := strings.ToUpper(strings.TrimSpace(name))
 	if !strings.HasPrefix(full, relationshipTypePrefix) {
 		full = relationshipTypePrefix + full
@@ -217,7 +220,7 @@ func parseRelationshipType(name string) (pb.RelationshipType, error) {
 		}
 	}
 	slices.Sort(valid)
-	return 0, fmt.Errorf("invalid --type %q: use one of %s", name, strings.Join(valid, ", "))
+	return 0, fmt.Errorf("invalid %s %q: use one of %s", flag, name, strings.Join(valid, ", "))
 }
 
 // listAllMappings reads every page of the request's result set and returns
@@ -290,6 +293,25 @@ func critiqueCell(c *pb.MappingCritique) string {
 	return csvCellUpTo(cell, math.MaxInt)
 }
 
+// cleaningIDWidth is how many characters of a finding or determination ID the
+// human output shows; JSON and CSV carry the state, JSON the whole ID.
+const cleaningIDWidth = 12
+
+// cleaningLabel renders a mapping's cleaning state for people:
+// "retired: finding 1a2b3c4d5e6f", or "" for a mapping nothing changed. Every
+// field is server-sourced, so each goes through untrusted; the ID is cut by
+// characters, not bytes, so a multibyte rune is never split.
+func cleaningLabel(c *pb.MappingCleaning) string {
+	if c == nil {
+		return ""
+	}
+	id := []rune(untrusted(c.GetRefId()))
+	if len(id) > cleaningIDWidth {
+		id = id[:cleaningIDWidth]
+	}
+	return fmt.Sprintf("%s: %s %s", untrusted(c.GetState()), untrusted(c.GetSource()), string(id))
+}
+
 // csvCell makes an uploader-derived value safe as a CSV cell. CSV is often
 // read on a terminal, so terminal escapes and bidi overrides are removed (line
 // breaks and script joiners are kept); a spreadsheet runs
@@ -360,8 +382,15 @@ With --stage analyzer, when the job ran the critique stage, JSON carries each
 mapping's critique (outcome, vetoed, upheld, rejected, failed, reasons). The
 outcome is upheld, split, rejected (enough critics rejected it, but
 analysis.critique.veto was off, so it is kept and flagged), vetoed or failed.
-Its CSV ends with a critique column ("rejected: 1 upheld, 2 rejected,
+Its CSV has a critique column ("rejected: 1 upheld, 2 rejected,
 0 failed; <reasons>"; empty for a mapping the critique did not review).
+
+When cleaning or a reviewer's determination changed a mapping, JSON carries a
+cleaning object (state retired, restored or stale; source finding or
+determination; refId; changedAt; graphApplied), and CSV ends with a
+cleaning_state column holding the state. Both are absent or empty for a
+mapping nothing changed.
+
 Vetoed pairs are not mappings and are left out; with --include-vetoed they
 are listed too. With
 --stage analyzer --exclude-rejected, rejected pairs are left out, for the
@@ -400,7 +429,8 @@ words.`,
 				// zero fields; protojson with EmitUnpopulated keeps every field
 				// and the enum names. Fields that are not a verdict are then
 				// dropped: viability on the analyzer stage, and the critique of
-				// a mapping the critique did not review (null would read as one).
+				// a mapping the critique did not review (null would read as one), and likewise
+				// the cleaning of a mapping nothing changed.
 				raw := make([]json.RawMessage, len(mappings))
 				for i, m := range mappings {
 					b, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(m)
@@ -413,6 +443,9 @@ words.`,
 					}
 					if m.GetCritique() == nil {
 						drop = append(drop, "critique")
+					}
+					if m.GetCleaning() == nil {
+						drop = append(drop, "cleaning")
 					}
 					if len(drop) > 0 {
 						var fields map[string]json.RawMessage
@@ -450,7 +483,7 @@ words.`,
 				defer w.Flush()
 
 				// The analyzer stage carries each mapping's critique, so its
-				// CSV ends with a critique column; last, so the other columns
+				// CSV has a critique column; after the others, so they
 				// stay where scripts expect them. The synthesized listing has
 				// no critique and no such column.
 				header := []string{"mapping_id", "source_control_id", "target_control_id", "relationship_type", "confidence", "viability_score", "is_viable"}
@@ -459,6 +492,8 @@ words.`,
 				if withCritique {
 					header = append(header, "critique")
 				}
+				// cleaning_state is last of all: empty for a mapping nothing changed.
+				header = append(header, "cleaning_state")
 				if err := w.Write(header); err != nil {
 					return fmt.Errorf("write CSV header: %w", err)
 				}
@@ -481,6 +516,7 @@ words.`,
 					if withCritique {
 						row = append(row, critiqueCell(m.GetCritique()))
 					}
+					row = append(row, csvCell(m.GetCleaning().GetState()))
 					if err := w.Write(row); err != nil {
 						return fmt.Errorf("write CSV row: %w", err)
 					}
@@ -729,6 +765,9 @@ func newResultsDebugCmd(state *cliState) *cobra.Command {
 					for _, m := range mappings {
 						fmt.Fprintf(w, "Mapping: %s -> %s (%s)\n", m.GetSourceControlId(), m.GetTargetControlId(), m.GetRelationshipType())
 						fmt.Fprintf(w, "  Confidence: %.3f, Viability: %.3f, Viable: %t\n", m.GetConfidence(), m.GetViabilityScore(), m.GetIsViable())
+						if label := cleaningLabel(m.GetCleaning()); label != "" {
+							fmt.Fprintf(w, "  Cleaning: %s\n", label)
+						}
 						if len(m.GetContributions()) > 0 {
 							fmt.Fprintf(w, "  Contributions:\n")
 							for _, c := range m.GetContributions() {
@@ -759,49 +798,278 @@ func newResultsDebugCmd(state *cliState) *cobra.Command {
 	return cmd
 }
 
+// reviewFilters maps the --filter names to the queue filter. "contested" is
+// the unset filter: the server lists a mapping that is escalated, disputed or
+// low-confidence.
+var reviewFilters = map[string]pb.ReviewQueueFilter{
+	"contested":         pb.ReviewQueueFilter_REVIEW_QUEUE_FILTER_UNSPECIFIED,
+	"low-confidence":    pb.ReviewQueueFilter_REVIEW_QUEUE_FILTER_LOW_CONFIDENCE,
+	"high-disagreement": pb.ReviewQueueFilter_REVIEW_QUEUE_FILTER_HIGH_DISAGREEMENT,
+	"escalated":         pb.ReviewQueueFilter_REVIEW_QUEUE_FILTER_ESCALATED,
+	"unvoted":           pb.ReviewQueueFilter_REVIEW_QUEUE_FILTER_UNVOTED,
+}
+
+var voteTypes = map[string]pb.VoteType{
+	"agree":    pb.VoteType_VOTE_TYPE_AGREE,
+	"disagree": pb.VoteType_VOTE_TYPE_DISAGREE,
+	"refine":   pb.VoteType_VOTE_TYPE_REFINE,
+	"escalate": pb.VoteType_VOTE_TYPE_ESCALATE,
+}
+
+// sortedKeys lists a map's keys for an error message.
+func sortedKeys[V any](m map[string]V) string {
+	return strings.Join(slices.Sorted(maps.Keys(m)), ", ")
+}
+
+// untrusted makes a server-sourced string safe to print on one terminal
+// line; IDs and statuses come from stored data, not from this CLI.
+func untrusted(s string) string { return intanalyzer.CleanDisplay(s, maxUntrustedDisplayBytes) }
+
+// parseEvidence turns repeated key=value flags into the evidence map. A
+// repeated key is refused: which value was meant cannot be guessed.
+func parseEvidence(pairs []string) (map[string]string, error) {
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+	evidence := make(map[string]string, len(pairs))
+	for _, pair := range pairs {
+		k, v, ok := strings.Cut(pair, "=")
+		if !ok || strings.TrimSpace(k) == "" || v == "" {
+			return nil, fmt.Errorf("invalid --evidence %q: use key=value with a non-empty key and value, for example --evidence source=audit-2026", pair)
+		}
+		if _, dup := evidence[k]; dup {
+			return nil, fmt.Errorf("invalid --evidence: key %q is given twice. Give each key once", k)
+		}
+		evidence[k] = v
+	}
+	return evidence, nil
+}
+
 func newResultsReviewCmd(state *cliState) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "review <job-id>",
-		Short: "Show contested mappings in the review queue",
-		Long: `Show contested mappings in the review queue for human review.
+		Short: "List the mappings of a completed job that need review",
+		Long: `List the mappings of a completed job that need human review, with their votes.
 
-Note: job-id is accepted for display labeling but the current API
-returns the full queue. Job-scoped filtering will be added when the
-proto supports it.`,
+--filter picks why a mapping is listed (default contested: escalated, highly
+disputed or low-confidence). Pages are read with --page-size and --page-token;
+the next token is printed under the table. Act on a listed mapping with
+"crosscodex results vote" or "crosscodex results determine".`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			jobID := args[0]
+			name, _ := cmd.Flags().GetString("filter")
+			filter, ok := reviewFilters[name]
+			if !ok {
+				return fmt.Errorf("invalid --filter %q: use one of %s", name, sortedKeys(reviewFilters))
+			}
+			pageSize, _ := cmd.Flags().GetInt32("page-size")
+			pageToken, _ := cmd.Flags().GetString("page-token")
 
-			req := &pb.GetReviewQueueRequest{}
-
-			resp, err := state.client.GetReviewQueue(cmd.Context(), connectrpc.NewRequest(req))
+			resp, err := state.client.GetReviewQueue(cmd.Context(), connectrpc.NewRequest(&pb.GetReviewQueueRequest{
+				JobId:  jobID,
+				Filter: filter,
+				Options: &pb.ListOptions{
+					Pagination: &pb.Pagination{PageSize: pageSize, PageToken: pageToken},
+				},
+			}))
 			if err != nil {
 				return fmt.Errorf("failed to get review queue: %w", err)
 			}
 
-			return emit(cmd,
-				func(w io.Writer, color bool) {
-					fmt.Fprintf(w, "Review queue for job %s\n\n", jobID)
-					fmt.Fprintf(w, "Items in queue: %d\n\n", len(resp.Msg.GetItems()))
-					for i, item := range resp.Msg.GetItems() {
-						fmt.Fprintf(w, "%d. %s\n", i+1, item)
-					}
-				},
-				map[string]any{
-					"job_id": jobID,
-					"items":  resp.Msg.GetItems(),
-				},
-			)
+			if jsonMode(cmd) {
+				v, err := protoJSON(resp.Msg)
+				if err != nil {
+					return err
+				}
+				return writeJSON(cmd, v)
+			}
+			writeReviewQueue(cmd.OutOrStdout(), jobID, resp.Msg)
+			return nil
 		},
 	}
 
 	guidedArgs(cmd, cobra.ExactArgs(1), argGuide{
 		noun:  "a job-id",
-		find:  "crosscodex results review <job-id>",
-		usage: "crosscodex results review <job-id>",
+		find:  "the job ID crosscodex run start printed; the job must be completed",
+		usage: "crosscodex results review <job-id> [--filter <name>] [--page-size n] [--page-token t]",
 		examples: []string{
 			"crosscodex results review abc123",
+			"crosscodex results review abc123 --filter unvoted --page-size 20",
 		},
 	})
+	cmd.Flags().String("filter", "contested", "why a mapping is listed: "+sortedKeys(reviewFilters))
+	cmd.Flags().Int32("page-size", 0, "mappings per page (0 uses the server default; the server refuses sizes it does not allow)")
+	cmd.Flags().String("page-token", "", "page token printed by the previous page")
+
+	return cmd
+}
+
+func writeReviewQueue(w io.Writer, jobID string, resp *pb.GetReviewQueueResponse) {
+	fmt.Fprintf(w, "Review queue for job %s: %d mapping(s) on this page\n\n", untrusted(jobID), len(resp.GetItems()))
+	if len(resp.GetItems()) == 0 {
+		fmt.Fprintln(w, "No mappings match this filter.")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "MAPPING\tSOURCE\tTARGET\tTYPE\tCONFIDENCE\tAGREE\tDISAGREE\tREFINE\tESCALATE\tREASON")
+	for _, item := range resp.GetItems() {
+		m, a := item.GetMapping(), item.GetAggregation()
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%.2f\t%d\t%d\t%d\t%d\t%s\n",
+			untrusted(m.GetMappingId()), untrusted(m.GetSourceControlId()), untrusted(m.GetTargetControlId()),
+			strings.ToLower(strings.TrimPrefix(m.GetRelationshipType().String(), relationshipTypePrefix)), m.GetConfidence(),
+			a.GetAgreeCount(), a.GetDisagreeCount(), a.GetRefineCount(), a.GetEscalateCount(),
+			strings.ToLower(strings.TrimPrefix(item.GetReason().String(), "REVIEW_QUEUE_FILTER_")))
+	}
+	if err := tw.Flush(); err != nil {
+		fmt.Fprintf(w, "Error flushing output: %v\n", err)
+	}
+	if next := resp.GetPageInfo().GetNextPageToken(); next != "" {
+		fmt.Fprintf(w, "\nMore mappings. Next page: crosscodex results review %s --page-token %s\n", untrusted(jobID), untrusted(next))
+	}
+}
+
+func newResultsVoteCmd(state *cliState) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "vote <job-id> <mapping-id>",
+		Short: "Vote on a mapping",
+		Long: `Record your vote on one mapping of a completed job.
+
+--vote is agree, disagree, refine or escalate. Use refine with --suggest to
+propose a different relationship type (for example EQUIVALENT); the types
+are those of "crosscodex results summary". A vote is a signal, not a decision:
+it changes the mapping only through the aggregation shown here. To decide a
+mapping, use "crosscodex results determine".`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name, _ := cmd.Flags().GetString("vote")
+			voteType, ok := voteTypes[name]
+			if !ok {
+				return fmt.Errorf("--vote is required and must be one of %s, got %q", sortedKeys(voteTypes), name)
+			}
+			suggest, _ := cmd.Flags().GetString("suggest")
+			if suggest != "" && voteType != pb.VoteType_VOTE_TYPE_REFINE {
+				return fmt.Errorf("--suggest proposes a different relationship type and only goes with --vote refine, got --vote %s. Nothing was recorded", name)
+			}
+			if suggest == "" && voteType == pb.VoteType_VOTE_TYPE_REFINE {
+				return errors.New("--vote refine needs --suggest <type>: the relationship type you propose instead. Nothing was recorded")
+			}
+			req := &pb.SubmitVoteRequest{JobId: args[0], MappingId: args[1], VoteType: voteType}
+			req.Rationale, _ = cmd.Flags().GetString("rationale")
+			if suggest != "" {
+				t, err := parseRelationshipType("--suggest", suggest)
+				if err != nil {
+					return err
+				}
+				req.SuggestedType = t
+			}
+			pairs, _ := cmd.Flags().GetStringArray("evidence")
+			evidence, err := parseEvidence(pairs)
+			if err != nil {
+				return err
+			}
+			req.Evidence = evidence
+
+			resp, err := state.client.SubmitVote(cmd.Context(), connectrpc.NewRequest(req))
+			if err != nil {
+				return fmt.Errorf("failed to submit vote: %w", err)
+			}
+
+			if jsonMode(cmd) {
+				v, err := protoJSON(resp.Msg)
+				if err != nil {
+					return err
+				}
+				return writeJSON(cmd, v)
+			}
+			a := resp.Msg.GetAggregation()
+			fmt.Fprintf(cmd.OutOrStdout(), "Vote: %s\nMapping: %s\nAggregation: agree %d, disagree %d, refine %d, escalate %d (agreement %.2f)\n",
+				untrusted(resp.Msg.GetVoteId()), untrusted(args[1]), a.GetAgreeCount(), a.GetDisagreeCount(), a.GetRefineCount(), a.GetEscalateCount(), a.GetAgreementScore())
+			if a.GetNeedsEscalation() {
+				fmt.Fprintln(cmd.OutOrStdout(), "Needs escalation: yes")
+			}
+			return nil
+		},
+	}
+
+	guidedArgs(cmd, cobra.ExactArgs(2), argGuide{
+		noun:  "a job-id and mapping-id",
+		find:  "crosscodex results review <job-id>",
+		usage: "crosscodex results vote <job-id> <mapping-id> --vote agree|disagree|refine|escalate [--suggest <type>] [--rationale <text>] [--evidence k=v]...",
+		examples: []string{
+			"crosscodex results vote abc123 m-42 --vote agree",
+			"crosscodex results vote abc123 m-42 --vote refine --suggest SUBSET_OF --rationale 'target is narrower' --evidence source=audit-2026",
+		},
+	})
+	cmd.Flags().String("vote", "", "agree, disagree, refine or escalate (required)")
+	cmd.Flags().String("suggest", "", "relationship type you propose instead (with --vote refine)")
+	cmd.Flags().String("rationale", "", "why you vote this way")
+	cmd.Flags().StringArray("evidence", nil, "evidence as key=value (repeatable)")
+
+	return cmd
+}
+
+func newResultsDetermineCmd(state *cliState) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "determine <job-id> <mapping-id> (--valid | --invalid) --rationale <text>",
+		Short: "Record a reviewer's determination on a mapping",
+		Long: `Record your final determination on one mapping of a completed job.
+
+--valid keeps the mapping; --invalid rejects it. The determination is
+permanent and audited, needs a --rationale, and updates the mapping's edge in
+the graph; the status and whether the graph changed are printed. Votes alone
+never decide a mapping.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			valid, _ := cmd.Flags().GetBool("valid")
+			invalid, _ := cmd.Flags().GetBool("invalid")
+			if valid == invalid {
+				return errors.New("results determine needs exactly one of --valid or --invalid. Nothing was recorded")
+			}
+			rationale, _ := cmd.Flags().GetString("rationale")
+			if strings.TrimSpace(rationale) == "" {
+				return errors.New("results determine needs --rationale: the reason for the determination, kept in the audit record. Nothing was recorded")
+			}
+			pairs, _ := cmd.Flags().GetStringArray("evidence")
+			evidence, err := parseEvidence(pairs)
+			if err != nil {
+				return err
+			}
+
+			resp, err := state.client.RecordDetermination(cmd.Context(), connectrpc.NewRequest(&pb.RecordDeterminationRequest{
+				JobId:                  args[0],
+				MappingId:              args[1],
+				IsValid:                valid,
+				DeterminationRationale: rationale,
+				Evidence:               evidence,
+			}))
+			if err != nil {
+				return fmt.Errorf("failed to record determination: %w", err)
+			}
+
+			if jsonMode(cmd) {
+				v, err := protoJSON(resp.Msg)
+				if err != nil {
+					return err
+				}
+				return writeJSON(cmd, v)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Determination: %s\nMapping: %s\nStatus: %s\nGraph updated: %t\n",
+				untrusted(resp.Msg.GetDeterminationId()), untrusted(args[1]), untrusted(resp.Msg.GetMappingStatus()), resp.Msg.GetGraphUpdated())
+			return nil
+		},
+	}
+
+	guidedArgs(cmd, cobra.ExactArgs(2), argGuide{
+		noun:  "a job-id and mapping-id",
+		find:  "crosscodex results review <job-id>",
+		usage: "crosscodex results determine <job-id> <mapping-id> (--valid | --invalid) --rationale <text> [--evidence k=v]...",
+		examples: []string{
+			"crosscodex results determine abc123 m-42 --valid --rationale 'confirmed against the source text'",
+			"crosscodex results determine abc123 m-42 --invalid --rationale 'different scope' --evidence ticket=SEC-17",
+		},
+	})
+	cmd.Flags().Bool("valid", false, "the mapping is correct")
+	cmd.Flags().Bool("invalid", false, "the mapping is wrong")
+	cmd.Flags().String("rationale", "", "why (required)")
+	cmd.Flags().StringArray("evidence", nil, "evidence as key=value (repeatable)")
 
 	return cmd
 }

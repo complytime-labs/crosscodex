@@ -66,7 +66,7 @@ func issueReviewerTLS() config.TLSConfig {
 // This suite contributes to the shared Ginkgo run tree driven by
 // TestCrosscodexdIntegrationBDD in bootstrap_integration_test.go.
 var _ = Describe("crosscodexd role=graph on a split stack", func() {
-	It("serves graph, crosswalk and cleaning RPCs to the gateway, records the reviewer, and refuses other certificates", func() {
+	It("serves graph, crosswalk, cleaning and feedback RPCs to the gateway, records the reviewer, and refuses other certificates", func() {
 		dsn := os.Getenv("TEST_DATABASE_DSN")
 		if dsn == "" {
 			Skip("TEST_DATABASE_DSN not set — run: task test:integration:db")
@@ -121,6 +121,10 @@ var _ = Describe("crosscodexd role=graph on a split stack", func() {
 		gwCfg.Pipeline.Endpoint = pipelineRT.pipelineServer.Addr()
 		gwCfg.Graph.Endpoint = graphAddr
 		gwCfg.TLS = testClientTLS()
+		// An archive backend, but no database.purge_dsn: archiving works, so
+		// the purge itself is what the last step shows refused.
+		gwCfg.Retention.Archive.Backend = "local"
+		gwCfg.Retention.Archive.Local.Path = GinkgoT().TempDir()
 		gwCfg.TLS.Targets = map[string]config.TLSOverride{
 			"gateway-server": {Cert: testTLSServerCertPath, Key: testTLSServerKeyPath},
 		}
@@ -150,6 +154,8 @@ var _ = Describe("crosscodexd role=graph on a split stack", func() {
 		admin := crosscodexv1connect.NewGatewayServiceClient(adminHTTP, gwURL)
 		adminCleaning := crosscodexv1connect.NewEdgeCleaningServiceClient(adminHTTP, gwURL)
 		reviewerCleaning := crosscodexv1connect.NewEdgeCleaningServiceClient(reviewerHTTP, gwURL)
+		reviewer := crosscodexv1connect.NewGatewayServiceClient(reviewerHTTP, gwURL)
+		adminService := crosscodexv1connect.NewAdminServiceClient(adminHTTP, gwURL)
 		tenantCtx := &pb.TenantContext{TenantId: tenantID}
 
 		By("importing a catalog and completing a job through the gateway")
@@ -203,6 +209,26 @@ var _ = Describe("crosscodexd role=graph on a split stack", func() {
 		Expect(err).NotTo(HaveOccurred(), "GetCrosswalk")
 		Expect(crosswalk.Msg.GetProvenance().GetMode()).To(Equal("job"))
 		Expect(crosswalk.Msg.GetProvenance().GetSelectedJobIds()).To(ConsistOf(jobID))
+
+		By("serving the review queue and determinations through the gateway from the graph role")
+		_, err = reviewer.GetReviewQueue(ctx, connect.NewRequest(&pb.GetReviewQueueRequest{JobId: jobID}))
+		Expect(err).NotTo(HaveOccurred(), "GetReviewQueue as the reviewer")
+		// The graph role's feedback service refuses a determination
+		// Unavailable, before reading the job, unless it was built with
+		// WithDeterminations; NotFound proves it read the job's mappings.
+		_, err = reviewer.RecordDetermination(ctx, connect.NewRequest(&pb.RecordDeterminationRequest{
+			JobId: jobID, MappingId: "not-a-mapping-of-the-job", DeterminationRationale: "checked",
+		}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound), "RecordDetermination: %v", err)
+
+		By("serving AdminService on the gateway")
+		// No database.purge_dsn here: stats, holds and dry runs still work.
+		stats, err := adminService.GetRetentionStats(ctx, connect.NewRequest(&pb.GetRetentionStatsRequest{TenantContext: tenantCtx}))
+		Expect(err).NotTo(HaveOccurred(), "GetRetentionStats: Unimplemented means attachGateway mounts no AdminService")
+		Expect(stats.Msg.GetEligible()).NotTo(BeNil())
+		scan, err := adminService.ScanRetention(ctx, connect.NewRequest(&pb.ScanRetentionRequest{TenantContext: tenantCtx, DryRun: true}))
+		Expect(err).NotTo(HaveOccurred(), "ScanRetention dry run")
+		Expect(scan.Msg.GetReport()).NotTo(BeNil())
 
 		By("previewing a cleaning pass through the gateway")
 		preview, err := adminCleaning.RunCleaning(ctx, connect.NewRequest(&pb.RunCleaningRequest{
@@ -269,5 +295,37 @@ var _ = Describe("crosscodexd role=graph on a split stack", func() {
 		Expect(suPool.QueryRow(ctx, `SELECT decided_by FROM edge_finding_decisions WHERE tenant_id = $1 AND decision_id = $2`,
 			tenantID, decided.Msg.GetDecisionId()).Scan(&decidedBy)).To(Succeed(), "read the stored decision")
 		Expect(decidedBy).To(Equal(graphITReviewerCN))
+
+		By("refusing to purge an expired job on the gateway role, which has no database.purge_dsn, and keeping it")
+		// Last, because a seeded completed job without stages would be read by
+		// the cleaning steps above. jobs' RLS also matches created_by to the
+		// caller, so the job is created by whoever created the one submitted above.
+		var jobCreator string
+		Expect(suPool.QueryRow(ctx, `SELECT created_by FROM jobs WHERE tenant_id = $1 LIMIT 1`, tenantID).Scan(&jobCreator)).To(Succeed())
+		expiredJob := "expired-" + uuid.New().String()
+		Expect(suPool.Exec(ctx, `INSERT INTO jobs (job_id, tenant_id, status, created_by, created_at)
+			VALUES ($1, $2, 'completed', $3, now() - interval '400 days')`, expiredJob, tenantID, jobCreator)).To(Succeed())
+		jobRows := func() int {
+			var n int
+			Expect(suPool.QueryRow(ctx, `SELECT count(*) FROM jobs WHERE tenant_id = $1 AND job_id = $2`, tenantID, expiredJob).Scan(&n)).To(Succeed())
+			return n
+		}
+		expiredPolicy := &pb.RetentionPolicy{JobResults: "24h", Catalogs: "24h", Attestation: "24h"}
+		// A dry run first proves the job is eligible, so the refusal below is
+		// not just an empty scan.
+		retentionPreview, err := adminService.ApplyRetentionPolicy(ctx, connect.NewRequest(&pb.ApplyRetentionPolicyRequest{
+			TenantContext: tenantCtx, Policy: expiredPolicy, DryRun: true}))
+		Expect(err).NotTo(HaveOccurred(), "ApplyRetentionPolicy dry run")
+		Expect(retentionPreview.Msg.GetReport().GetScanned()).To(BeEquivalentTo(1), "only the seeded job is expired: %v", retentionPreview.Msg.GetReport())
+		purge, err := adminService.ApplyRetentionPolicy(ctx, connect.NewRequest(&pb.ApplyRetentionPolicyRequest{
+			TenantContext: tenantCtx, Policy: expiredPolicy, DryRun: false}))
+		// The engine reports a failed archive or purge in the report, not as an RPC error.
+		Expect(err).NotTo(HaveOccurred(), "ApplyRetentionPolicy")
+		Expect(purge.Msg.GetReport().GetArchived()).To(BeEquivalentTo(1), "the archive step ran: %v", purge.Msg.GetReport())
+		Expect(purge.Msg.GetReport().GetPurged()).To(BeZero(), "nothing was purged")
+		Expect(purge.Msg.GetReport().GetErrors()).To(ConsistOf(SatisfyAll(
+			ContainSubstring("retention engine: purge "+expiredJob), ContainSubstring("permission denied"))),
+			"the DB refuses app_user's delete, naming the job")
+		Expect(jobRows()).To(Equal(1), "the refused purge kept the job")
 	})
 })

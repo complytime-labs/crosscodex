@@ -80,7 +80,14 @@ func joinedDriver(sentinel error) error {
 // failed would.
 type failingStore struct {
 	*fakeStore
-	jobMappings, recordVote, determine error
+	jobMappings, recordVote, determine, latestVotes error
+}
+
+func (f failingStore) LatestVotes(ctx context.Context, tenantID, jobID string) ([]feedback.Vote, error) {
+	if f.latestVotes != nil {
+		return nil, f.latestVotes
+	}
+	return f.fakeStore.LatestVotes(ctx, tenantID, jobID)
 }
 
 func (f failingStore) JobMappings(ctx context.Context, tenantID, jobID string) ([]feedback.Mapping, error) {
@@ -423,47 +430,69 @@ var _ = Describe("Service.RecordDetermination", func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
-	DescribeTable("maps store errors so driver text never reaches the caller",
-		func(st feedback.Store, call string, wantCode connect.Code, wantMsg string) {
+	callVote := func(svc *feedback.Service) error {
+		_, err := svc.SubmitVote(reviewerCtx(), connect.NewRequest(&pb.SubmitVoteRequest{
+			TenantContext: tc(svcTenant), JobId: svcJob, MappingId: mA1B1, VoteType: pb.VoteType_VOTE_TYPE_AGREE,
+		}))
+		return err
+	}
+	callQueue := func(svc *feedback.Service) error {
+		_, err := svc.GetReviewQueue(reviewerCtx(), connect.NewRequest(&pb.GetReviewQueueRequest{TenantContext: tc(svcTenant), JobId: svcJob}))
+		return err
+	}
+	callDetermine := func(svc *feedback.Service) error {
+		_, err := svc.RecordDetermination(reviewerCtx(), connect.NewRequest(determineReq(svcTenant, mA1B1, false)))
+		return err
+	}
+
+	DescribeTable("maps a sentinel joined with a driver error to the sentinel's text only",
+		func(st feedback.Store, call func(*feedback.Service) error, wantCode connect.Code, wantMsg string) {
 			svc = newSvc(st, withGraph())
-			var err error
-			switch call {
-			case "vote":
-				_, err = svc.SubmitVote(reviewerCtx(), connect.NewRequest(&pb.SubmitVoteRequest{
-					TenantContext: tc(svcTenant), JobId: svcJob, MappingId: mA1B1, VoteType: pb.VoteType_VOTE_TYPE_AGREE,
-				}))
-			case "queue":
-				_, err = svc.GetReviewQueue(reviewerCtx(), connect.NewRequest(&pb.GetReviewQueueRequest{TenantContext: tc(svcTenant), JobId: svcJob}))
-			default:
-				_, err = determine(mA1B1, false)
-			}
+			err := call(svc)
 			Expect(err).To(HaveOccurred())
-			if wantCode == 0 {
-				var ce *connect.Error
-				Expect(errors.As(err, &ce)).To(BeFalse(), "the error must reach the gateway unmapped, so it withholds it")
-				Expect(err).To(MatchError(errDriver))
-				return
-			}
 			Expect(connect.CodeOf(err)).To(Equal(wantCode))
 			Expect(err.Error()).To(Equal(wantCode.String() + ": " + wantMsg))
 			Expect(err.Error()).NotTo(ContainSubstring(driverSecret))
 		},
-		Entry("JobMappings joining a sentinel with a driver error sends only the sentinel's text",
-			failingStore{fakeStore: svcStore(), jobMappings: joinedDriver(feedback.ErrMappingNotFound)}, "vote",
+		Entry("JobMappings, mapping not found",
+			failingStore{fakeStore: svcStore(), jobMappings: joinedDriver(feedback.ErrMappingNotFound)}, callVote,
 			connect.CodeNotFound, feedback.ErrMappingNotFound.Error()),
-		Entry("RecordVote joining a sentinel with a driver error sends only the sentinel's text",
-			failingStore{fakeStore: svcStore(), recordVote: joinedDriver(feedback.ErrReviewChanged)}, "vote",
+		Entry("RecordVote, review changed",
+			failingStore{fakeStore: svcStore(), recordVote: joinedDriver(feedback.ErrReviewChanged)}, callVote,
 			connect.CodeAborted, feedback.ErrReviewChanged.Error()),
-		Entry("Determine joining a sentinel with a driver error sends only the sentinel's text",
-			failingStore{fakeStore: svcStore(), determine: joinedDriver(cleaning.ErrReviewerNotRegistered)}, "determine",
+		Entry("Determine, reviewer not registered",
+			failingStore{fakeStore: svcStore(), determine: joinedDriver(cleaning.ErrReviewerNotRegistered)}, callDetermine,
 			connect.CodeFailedPrecondition, cleaning.ErrReviewerNotRegistered.Error()),
-		Entry("a plain JobMappings driver error is returned unmapped", failingStore{fakeStore: svcStore(), jobMappings: errDriver}, "queue",
-			connect.Code(0), ""),
-		Entry("a plain RecordVote driver error is returned unmapped", failingStore{fakeStore: svcStore(), recordVote: errDriver}, "vote",
-			connect.Code(0), ""),
-		Entry("a plain Determine driver error is returned unmapped", failingStore{fakeStore: svcStore(), determine: errDriver}, "determine",
-			connect.Code(0), ""),
 	)
+
+	DescribeTable("returns a plain driver error unmapped, so the gateway withholds it",
+		func(st feedback.Store, call func(*feedback.Service) error) {
+			svc = newSvc(st, withGraph())
+			err := call(svc)
+			var ce *connect.Error
+			Expect(errors.As(err, &ce)).To(BeFalse(), "a mapped code would pass the driver text through")
+			Expect(err).To(MatchError(errDriver))
+		},
+		Entry("JobMappings", failingStore{fakeStore: svcStore(), jobMappings: errDriver}, callQueue),
+		Entry("RecordVote", failingStore{fakeStore: svcStore(), recordVote: errDriver}, callVote),
+		Entry("Determine", failingStore{fakeStore: svcStore(), determine: errDriver}, callDetermine),
+	)
+
+	It("keeps a vote whose aggregation read fails and says it was recorded, unmapped", func() {
+		inner := svcStore()
+		svc = newSvc(failingStore{fakeStore: inner, latestVotes: errDriver}, withGraph())
+		err := callVote(svc)
+		var ce *connect.Error
+		Expect(errors.As(err, &ce)).To(BeFalse(), "a mapped code would pass the driver text through")
+		Expect(err).To(MatchError(errDriver))
+		Expect(err.Error()).To(ContainSubstring("was recorded"))
+		Expect(err.Error()).To(ContainSubstring(mA1B1))
+
+		votes, err := inner.LatestVotes(ctx, svcTenant, svcJob)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(votes).To(HaveLen(1))
+		Expect(votes[0].MappingID).To(Equal(mA1B1))
+	})
 
 	It("records a span with the tenant and operation, and the operation's duration", func() {
 		_, err := determine(mA1B1, false)

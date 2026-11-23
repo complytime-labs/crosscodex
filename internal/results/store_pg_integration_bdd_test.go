@@ -4,14 +4,17 @@ package results_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	. "github.com/onsi/gomega/gstruct"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/complytime-labs/crosscodex/internal/results"
@@ -139,6 +142,35 @@ func (e storeEnv) seedCritique(tenantID, jobID, data string) {
 		VALUES ($1, $2, 'critique', $3::jsonb)`, tenantID, jobID, data)).To(Succeed())
 }
 
+// seedFinding inserts an edge_findings row of tenantID whose targets are the
+// given verdicts of jobID, as {source, target} pairs, last changed at updatedAt.
+func (e storeEnv) seedFinding(tenantID, findingID, status, jobID string, updatedAt time.Time, pairs ...[2]string) {
+	targets := make([]map[string]string, 0, len(pairs))
+	for _, p := range pairs {
+		targets = append(targets, map[string]string{"job_id": jobID, "source_id": p[0], "target_id": p[1]})
+	}
+	raw, err := json.Marshal(targets)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(e.su.Exec(context.Background(), `INSERT INTO edge_findings
+		(tenant_id, finding_id, signal, source_catalog, target_catalog, evidence, evidence_hash, concerns, targets, edge_ids, status, graph_applied, updated_at)
+		VALUES ($1, $2, 'low_agreement', 'a', 'b', '{}', 'h', '[]', $3::jsonb, '[]', $4, true, $5)`,
+		tenantID, findingID, string(raw), status, updatedAt)).To(Succeed())
+}
+
+// seedReview inserts a mapping_determinations row and the mapping_reviews row
+// that names it, as a reviewer's invalid call does.
+func (e storeEnv) seedReview(tenantID, determinationID, status, jobID, src, tgt string, decidedAt time.Time) {
+	ctx := context.Background()
+	Expect(e.su.Exec(ctx, `INSERT INTO mapping_determinations
+		(tenant_id, determination_id, mapping_id, job_id, source_id, target_id, outcome, decided_by, rationale, request, attestation, decided_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'reviewer-1', 'because', '\x00', '\x00', $8)`,
+		tenantID, determinationID, "m-"+determinationID, jobID, src, tgt, status, decidedAt)).To(Succeed())
+	Expect(e.su.Exec(ctx, `INSERT INTO mapping_reviews
+		(tenant_id, mapping_id, job_id, source_id, target_id, status, determination_id, decided_at, edge_ids, graph_applied)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '["e1"]', false)`,
+		tenantID, "m-"+determinationID, jobID, src, tgt, status, determinationID, decidedAt)).To(Succeed())
+}
+
 func keys(p results.Page) []string {
 	out := make([]string, 0, len(p.Mappings))
 	for _, m := range p.Mappings {
@@ -260,6 +292,78 @@ var _ = Describe("PGStore", func() {
 			page, err := env.store.ListMappings(env.ctxB, f)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(page.Mappings).To(BeEmpty())
+		})
+	})
+
+	Describe("cleaning state", func() {
+		var job string
+		t0 := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+
+		BeforeEach(func() {
+			job = env.seedJob(env.tenantA, "completed")
+			env.seedVote(env.tenantA, job, "AC-1", "B-1", "EQUIVALENT", 0.9, 0.8)
+			env.seedVote(env.tenantA, job, "AC-2", "B-2", "EQUIVALENT", 0.9, 0.8)
+		})
+
+		cleaningOf := func(ctx context.Context, tenantID string, stage results.Stage) map[string]*results.CleaningState {
+			if stage == results.StageAnalyzer {
+				env.seedAnalysis(tenantID, job, `[{"source_id":"AC-1","target_id":"B-1","relationship_type":"EQUIVALENT","confidence":0.9},
+					{"source_id":"AC-2","target_id":"B-2","relationship_type":"EQUIVALENT","confidence":0.9}]`)
+			}
+			page, err := env.store.ListMappings(ctx, filter(tenantID, job, stage))
+			Expect(err).NotTo(HaveOccurred())
+			out := map[string]*results.CleaningState{}
+			for _, m := range page.Mappings {
+				out[m.SourceID+">"+m.TargetID] = m.Cleaning
+			}
+			return out
+		}
+
+		DescribeTable("marks only the retired verdict's row",
+			func(stage results.Stage) {
+				env.seedFinding(env.tenantA, "f-1", "retired", job, t0, [2]string{"AC-1", "B-1"})
+				got := cleaningOf(env.ctxA, env.tenantA, stage)
+				Expect(got["AC-1>B-1"]).To(PointTo(MatchFields(IgnoreExtras, Fields{
+					"State": Equal("retired"), "Source": Equal("finding"), "RefID": Equal("f-1"),
+					"ChangedAt": BeTemporally("==", t0), "GraphApplied": BeTrue()})))
+				Expect(got["AC-2>B-2"]).To(BeNil())
+			},
+			Entry("synthesized stage", results.StageSynthesized),
+			Entry("analyzer stage", results.StageAnalyzer),
+		)
+
+		It("ignores a finding that is only reported", func() {
+			env.seedFinding(env.tenantA, "f-1", "reported", job, t0, [2]string{"AC-1", "B-1"})
+			Expect(cleaningOf(env.ctxA, env.tenantA, results.StageSynthesized)["AC-1>B-1"]).To(BeNil())
+		})
+
+		It("does not show another tenant's finding, reading as the restricted role", func() {
+			env.seedFinding(env.tenantB, "f-b", "retired", job, t0, [2]string{"AC-1", "B-1"})
+			Expect(cleaningOf(env.ctxA, env.tenantA, results.StageSynthesized)["AC-1>B-1"]).To(BeNil())
+		})
+
+		It("lets the latest change win across a finding and a determination", func() {
+			env.seedFinding(env.tenantA, "f-1", "retired", job, t0, [2]string{"AC-1", "B-1"})
+			env.seedReview(env.tenantA, "d-1", "valid", job, "AC-1", "B-1", t0.Add(time.Hour))
+			got := cleaningOf(env.ctxA, env.tenantA, results.StageSynthesized)["AC-1>B-1"]
+			Expect(got).To(PointTo(MatchFields(IgnoreExtras, Fields{
+				"State": Equal("restored"), "Source": Equal("determination"), "RefID": Equal("d-1"),
+				"ChangedAt": BeTemporally("==", t0.Add(time.Hour)), "GraphApplied": BeFalse()})))
+		})
+
+		It("breaks a tie in changed_at by source, determination before finding", func() {
+			env.seedFinding(env.tenantA, "f-1", "retired", job, t0, [2]string{"AC-1", "B-1"})
+			env.seedReview(env.tenantA, "d-1", "valid", job, "AC-1", "B-1", t0)
+			got := cleaningOf(env.ctxA, env.tenantA, results.StageSynthesized)["AC-1>B-1"]
+			Expect(got).To(HaveField("RefID", "d-1"))
+		})
+
+		It("breaks a tie within one source by ref_id, ascending", func() {
+			env.seedFinding(env.tenantA, "f-2", "retired", job, t0, [2]string{"AC-1", "B-1"})
+			env.seedFinding(env.tenantA, "f-1", "restored", job, t0, [2]string{"AC-1", "B-1"})
+			got := cleaningOf(env.ctxA, env.tenantA, results.StageSynthesized)["AC-1>B-1"]
+			Expect(got).To(HaveField("RefID", "f-1"))
+			Expect(got).To(HaveField("State", "restored"))
 		})
 	})
 

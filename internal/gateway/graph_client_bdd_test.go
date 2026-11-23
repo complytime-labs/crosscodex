@@ -51,6 +51,72 @@ func (q *queryingGraph) queriedTenants() []string {
 	return append([]string(nil), q.tenants...)
 }
 
+// feedbackCall is what recordingFeedback saw of one forwarded RPC.
+type feedbackCall struct {
+	method    string
+	subject   string
+	roles     []string
+	tenant    string
+	msgTenant string
+	mappingID string
+	probe     string
+}
+
+// recordingFeedback stands in for the graph role's feedback service: it
+// records the identity, tenant and headers each SubmitVote,
+// RecordDetermination and GetReviewQueue reached it with, and answers with
+// fixed IDs.
+type recordingFeedback struct {
+	crosscodexv1connect.UnimplementedFeedbackServiceHandler
+	mu    sync.Mutex
+	calls []feedbackCall
+}
+
+func (r *recordingFeedback) record(ctx context.Context, method string, header http.Header, tc *pb.TenantContext, mappingID string) {
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		tenantID = "no tenant: " + err.Error()
+	}
+	call := feedbackCall{
+		method:    method,
+		tenant:    tenantID,
+		msgTenant: tc.GetTenantId(),
+		mappingID: mappingID,
+		probe:     header.Get(callerProbeHeader),
+	}
+	if id := authn.IdentityFromContext(ctx); id != nil {
+		call.subject, call.roles = id.Subject, id.Roles
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, call)
+}
+
+func (r *recordingFeedback) SubmitVote(ctx context.Context, req *connect.Request[pb.SubmitVoteRequest]) (*connect.Response[pb.SubmitVoteResponse], error) {
+	r.record(ctx, "SubmitVote", req.Header(), req.Msg.GetTenantContext(), req.Msg.GetMappingId())
+	return connect.NewResponse(&pb.SubmitVoteResponse{VoteId: "vote-1"}), nil
+}
+
+func (r *recordingFeedback) RecordDetermination(ctx context.Context, req *connect.Request[pb.RecordDeterminationRequest]) (*connect.Response[pb.RecordDeterminationResponse], error) {
+	r.record(ctx, "RecordDetermination", req.Header(), req.Msg.GetTenantContext(), req.Msg.GetMappingId())
+	return connect.NewResponse(&pb.RecordDeterminationResponse{DeterminationId: "det-1"}), nil
+}
+
+func (r *recordingFeedback) GetReviewQueue(ctx context.Context, req *connect.Request[pb.GetReviewQueueRequest]) (*connect.Response[pb.GetReviewQueueResponse], error) {
+	r.record(ctx, "GetReviewQueue", req.Header(), req.Msg.GetTenantContext(), "")
+	return connect.NewResponse(&pb.GetReviewQueueResponse{Items: []*pb.ReviewItem{{}}}), nil
+}
+
+func (r *recordingFeedback) recorded() []feedbackCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]feedbackCall(nil), r.calls...)
+}
+
+// callerProbeHeader is a header the gateway caller sets; reaching the graph
+// role with it would mean the gateway forwarded the caller's headers.
+const callerProbeHeader = "X-Caller-Probe"
+
 var _ = Describe("NewConnectGraphBackend", func() {
 	var certDir string
 
@@ -92,7 +158,9 @@ var _ = Describe("NewConnectGraphBackend", func() {
 			httpC    *http.Client
 			gwAddr   string
 			gwClient crosscodexv1connect.GatewayServiceClient
+			gwSvc    *gateway.Service
 			clClient crosscodexv1connect.EdgeCleaningServiceClient
+			fb       *recordingFeedback
 
 			decidedMu sync.Mutex
 			decidedBy []string
@@ -131,6 +199,7 @@ var _ = Describe("NewConnectGraphBackend", func() {
 			Expect(err).NotTo(HaveOccurred())
 			signer, err := attestation.NewGenerator(kp)
 			Expect(err).NotTo(HaveOccurred())
+			fb = &recordingFeedback{}
 			engine := cleaning.NewEngine(store, g, &config.CleaningConfig{MaxRetirePerRun: 1000}, nil, signer)
 
 			graphSrv, err := graph.NewServer(ctx, graph.ServerConfig{
@@ -138,6 +207,7 @@ var _ = Describe("NewConnectGraphBackend", func() {
 				TLS:               tlsFor("server.pem", "server-key.pem"),
 				Service:           graph.New(g, nil, nil),
 				Cleaning:          intcleaning.NewService(engine),
+				Feedback:          fb,
 				ServiceIdentities: []authn.X509Match{{CN: "client", Organization: "CrossCodex Test"}},
 			})
 			Expect(err).NotTo(HaveOccurred())
@@ -152,10 +222,12 @@ var _ = Describe("NewConnectGraphBackend", func() {
 			caller = &authn.Identity{Subject: "alice", TenantID: tenantID, Method: authn.AuthMethodMTLS}
 			reg, err := authn.NewRegistry(nil, []authn.Authenticator{fixedIdentity{id: caller}})
 			Expect(err).NotTo(HaveOccurred())
+			gwSvc = gateway.NewService(gateway.WithAuthn(reg), gateway.WithGraphBackend(backend),
+				gateway.WithCrosswalkBackend(backend), gateway.WithFeedbackBackend(backend.Feedback()))
 			gwSrv, err := gateway.NewServer(ctx, gateway.ServerConfig{
 				Addr:         "127.0.0.1:0",
 				TLS:          tlsFor("server.pem", "server-key.pem"),
-				Service:      gateway.NewService(gateway.WithAuthn(reg), gateway.WithGraphBackend(backend), gateway.WithCrosswalkBackend(backend)),
+				Service:      gwSvc,
 				Cleaning:     backend.Cleaning(),
 				TenantStatus: &fakeTenantStatus{active: true},
 			})
@@ -216,6 +288,70 @@ var _ = Describe("NewConnectGraphBackend", func() {
 			resp, err := gzipClient.ListFindings(ctx, connect.NewRequest(&pb.ListFindingsRequest{TenantContext: tc}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.Msg.GetFindings()).To(HaveLen(1))
+		})
+
+		It("forwards RecordDetermination as the gateway caller in the caller's tenant, without the caller's headers", func() {
+			caller.Subject = "alice"
+			caller.Roles = []string{authn.RoleReviewer}
+			req := connect.NewRequest(&pb.RecordDeterminationRequest{
+				JobId: "job-1", MappingId: "map-1", DeterminationRationale: "checked",
+			})
+			req.Header().Set(callerProbeHeader, "from-caller")
+			resp, err := gwClient.RecordDetermination(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.GetDeterminationId()).To(Equal("det-1"))
+			Expect(fb.recorded()).To(Equal([]feedbackCall{{
+				method: "RecordDetermination", subject: "alice", roles: []string{authn.RoleReviewer},
+				tenant: tenantID, msgTenant: tenantID, mappingID: "map-1",
+			}}))
+		})
+
+		It("forwards SubmitVote as the gateway caller in the caller's tenant, without the caller's headers", func() {
+			caller.Roles = []string{authn.RoleReviewer}
+			req := connect.NewRequest(&pb.SubmitVoteRequest{
+				JobId: "job-1", MappingId: "map-2", VoteType: pb.VoteType_VOTE_TYPE_AGREE,
+			})
+			req.Header().Set(callerProbeHeader, "from-caller")
+			resp, err := gwClient.SubmitVote(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.GetVoteId()).To(Equal("vote-1"))
+			Expect(fb.recorded()).To(Equal([]feedbackCall{{
+				method: "SubmitVote", subject: "alice", roles: []string{authn.RoleReviewer},
+				tenant: tenantID, msgTenant: tenantID, mappingID: "map-2",
+			}}))
+		})
+
+		It("forwards GetReviewQueue as the gateway caller in the caller's tenant, without the caller's headers", func() {
+			caller.Roles = []string{authn.RoleReviewer}
+			req := connect.NewRequest(&pb.GetReviewQueueRequest{JobId: "job-1"})
+			req.Header().Set(callerProbeHeader, "from-caller")
+			resp, err := gwClient.GetReviewQueue(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.GetItems()).To(HaveLen(1))
+			Expect(fb.recorded()).To(Equal([]feedbackCall{{
+				method: "GetReviewQueue", subject: "alice", roles: []string{authn.RoleReviewer},
+				tenant: tenantID, msgTenant: tenantID,
+			}}))
+		})
+
+		// Over the wire the auth interceptor refuses a foreign tenant_context
+		// first, so the handler is called directly, with the identity and
+		// tenant the interceptor sets for alice, to prove the handler itself
+		// replaces it.
+		It("replaces a foreign tenant_context with the caller's before forwarding", func() {
+			identity := &authn.Identity{Subject: "alice", TenantID: tenantID, Roles: []string{authn.RoleReviewer}, Method: authn.AuthMethodMTLS}
+			callCtx, err := tenant.WithTenant(gateway.ExportContextWithIdentity(ctx, identity), tenantID)
+			Expect(err).NotTo(HaveOccurred())
+			callCtx = tenant.WithUser(callCtx, identity.Subject)
+			_, err = gwSvc.RecordDetermination(callCtx, connect.NewRequest(&pb.RecordDeterminationRequest{
+				TenantContext: &pb.TenantContext{TenantId: "other-tenant"},
+				JobId:         "job-1", MappingId: "map-1", DeterminationRationale: "checked",
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fb.recorded()).To(Equal([]feedbackCall{{
+				method: "RecordDetermination", subject: "alice", roles: []string{authn.RoleReviewer},
+				tenant: tenantID, msgTenant: tenantID, mappingID: "map-1",
+			}}))
 		})
 	})
 })

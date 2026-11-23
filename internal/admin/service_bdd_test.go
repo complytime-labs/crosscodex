@@ -181,6 +181,75 @@ var _ = Describe("Admin retention RPCs RBAC", func() {
 		})
 	})
 
+	Describe("WithoutPurge", func() {
+		const reason = "this daemon cannot purge. Rerun with --dry-run"
+
+		var built int
+
+		BeforeEach(func() {
+			built = 0
+			engineFor := func(_ string, p retention.Policy) (*retention.Engine, error) {
+				built++
+				return retention.NewEngine(nil, holds, nil, nil, nil, p, nil), nil
+			}
+			policy, err := retention.NewPolicy(config.RetentionConfig{})
+			Expect(err).NotTo(HaveOccurred())
+			svc = NewService(engineFor, policy, holds, drift.source, WithoutPurge(reason))
+			holds.Seed = []retention.Hold{{Name: "h1"}}
+		})
+
+		scan := func(dryRun bool) func(context.Context, *Service) (any, error) {
+			return func(ctx context.Context, s *Service) (any, error) {
+				return s.ScanRetention(ctx, connect.NewRequest(&pb.ScanRetentionRequest{
+					TenantContext: &pb.TenantContext{TenantId: "tenant-a"}, DryRun: dryRun,
+				}))
+			}
+		}
+		apply := func(dryRun bool) func(context.Context, *Service) (any, error) {
+			return func(ctx context.Context, s *Service) (any, error) {
+				return s.ApplyRetentionPolicy(ctx, connect.NewRequest(&pb.ApplyRetentionPolicyRequest{
+					TenantContext: &pb.TenantContext{TenantId: "tenant-a"},
+					Policy:        &pb.RetentionPolicy{JobResults: "30d"},
+					DryRun:        dryRun,
+				}))
+			}
+		}
+
+		DescribeTable("refuses a scan that would archive or purge with FailedPrecondition and the reason, building no engine",
+			func(call func(context.Context, *Service) (any, error)) {
+				ctx := adminCtx("tenant-a", authn.RoleAdmin)
+				before, err := holds.List(ctx)
+				Expect(err).NotTo(HaveOccurred())
+				resp, err := call(ctx, svc)
+				Expect(resp).To(BeNil())
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+				Expect(err).To(MatchError(ContainSubstring(reason)))
+				Expect(built).To(BeZero())
+				Expect(holds.List(ctx)).To(Equal(before))
+			},
+			Entry("ScanRetention", scan(false)),
+			Entry("ApplyRetentionPolicy", apply(false)),
+		)
+
+		DescribeTable("still runs a dry run",
+			func(call func(context.Context, *Service) (any, error)) {
+				resp, err := call(adminCtx("tenant-a", authn.RoleAdmin), svc)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp).NotTo(BeNil())
+				Expect(built).To(Equal(1))
+			},
+			Entry("ScanRetention", scan(true)),
+			Entry("ApplyRetentionPolicy", apply(true)),
+		)
+
+		It("still checks the admin role before refusing", func() {
+			_, err := svc.ScanRetention(adminCtx("tenant-a", "reader"), connect.NewRequest(&pb.ScanRetentionRequest{
+				TenantContext: &pb.TenantContext{TenantId: "tenant-a"},
+			}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodePermissionDenied))
+		})
+	})
+
 	Describe("hold CRUD", func() {
 		It("creates a hold stamped with the caller subject", func() {
 			ctx := adminCtx("tenant-a", authn.RoleAdmin)

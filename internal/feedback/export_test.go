@@ -11,6 +11,9 @@ var (
 	CheckEdgeIDs    = checkEdgeIDs
 )
 
+// Count32 is the narrowing guard for int32 proto counts, for its boundary table.
+var Count32 = count32
+
 // Aggregate is the service's vote aggregation, for the aggregation table
 // and property specs.
 var Aggregate = aggregate

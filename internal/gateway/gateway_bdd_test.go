@@ -210,6 +210,7 @@ func (m *mockGraph) SimilaritySearch(ctx context.Context, req *connect.Request[p
 type mockFeedback struct {
 	submitVoteFn     func(context.Context, *connect.Request[pb.SubmitVoteRequest]) (*connect.Response[pb.SubmitVoteResponse], error)
 	getReviewQueueFn func(context.Context, *connect.Request[pb.GetReviewQueueRequest]) (*connect.Response[pb.GetReviewQueueResponse], error)
+	recordDetermFn   func(context.Context, *connect.Request[pb.RecordDeterminationRequest]) (*connect.Response[pb.RecordDeterminationResponse], error)
 }
 
 func (m *mockFeedback) SubmitVote(ctx context.Context, req *connect.Request[pb.SubmitVoteRequest]) (*connect.Response[pb.SubmitVoteResponse], error) {
@@ -221,6 +222,10 @@ func (m *mockFeedback) SubmitVote(ctx context.Context, req *connect.Request[pb.S
 
 func (m *mockFeedback) GetReviewQueue(ctx context.Context, req *connect.Request[pb.GetReviewQueueRequest]) (*connect.Response[pb.GetReviewQueueResponse], error) {
 	return orDefault(m.getReviewQueueFn, ctx, req)
+}
+
+func (m *mockFeedback) RecordDetermination(ctx context.Context, req *connect.Request[pb.RecordDeterminationRequest]) (*connect.Response[pb.RecordDeterminationResponse], error) {
+	return orDefault(m.recordDetermFn, ctx, req)
 }
 
 type mockAdmin struct {
@@ -1158,20 +1163,31 @@ var _ = Describe("StreamDocument", func() {
 
 var _ = Describe("Feedback handlers", func() {
 	Context("GetReviewQueue", func() {
-		It("returns PermissionDenied for non-admin", func() {
-			svc := newTestService()
-			ctx := userCtx("user-a")
-			_, err := svc.GetReviewQueue(ctx, connect.NewRequest(&pb.GetReviewQueueRequest{}))
-			Expect(err).To(HaveOccurred())
+		It("returns PermissionDenied naming the roles for a caller with neither reviewer nor admin", func() {
+			reached := false
+			svc := newTestService(gateway.WithFeedbackBackend(&mockFeedback{
+				getReviewQueueFn: func(context.Context, *connect.Request[pb.GetReviewQueueRequest]) (*connect.Response[pb.GetReviewQueueResponse], error) {
+					reached = true
+					return connect.NewResponse(&pb.GetReviewQueueResponse{}), nil
+				},
+			}))
+			_, err := svc.GetReviewQueue(userCtx("user-a"), connect.NewRequest(&pb.GetReviewQueueRequest{}))
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodePermissionDenied))
+			Expect(err.Error()).To(ContainSubstring("reviewer or admin role required"))
+			Expect(reached).To(BeFalse())
 		})
 
-		It("succeeds for admin", func() {
-			svc := newTestService()
-			resp, err := svc.GetReviewQueue(adminCtx(), connect.NewRequest(&pb.GetReviewQueueRequest{}))
-			Expect(err).NotTo(HaveOccurred())
-			Expect(resp).NotTo(BeNil())
-		})
+		DescribeTable("reaches the feedback backend",
+			func(roles []string) {
+				svc := newTestService()
+				resp, err := svc.GetReviewQueue(ctxWithIdentity("caller", "tenant-a", roles),
+					connect.NewRequest(&pb.GetReviewQueueRequest{}))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp).NotTo(BeNil())
+			},
+			Entry("for an admin", []string{authn.RoleAdmin}),
+			Entry("for a reviewer", []string{authn.RoleReviewer}),
+		)
 	})
 
 	Context("SubmitVote", func() {
@@ -1181,6 +1197,58 @@ var _ = Describe("Feedback handlers", func() {
 			resp, err := svc.SubmitVote(ctx, connect.NewRequest(&pb.SubmitVoteRequest{MappingId: "map-1"}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.Msg.GetVoteId()).To(Equal("vote-1"))
+		})
+	})
+
+	Context("RecordDetermination", func() {
+		determinationReq := func() *connect.Request[pb.RecordDeterminationRequest] {
+			return connect.NewRequest(&pb.RecordDeterminationRequest{
+				TenantContext: &pb.TenantContext{TenantId: "spoofed-tenant"},
+				MappingId:     "map-1",
+				JobId:         "job-1",
+			})
+		}
+
+		It("forwards the request with the authenticated tenant and returns the response", func() {
+			var captured *pb.RecordDeterminationRequest
+			svc := newTestService(gateway.WithFeedbackBackend(&mockFeedback{
+				recordDetermFn: func(_ context.Context, req *connect.Request[pb.RecordDeterminationRequest]) (*connect.Response[pb.RecordDeterminationResponse], error) {
+					captured = req.Msg
+					return connect.NewResponse(&pb.RecordDeterminationResponse{DeterminationId: "det-1", MappingStatus: "invalid"}), nil
+				},
+			}))
+			resp, err := svc.RecordDetermination(userCtx("user-a"), determinationReq())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.GetDeterminationId()).To(Equal("det-1"))
+			Expect(resp.Msg.GetMappingStatus()).To(Equal("invalid"))
+			Expect(captured.GetTenantContext().GetTenantId()).To(Equal("tenant-a"))
+			Expect(captured.GetJobId()).To(Equal("job-1"))
+		})
+
+		It("returns Unauthenticated without an identity", func() {
+			_, err := newTestService().RecordDetermination(context.Background(), determinationReq())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
+		})
+
+		It("returns InvalidArgument for an empty mapping_id without reaching the backend", func() {
+			called := false
+			svc := newTestService(gateway.WithFeedbackBackend(&mockFeedback{
+				recordDetermFn: func(context.Context, *connect.Request[pb.RecordDeterminationRequest]) (*connect.Response[pb.RecordDeterminationResponse], error) {
+					called = true
+					return connect.NewResponse(&pb.RecordDeterminationResponse{}), nil
+				},
+			}))
+			_, err := svc.RecordDetermination(userCtx("user-a"), connect.NewRequest(&pb.RecordDeterminationRequest{JobId: "job-1"}))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			Expect(err.Error()).To(ContainSubstring("mapping_id is required"))
+			Expect(called).To(BeFalse())
+		})
+
+		It("returns Unavailable when the feedback backend is nil", func() {
+			svc := newTestService(gateway.WithFeedbackBackend(nil))
+			_, err := svc.RecordDetermination(userCtx("user-a"), determinationReq())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnavailable))
+			Expect(err.Error()).To(ContainSubstring("feedback backend not configured"))
 		})
 	})
 })
@@ -1234,6 +1302,10 @@ var _ = Describe("Required request arguments", func() {
 				gateway.WithFeedbackBackend(&mockFeedback{
 					submitVoteFn: func(context.Context, *connect.Request[pb.SubmitVoteRequest]) (*connect.Response[pb.SubmitVoteResponse], error) {
 						record("SubmitVote")
+						return nil, errors.New("backend reached")
+					},
+					recordDetermFn: func(context.Context, *connect.Request[pb.RecordDeterminationRequest]) (*connect.Response[pb.RecordDeterminationResponse], error) {
+						record("RecordDetermination")
 						return nil, errors.New("backend reached")
 					},
 				}),
@@ -1297,6 +1369,10 @@ var _ = Describe("Required request arguments", func() {
 		}),
 		Entry("empty mapping_id on SubmitVote", userCtx("user-a"), func(ctx context.Context, svc *gateway.Service) error {
 			_, err := svc.SubmitVote(ctx, connect.NewRequest(&pb.SubmitVoteRequest{MappingId: ""}))
+			return err
+		}),
+		Entry("empty mapping_id on RecordDetermination", userCtx("user-a"), func(ctx context.Context, svc *gateway.Service) error {
+			_, err := svc.RecordDetermination(ctx, connect.NewRequest(&pb.RecordDeterminationRequest{MappingId: ""}))
 			return err
 		}),
 	)

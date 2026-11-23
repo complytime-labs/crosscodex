@@ -12,6 +12,7 @@ import (
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/feedback"
@@ -265,6 +266,8 @@ var _ = Describe("Service votes and review queue", func() {
 		It("counts votes by type and times the call", func() {
 			_, err := vote(reviewerCtx(), mA1B1, pb.VoteType_VOTE_TYPE_AGREE, "")
 			Expect(err).NotTo(HaveOccurred())
+			_, err = vote(reviewerCtx(), mA1B1, pb.VoteType_VOTE_TYPE_DISAGREE, "wrong pair")
+			Expect(err).NotTo(HaveOccurred())
 
 			span := telemetrytest.FindSpan(tp.GetSpans(), "feedback.SubmitVote")
 			Expect(span).NotTo(BeNil())
@@ -276,12 +279,19 @@ var _ = Describe("Service votes and review queue", func() {
 			Expect(v.AsString()).To(Equal("submit_vote"))
 
 			rm := tp.GetMetrics()
-			n, err := telemetrytest.CounterValue(telemetrytest.FindMetric(rm, "feedback.votes.total"))
-			Expect(err).NotTo(HaveOccurred())
-			Expect(n).To(Equal(int64(1)))
+			m := telemetrytest.FindMetric(rm, "feedback.votes.total")
+			Expect(m).NotTo(BeNil())
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			Expect(ok).To(BeTrue())
+			byType := map[string]int64{}
+			for _, dp := range sum.DataPoints {
+				v, _ := dp.Attributes.Value("vote_type")
+				byType[v.AsString()] += dp.Value
+			}
+			Expect(byType).To(Equal(map[string]int64{"agree": 1, "disagree": 1}))
 			count, err := telemetrytest.Float64HistogramCount(telemetrytest.FindMetric(rm, "feedback.operation.duration_ms"))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(count).To(Equal(uint64(1)))
+			Expect(count).To(Equal(uint64(2)))
 		})
 
 		DescribeTable("refuses the vote and records nothing",

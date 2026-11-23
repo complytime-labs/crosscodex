@@ -32,6 +32,7 @@ const adminUsage = `usage:
   crosscodexd admin adjudicate artifacts review --tenant <id> [--name <text>] [--limit <n>]
   crosscodexd admin adjudicate artifacts show --tenant <id> --pair <ref> [--related <n>]
   crosscodexd admin adjudicate artifacts decide --tenant <id> --pair <ref> --verdict confirmed|rejected --reviewer <id> --expect <token>
+  crosscodexd admin cleaning --reproject (--tenant <id> | --all-tenants) [--dry-run]
   crosscodexd admin backup run
   crosscodexd admin backup list
   crosscodexd admin backup verify [--point <id>]
@@ -67,6 +68,8 @@ func runAdmin(args []string) int {
 		return decideArtifactsCmd(args[3:])
 	case len(args) >= 2 && args[0] == "adjudicate" && args[1] == "artifacts":
 		return adjudicateArtifactsCmd(args[2:])
+	case len(args) >= 1 && args[0] == "cleaning":
+		return adminCleaningCmd(args[1:])
 	case len(args) >= 2 && args[0] == "backup" && args[1] == "run":
 		return backupRunCmd(args[2:])
 	case len(args) >= 2 && args[0] == "backup" && args[1] == "list":

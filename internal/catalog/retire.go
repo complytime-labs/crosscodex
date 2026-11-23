@@ -60,8 +60,8 @@ func (r Retention) configured() bool {
 }
 
 // WithRetention lets the service retire catalog versions. Wiring contract:
-// cmd/crosscodexd sets it only for role all and only when database.purge_dsn
-// is set, from the same retention wiring (holds, per-tenant archiver and
+// cmd/crosscodexd sets it only for role all and role gateway, and only when
+// database.purge_dsn is set, from the same retention wiring (holds, per-tenant archiver and
 // purger, audit publisher) the retention engine uses; every other deployment
 // leaves it unset, so retire fails closed. It has no pkg/config field of its
 // own: database.purge_dsn and retention.archive decide it.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	analyzerresults "github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 )
@@ -62,6 +63,19 @@ type Mapping struct {
 	// StageAnalyzer mappings of a job that ran the critique stage, when the
 	// critique has a result for the pair.
 	Critique *analyzerresults.CritiqueResult
+	// Cleaning is the latest cleaning finding or reviewer determination that
+	// changed the mapping; nil when none applies.
+	Cleaning *CleaningState
+}
+
+// CleaningState is one row of the mapping_cleaning_states view: how cleaning
+// or a reviewer changed a mapping.
+type CleaningState struct {
+	State        string // "retired", "restored" or "stale"
+	Source       string // "finding" or "determination"
+	RefID        string // ID of the finding or determination
+	ChangedAt    time.Time
+	GraphApplied bool
 }
 
 // JobAnalysis is the catalog selection of the job a page lists: what
