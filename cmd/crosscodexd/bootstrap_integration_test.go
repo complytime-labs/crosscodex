@@ -68,17 +68,22 @@ var (
 	testServiceIdentities []config.X509MatchConfig
 )
 
-// testServerTLS returns a mutual-TLS server config (CA + server cert/key)
-// for role=pipeline tests that bootstrap a real pipeline listener. It lists
-// the suite's client certificate as a service identity.
+// testServerTLS returns a mutual-TLS config for role=pipeline tests that
+// bootstrap a real pipeline listener. The global certificate is the client
+// certificate (the identity the role presents when it dials out; the server
+// certificate is serverAuth-only and cannot authenticate as a client), and each
+// listener target presents the server certificate. It lists the suite's client
+// certificate as a service identity.
 func testServerTLS() config.TLSConfig {
-	return config.TLSConfig{
-		Mode:              "mutual",
-		CA:                testTLSCAPath,
-		Cert:              testTLSServerCertPath,
-		Key:               testTLSServerKeyPath,
-		ServiceIdentities: testServiceIdentities,
+	tlsCfg := testClientTLS()
+	tlsCfg.ServiceIdentities = testServiceIdentities
+	server := config.TLSOverride{Cert: testTLSServerCertPath, Key: testTLSServerKeyPath}
+	tlsCfg.Targets = map[string]config.TLSOverride{
+		"gateway-server":  server,
+		"pipeline-server": server,
+		"graph-server":    server,
 	}
+	return tlsCfg
 }
 
 // testClientTLS returns a mutual-TLS client config (CA + client cert/key)

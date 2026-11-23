@@ -71,10 +71,15 @@ func pkiPaths(pkiDir string) embeddedTLSPaths {
 func ensurePKI(pkiDir string) error {
 	_, err := testcerts.Ensure(pkiDir, testcerts.EnsureOptions{
 		// The CLI dials localhost:<port>, so that is the one SAN a set needs.
+		// A generated server cert is serverAuth-only, so the daemon's server
+		// key cannot authenticate as the CLI's client; a CLI-generated set with
+		// a dual-use cert fails here and is regenerated. A supplied set is
+		// exempt (see testcerts.EnsureOptions.KeepUnmanaged).
 		Verify: testcerts.VerifyOptions{
-			DNSNames:     []string{"localhost"},
-			MinRemaining: 24 * time.Hour,
-			VerifyExtra:  requireManagedAttestationKeys,
+			DNSNames:       []string{"localhost"},
+			MinRemaining:   24 * time.Hour,
+			ServerAuthOnly: true,
+			VerifyExtra:    requireManagedAttestationKeys,
 		},
 		WriteExtra: testcerts.WriteAttestationKeypair,
 		Generate: func() (*testcerts.PKI, error) {
@@ -83,6 +88,7 @@ func ensurePKI(pkiDir string) error {
 				pkigen.WithValidDuration(365*24*time.Hour),
 				pkigen.WithDNSNames("localhost"),
 				pkigen.WithIPs(net.IPv4(127, 0, 0, 1), net.IPv6loopback),
+				pkigen.WithExtKeyUsage(x509.ExtKeyUsageServerAuth),
 			)
 			if err != nil {
 				return nil, fmt.Errorf("generate embedded PKI: %w", err)

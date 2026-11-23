@@ -72,8 +72,20 @@ go build -o "$E2E_DIR/genkey" ./test/e2e/genkey
 export CROSSCODEX_NATS_EMBEDDED_STORE_DIR="$E2E_DIR/nats"
 export CROSSCODEX_STORAGE_OBJECTS_BASE_PATH="$E2E_DIR/objects"
 export CROSSCODEX_TLS_CA="$CERTS_DIR/ca.pem"
-export CROSSCODEX_TLS_CERT="$CERTS_DIR/server.pem"
-export CROSSCODEX_TLS_KEY="$CERTS_DIR/server-key.pem"
+# The daemon's own identity (what it presents when it dials out) is the client
+# cert. server.pem is serverAuth-only and cannot authenticate as a client, so it
+# is configured only as the gateway listener's certificate, in a drop-in
+# because tls.targets has no environment override.
+export CROSSCODEX_TLS_CERT="$CERTS_DIR/client.pem"
+export CROSSCODEX_TLS_KEY="$CERTS_DIR/client-key.pem"
+mkdir -p "$E2E_DIR/config/crosscodex/conf.d"
+cat >"$E2E_DIR/config/crosscodex/conf.d/50-e2e-listener.yaml" <<LISTENER
+tls:
+  targets:
+    gateway-server:
+      cert: "$CERTS_DIR/server.pem"
+      key: "$CERTS_DIR/server-key.pem"
+LISTENER
 export CROSSCODEX_ATTESTATION_PRIVATE_KEY_PATH="$E2E_DIR/attestation/private.pem"
 export CROSSCODEX_ATTESTATION_PUBLIC_KEY_PATH="$E2E_DIR/attestation/public.pem"
 # The e2e LLM stack renders all three panel aliases to one model

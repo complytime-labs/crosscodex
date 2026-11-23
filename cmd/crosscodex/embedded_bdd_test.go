@@ -72,6 +72,53 @@ var _ = Describe("ensurePKI", func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
+	It("issues a serverAuth-only server certificate and a clientAuth-only client certificate", func() {
+		pkiDir := filepath.Join(GinkgoT().TempDir(), "pki")
+
+		Expect(ensurePKI(pkiDir)).To(Succeed())
+
+		for name, want := range map[string]x509.ExtKeyUsage{"server.pem": x509.ExtKeyUsageServerAuth, "client.pem": x509.ExtKeyUsageClientAuth} {
+			data, err := os.ReadFile(filepath.Join(pkiDir, name))
+			Expect(err).NotTo(HaveOccurred())
+			block, _ := pem.Decode(data)
+			Expect(block).NotTo(BeNil())
+			cert, err := x509.ParseCertificate(block.Bytes)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cert.ExtKeyUsage).To(Equal([]x509.ExtKeyUsage{want}), name)
+		}
+	})
+
+	It("regenerates a CLI-generated set whose server certificate also permits client authentication", func() {
+		pkiDir := filepath.Join(GinkgoT().TempDir(), "pki")
+		dualUse, err := pkigen.GenerateDevPKI(pkigen.WithOrganization("CrossCodex Embedded"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(testcerts.Ensure(pkiDir, testcerts.EnsureOptions{
+			Verify:     testcerts.VerifyOptions{VerifyExtra: requireManagedAttestationKeys},
+			WriteExtra: testcerts.WriteAttestationKeypair,
+			Generate: func() (*testcerts.PKI, error) {
+				return &testcerts.PKI{
+					CACert: dualUse.CA.CertPEM, CAKey: dualUse.CA.KeyPEM,
+					ServerCert: dualUse.Server.CertPEM, ServerKey: dualUse.Server.KeyPEM,
+					ClientCert: dualUse.Client.CertPEM, ClientKey: dualUse.Client.KeyPEM,
+				}, nil
+			},
+		})).To(BeTrue())
+		oldCA, err := os.ReadFile(filepath.Join(pkiDir, "ca.pem"))
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(ensurePKI(pkiDir)).To(Succeed())
+
+		newCA, err := os.ReadFile(filepath.Join(pkiDir, "ca.pem"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(newCA).NotTo(Equal(oldCA))
+		serverPEM, err := os.ReadFile(filepath.Join(pkiDir, "server.pem"))
+		Expect(err).NotTo(HaveOccurred())
+		block, _ := pem.Decode(serverPEM)
+		serverCert, err := x509.ParseCertificate(block.Bytes)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(serverCert.ExtKeyUsage).To(Equal([]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}))
+	})
+
 	It("provisions a matching attestation key pair beside the TLS set", func() {
 		pkiDir := filepath.Join(GinkgoT().TempDir(), "pki")
 
