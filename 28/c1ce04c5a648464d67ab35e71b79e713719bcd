@@ -1,0 +1,19 @@
+test/tooling/tls-name-probe.venom.yml
+  s_bf900e9c0531cf::t_9a088c19484bae 11-13,41-43,76-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28c1ce04c5a648464d67ab35e71b79e713719bcd",
+  "prompts": {},
+  "sessions": {
+    "s_bf900e9c0531cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "64534f35-3f09-44b5-a70b-0f7d15bc03b3",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
