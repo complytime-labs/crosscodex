@@ -1,0 +1,32 @@
+internal/results/cursor_bdd_test.go
+  s_f49d97586243d8::t_e499f861ae953f 37-53
+internal/results/cursor.go
+  s_f49d97586243d8::t_823c4f065ed86c 7,36-39
+  s_f49d97586243d8::t_60e9341ba8be51 40
+internal/results/testdata/fuzz/FuzzDecodeCursor/eed55b33f1ff6f23
+  s_7470801c8d7b7c::t_e838ee03714424 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "14c5ece073659f3595ae5835d08007f789ebc716",
+  "prompts": {},
+  "sessions": {
+    "s_7470801c8d7b7c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aa84d5c8c583ab5e7",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_f49d97586243d8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4248c1a8-b4c1-4738-9359-f790bfdddf78",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
