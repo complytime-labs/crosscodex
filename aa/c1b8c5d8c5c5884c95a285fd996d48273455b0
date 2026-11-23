@@ -1,0 +1,37 @@
+docs/dev/adr/index.md
+  s_1963e32741ee2b::t_45e57f182d4f51 5,7-10
+docs/dev/design-principles.md
+  s_1963e32741ee2b::t_4f3608f6d05f6e 323
+deploy/README.md
+  s_1963e32741ee2b::t_92e43b693a689d 265
+internal/testcerts/services_bdd_test.go
+  s_1963e32741ee2b::t_ee697278725f22 257
+  s_1963e32741ee2b::t_aa40db7ca98892 253-254
+  s_1963e32741ee2b::t_f6a71e9b482092 58,70-72,220-244
+  s_1963e32741ee2b::t_c7146661685984 10
+test/tooling/tls-name-probe.venom.yml
+  s_1963e32741ee2b::t_087505d90e29d4 115
+  s_1963e32741ee2b::t_37d3fb9d69b35c 17-18,44-45,65-79,86-114,116-118
+  s_1963e32741ee2b::t_d4104dcbea760c 80-85
+test/tooling/cert-services-agreement.venom.yml
+  s_1963e32741ee2b::t_346fae72fb0635 1-29
+test/tooling/e2e-daemon-identity.venom.yml
+  s_1963e32741ee2b::t_087505d90e29d4 17,20
+  s_1963e32741ee2b::t_37d3fb9d69b35c 1,6-11,13,19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "aac1b8c5d8c5c5884c95a285fd996d48273455b0",
+  "prompts": {},
+  "sessions": {
+    "s_1963e32741ee2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e47dcf4a-928e-4704-9c9c-2ff40f46db28",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
