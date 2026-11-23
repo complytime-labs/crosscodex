@@ -55,7 +55,7 @@ testcases:
           - result.systemout ShouldContainSubstring are valid; kept
           - result.systemout ShouldContainSubstring unchanged=yes
 
-  - name: deploy verify rejects a set without the praxis SAN and the generator replaces it
+  - name: deploy verify rejects the shared-server-key layout of earlier releases and the generator replaces it
     steps:
       - type: exec
         script: |
@@ -63,18 +63,65 @@ testcases:
           trap 'rm -rf "$d"' EXIT
           cd {{.root}}
           go run ./internal/testcerts/gen.go "$d/certs" >/dev/null
+          before=$(cat "$d/certs/ca.pem")
           go run ./deploy/certgen/gen.go --verify "$d/certs" 2>&1; echo "stale_verify_exit=$?"
-          go run ./deploy/certgen/gen.go "$d/certs"
+          go run ./deploy/certgen/gen.go "$d/certs" 2>&1
           go run ./deploy/certgen/gen.go --verify "$d/certs" >/dev/null; echo "fresh_verify_exit=$?"
+          [ "$before" != "$(cat "$d/certs/ca.pem")" ] && echo "ca_replaced=yes" || echo "ca_replaced=no"
+          [ ! -e "$d/certs/server.pem" ] && [ ! -e "$d/certs/server-key.pem" ] && echo "shared_key_gone=yes" || echo "shared_key_gone=no"
         assertions:
-          - result.systemout ShouldContainSubstring "does not cover required SANs"
-          - result.systemout ShouldContainSubstring '"praxis"'
+          - result.systemout ShouldContainSubstring "shared server key layout"
+          - result.systemout ShouldContainSubstring "can impersonate all the others"
+          - result.systemout ShouldContainSubstring "new CA"
+          - result.systemout ShouldContainSubstring "new client certificate"
+          - result.systemout ShouldContainSubstring "new attestation keypair"
           - result.systemout ShouldContainSubstring regenerate
           - result.systemout ShouldContainSubstring stale_verify_exit=1
+          - result.systemout ShouldContainSubstring NOTICE
           - result.systemout ShouldContainSubstring Certificates written
           - result.systemout ShouldContainSubstring fresh_verify_exit=0
+          - result.systemout ShouldContainSubstring ca_replaced=yes
+          - result.systemout ShouldContainSubstring shared_key_gone=yes
 
-  - name: deploy verify rejects an attestation keypair from two different runs
+  - name: deploy verify rejects a service cert that also names another service
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          cd {{.root}}
+          go run ./deploy/certgen/gen.go "$d/certs" >/dev/null
+          cp "$d/certs/nats.pem" "$d/certs/db.pem"
+          go run ./deploy/certgen/gen.go --verify "$d/certs" 2>&1; echo "verify_exit=$?"
+        assertions:
+          - result.systemout ShouldContainSubstring db-key.pem does not match db.pem
+          - result.systemout ShouldContainSubstring verify_exit=1
+
+  - name: each deploy service cert names only its own service and no two services share a key
+    steps:
+      - type: exec
+        script: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          cd {{.root}}
+          go run ./deploy/certgen/gen.go "$d/certs" >/dev/null
+          for s in db nats litellm praxis crosscodexd; do
+            echo "$s san=$(openssl x509 -in "$d/certs/$s.pem" -noout -ext subjectAltName | tail -n +2 | tr -d ' \n')"
+            echo "$s eku=$(openssl x509 -in "$d/certs/$s.pem" -noout -ext extendedKeyUsage | tail -n +2 | tr -d ' \n')"
+          done
+          # Public halves of the five service keys, the client key and the CA key.
+          echo "distinct_keys=$(for k in db nats litellm praxis crosscodexd client ca; do openssl pkey -in "$d/certs/$k-key.pem" -pubout | sha256sum; done | sort -u | wc -l)"
+        assertions:
+          - result.systemout ShouldContainSubstring "db san=DNS:db"
+          - result.systemout ShouldContainSubstring "nats san=DNS:nats"
+          - result.systemout ShouldContainSubstring "litellm san=DNS:litellm"
+          - result.systemout ShouldContainSubstring "praxis san=DNS:praxis,DNS:localhost,IPAddress:127.0.0.1"
+          - result.systemout ShouldContainSubstring "crosscodexd san=DNS:crosscodexd,DNS:localhost,IPAddress:127.0.0.1"
+          - result.systemout ShouldContainSubstring "db eku=TLSWebServerAuthentication"
+          - result.systemout ShouldNotContainSubstring "ClientAuthentication"
+          - result.systemout ShouldContainSubstring distinct_keys=7
+
+  - name: deploy verify rejects an attestation key swapped in from another run (the fingerprint covers it)
     steps:
       - type: exec
         script: |
@@ -86,5 +133,5 @@ testcases:
           cp "$d/b/attestation-pub.pem" "$d/a/attestation-pub.pem"
           go run ./deploy/certgen/gen.go --verify "$d/a" 2>&1; echo "verify_exit=$?"
         assertions:
-          - result.systemout ShouldContainSubstring attestation-pub.pem does not match attestation-key.pem
+          - result.systemout ShouldContainSubstring .fingerprint does not match the PEM files
           - result.systemout ShouldContainSubstring verify_exit=1

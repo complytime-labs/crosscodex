@@ -1,0 +1,20 @@
+name: test/e2e/run-daemon.sh never configures a serverAuth-only cert as the daemon's own identity
+
+vars:
+  root: "."
+
+# A pin on script text, deliberately: run-daemon.sh needs a database, a NATS
+# store and a built daemon, so the tooling suite cannot run it. The invariant
+# it guards (the daemon dials out as client.pem, never as the serverAuth-only
+# server.pem) is exercised end to end by the e2e suite, whose gateway listener
+# and mTLS dials fail if either cert is swapped. This pin names the cause when
+# that happens.
+testcases:
+  - name: The only exports that set the daemon's TLS identity point at client.pem and client-key.pem
+    steps:
+      - type: exec
+        script: |
+          grep -E '^export CROSSCODEX_TLS_(CERT|KEY)=' {{.root}}/test/e2e/run-daemon.sh | sed 's/^export //' | paste -sd' '
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldEqual 'CROSSCODEX_TLS_CERT="$CERTS_DIR/client.pem" CROSSCODEX_TLS_KEY="$CERTS_DIR/client-key.pem"'

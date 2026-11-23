@@ -1,10 +1,14 @@
 # Single-host production stack for CrossCodex (role: all) over full mTLS.
 # Populate the cert volume first: task deploy:certs
 #
-# Keys live in three volumes, so a service gets only the keys it uses:
-#   crosscodex-certs             ca.pem, server.pem, server-key.pem. Mounted at
-#                                /certs by db, nats and the LLM gateway, and at
-#                                /server-certs by crosscodexd (HTTPS listener).
+# Keys live in separate volumes, so a service gets only the keys it uses
+# (issue #298). Each TLS server has its own key and a certificate naming only
+# that service, in its own volume named <CROSSCODEX_CERTS_VOLUME>-<service>
+# (default crosscodex-certs-<service>): db, nats, litellm (the stunnel
+# sidecar), praxis and crosscodexd (its HTTPS listener). Each holds ca.pem and
+# that service's certificate and key under the names server.pem and
+# server-key.pem, so a service reads /certs/server-key.pem whichever service it
+# is. The rest:
 #   crosscodex-client-certs      ca.pem, client.pem, client-key.pem (the
 #                                daemon's identity to db, nats and the
 #                                gateway). Mounted at /certs by migrate and
@@ -16,6 +20,7 @@
 # via group_add so it can read the keys despite running as a different user
 # (postgres, nats=root, stunnel=nobody, praxis=praxis, crosscodexd=nonroot).
 # This GID MUST match CERT_GID in .taskfiles/deploy.yml (the deploy:certs task).
+# The LLM gateway fragments declare the litellm and praxis volumes.
 #
 # The LLM gateway is not defined here: each deploy:* task also loads
 # compose.gateway-${LLM_GATEWAY}.yaml (litellm by default, or praxis). Running
@@ -71,7 +76,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
       POSTGRES_DB: crosscodex
     volumes:
-      - crosscodex-certs:/certs:ro
+      - crosscodex-certs-db:/certs:ro
       - crosscodex-pgdata:/var/lib/postgresql/data
     command: >
       postgres
@@ -97,9 +102,10 @@ services:
     # still owns every root-owned file it can reach. In /certs that is every
     # file (deploy:certs chowns them to 0:10001), including server-key.pem:
     # nats can read them, as any GID 10001 member can, and only the read-only
-    # mount stops it rewriting them. /certs is the server volume, so the CA
-    # key, the daemon's client key and the attestation key are not there. It
-    # can write only /data and /tmp; the root filesystem is read-only.
+    # mount stops it rewriting them. /certs is nats's own volume, so the CA
+    # key, the daemon's client key, the attestation key and every other
+    # service's key are not there. It can write only /data and /tmp; the root
+    # filesystem is read-only.
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     mem_limit: ${CROSSCODEX_NATS_MEM_LIMIT:-512m}
@@ -107,7 +113,7 @@ services:
     read_only: true
     tmpfs: [/tmp]
     volumes:
-      - crosscodex-certs:/certs:ro
+      - crosscodex-certs-nats:/certs:ro
       - crosscodex-jetstream:/data
     command: >
       --tls
@@ -176,11 +182,11 @@ services:
       # The in-container port stays 50051.
       - "${CROSSCODEX_GATEWAY_PORT:-50051}:50051"
     volumes:
-      # Client identity at /certs; the server cert for the gateway listener
-      # (tls.targets.gateway-server in config.yaml) at /server-certs; the
-      # attestation keypair (attestation.* in config.yaml) at /attestation.
+      # Client identity at /certs; the daemon's own server cert for the gateway
+      # listener (tls.targets.gateway-server in config.yaml) at /server-certs;
+      # the attestation keypair (attestation.* in config.yaml) at /attestation.
       - crosscodex-client-certs:/certs:ro
-      - crosscodex-certs:/server-certs:ro
+      - crosscodex-certs-crosscodexd:/server-certs:ro
       - crosscodex-attestation-keys:/attestation:ro
       - ./config.yaml:/etc/crosscodex/config.yaml:ro
       - crosscodex-objects:/var/lib/crosscodex/objects
@@ -206,16 +212,23 @@ volumes:
   crosscodex-pgdata:
   crosscodex-objects:
   crosscodex-jetstream:
-  crosscodex-certs:
+  crosscodex-certs-db:
     external: true
-    # Overridable so an isolated stack (e.g. the ephemeral smoke stack) mounts
-    # its own PKI volume instead of the production one.
-    name: ${CROSSCODEX_CERTS_VOLUME:-crosscodex-certs}
+    # CROSSCODEX_CERTS_VOLUME is overridable so an isolated stack (e.g. the
+    # ephemeral smoke stack) mounts its own PKI volumes instead of the
+    # production ones.
+    name: ${CROSSCODEX_CERTS_VOLUME:-crosscodex-certs}-db
+  crosscodex-certs-nats:
+    external: true
+    name: ${CROSSCODEX_CERTS_VOLUME:-crosscodex-certs}-nats
+  crosscodex-certs-crosscodexd:
+    external: true
+    name: ${CROSSCODEX_CERTS_VOLUME:-crosscodex-certs}-crosscodexd
   crosscodex-client-certs:
     external: true
-    # Overridable for the same reason as crosscodex-certs.
+    # Overridable for the same reason as CROSSCODEX_CERTS_VOLUME.
     name: ${CROSSCODEX_CLIENT_CERTS_VOLUME:-crosscodex-client-certs}
   crosscodex-attestation-keys:
     external: true
-    # Overridable for the same reason as crosscodex-certs.
+    # Overridable for the same reason as CROSSCODEX_CERTS_VOLUME.
     name: ${CROSSCODEX_ATTESTATION_KEYS_VOLUME:-crosscodex-attestation-keys}

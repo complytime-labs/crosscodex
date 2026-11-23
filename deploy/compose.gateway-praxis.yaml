@@ -7,7 +7,7 @@ services:
   praxis:
     image: ghcr.io/praxis-proxy/ai:0.8.0@sha256:f38f429ac97101a18f2c00e0cb7a5ed65090f5534261fa14aa1d105086f332cf
     restart: unless-stopped
-    # Runs as praxis (uid 100); joins the cert GID to read server-key.pem
+    # Runs as praxis (uid 100); joins the cert GID to read its own server-key.pem
     # (0640), the only key it needs.
     group_add: ["10001"]
     cap_drop: [ALL]
@@ -25,23 +25,23 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       # Praxis is a third-party image, so it gets exactly these three files.
-      # crosscodex-certs holds only these today (the client and attestation
-      # keys are in their own volumes, which Praxis never mounts);
+      # Its own volume holds only these today (every other service's key, the
+      # client key and the attestation key are in volumes Praxis never mounts);
       # subpath keeps Praxis pinned to them if the volume ever gains a file.
       - type: volume
-        source: crosscodex-certs
+        source: crosscodex-certs-praxis
         target: /certs/ca.pem
         read_only: true
         volume:
           subpath: ca.pem
       - type: volume
-        source: crosscodex-certs
+        source: crosscodex-certs-praxis
         target: /certs/server.pem
         read_only: true
         volume:
           subpath: server.pem
       - type: volume
-        source: crosscodex-certs
+        source: crosscodex-certs-praxis
         target: /certs/server-key.pem
         read_only: true
         volume:
@@ -64,3 +64,9 @@ services:
     depends_on:
       praxis:
         condition: service_healthy
+
+volumes:
+  crosscodex-certs-praxis:
+    external: true
+    # Same prefix and override as compose.yaml's per-service cert volumes.
+    name: ${CROSSCODEX_CERTS_VOLUME:-crosscodex-certs}-praxis
