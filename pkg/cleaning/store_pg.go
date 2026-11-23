@@ -581,6 +581,9 @@ func (s *PGFindingStore) Decide(ctx context.Context, tenantID string, d Decision
 		if d.DecidedBy == DecidedByPolicy {
 			return fmt.Errorf("decide finding %s: policy decisions are recorded only by ApplyRun; decide as a registered reviewer", d.FindingID)
 		}
+		if d.DecidedBy == DecidedByReproject {
+			return fmt.Errorf("decide finding %s: stale decisions are recorded only by MarkStale, during re-projection; decide as a registered reviewer", d.FindingID)
+		}
 		if err := d.Validate(); err != nil {
 			return fmt.Errorf("decide finding %s: %w", d.FindingID, err)
 		}
@@ -617,6 +620,89 @@ func (s *PGFindingStore) Decide(ctx context.Context, tenantID string, d Decision
 			if err := tx.Exec(ctx, decideUpdateSQL, tenantID, d.FindingID, string(next.Status),
 				encodeJSON(next.Targets), encodeJSON(next.EdgeIDs)); err != nil {
 				return fmt.Errorf("decide finding %s: %w", d.FindingID, err)
+			}
+			return nil
+		})
+	})
+}
+
+// checkReprojectable refuses, for MarkReprojected, a finding whose state
+// token is not expectState or whose graph change is outstanding.
+func checkReprojectable(current StoredFinding, expectState string) error {
+	if StateToken(current) != expectState {
+		return fmt.Errorf("finding %s changed since it was read (it is now %s); nothing was recorded. "+
+			"Re-project again to judge its current state: %w", current.ID, current.Status, ErrStateChanged)
+	}
+	if !current.GraphApplied {
+		return fmt.Errorf("finding %s has a recorded change not yet applied to the graph, so it was not re-projected and nothing was recorded. "+
+			"Run 'crosscodex admin cleaning run --resume' first: %w", current.ID, ErrUnprojected)
+	}
+	return nil
+}
+
+// checkStaleDecision refuses, for MarkStale, any decision but
+// re-projection's valid VerdictStale one.
+func checkStaleDecision(d Decision) error {
+	if d.Verdict != VerdictStale || d.DecidedBy != DecidedByReproject {
+		return fmt.Errorf("mark finding %s stale: decision %s is a %q decision by %q; MarkStale records only re-projection's %q decision by %q. "+
+			"Record a reviewer's decision with Decide and a policy decision with ApplyRun; nothing was written",
+			d.FindingID, d.ID, d.Verdict, d.DecidedBy, VerdictStale, DecidedByReproject)
+	}
+	if err := d.Validate(); err != nil {
+		return fmt.Errorf("mark finding %s stale: %w", d.FindingID, err)
+	}
+	return nil
+}
+
+const markStaleSQL = `
+UPDATE edge_findings SET status = 'stale', graph_applied = true, updated_at = now()
+WHERE tenant_id = $1 AND finding_id = $2`
+
+func (s *PGFindingStore) MarkStale(ctx context.Context, tenantID string, d Decision, expectState string) error {
+	return s.observe(ctx, "MarkStale", tenantID, func(ctx context.Context) error {
+		if err := checkStaleDecision(d); err != nil {
+			return err
+		}
+		return s.inTx(ctx, tenantID, func(tx db.Transaction) error {
+			current, err := readFinding(ctx, tx, "mark finding stale", lockFindingSQL, tenantID, d.FindingID)
+			if err != nil {
+				return err
+			}
+			if StateToken(current) != expectState {
+				return fmt.Errorf("finding %s changed since it was read (it is now %s); nothing was recorded. "+
+					"Re-project again to judge its current state: %w", d.FindingID, current.Status, ErrStateChanged)
+			}
+			if err := insertDecision(ctx, tx, tenantID, d); err != nil {
+				return fmt.Errorf("mark finding %s stale: %w", d.FindingID, err)
+			}
+			if err := tx.Exec(ctx, markStaleSQL, tenantID, d.FindingID); err != nil {
+				return fmt.Errorf("mark finding %s stale: %w", d.FindingID, err)
+			}
+			return nil
+		})
+	})
+}
+
+const markReprojectedSQL = `UPDATE edge_findings SET edge_ids = $3::jsonb WHERE tenant_id = $1 AND finding_id = $2`
+
+func (s *PGFindingStore) MarkReprojected(ctx context.Context, tenantID, findingID, expectState string, edgeIDs []string) error {
+	return s.observe(ctx, "MarkReprojected", tenantID, func(ctx context.Context) error {
+		// The same bound StoredFinding.Validate applies, so the row reads back.
+		edges := encodeJSON(edgeIDs)
+		if len(edges) > storedListLimit {
+			return fmt.Errorf("re-project finding %s: %w: the edge_ids column would hold %d bytes of JSON, over the %d-byte limit within which a stored finding reads back, so nothing was written",
+				findingID, ErrFindingTooLarge, len(edges), storedListLimit)
+		}
+		return s.inTx(ctx, tenantID, func(tx db.Transaction) error {
+			current, err := readFinding(ctx, tx, "re-project finding", lockFindingSQL, tenantID, findingID)
+			if err != nil {
+				return err
+			}
+			if err := checkReprojectable(current, expectState); err != nil {
+				return err
+			}
+			if err := tx.Exec(ctx, markReprojectedSQL, tenantID, findingID, edges); err != nil {
+				return fmt.Errorf("re-project finding %s: %w", findingID, err)
 			}
 			return nil
 		})

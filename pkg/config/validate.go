@@ -60,6 +60,7 @@ func validate(cfg *Config, tracker *sourceTracker) error {
 		validateSuccessWindow(&cfg.Analysis.Engine, &cfg.Pipeline, tracker),
 		validateSynthesis(&cfg.Synthesis, tracker),
 		validateCleaning(&cfg.Cleaning, tracker),
+		validateFeedback(&cfg.Feedback, tracker),
 		cfg.Retention.validate(tracker),
 		validateBackup(&cfg.Backup, &cfg.Storage.Objects, tracker),
 		validateGraph(&cfg.Graph, tracker),
@@ -663,6 +664,23 @@ func validateCleaning(c *CleaningConfig, tracker *sourceTracker) error {
 			if o != nil {
 				validateCleaningSignal(&p, base+".signals."+signalNames[i], signalNames[i], o.Action, o.MinAgreementFraction, noSrc)
 			}
+		}
+	}
+	return p.err()
+}
+
+func validateFeedback(f *FeedbackConfig, tracker *sourceTracker) error {
+	var p problems
+	for _, t := range []struct {
+		path, meaning string
+		value         float64
+	}{
+		{"feedback.min_agreement", "the agreement score below which a voted mapping needs escalation", f.MinAgreement},
+		{"feedback.low_confidence", "the confidence below which the review queue lists a mapping as low confidence", f.LowConfidence},
+	} {
+		if math.IsNaN(t.value) || t.value < 0 || t.value > 1 {
+			p.add(t.path, "%s must be between 0 and 1, got %g%s; set it to %s, a fraction such as 0.5: %w",
+				t.path, t.value, formatSource(tracker, t.path), t.meaning, ErrInvalidConfig)
 		}
 	}
 	return p.err()

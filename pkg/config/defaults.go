@@ -222,6 +222,9 @@ synthesis:
     no_rel_low: 0.80
     contested_warn: 0.20
     actionable_warn: 0.30
+feedback:
+  min_agreement: 0.5
+  low_confidence: 0.5
 cleaning:
   max_retire_per_run: 1000
   signals:

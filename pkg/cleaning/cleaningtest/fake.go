@@ -48,6 +48,12 @@ type Fake struct {
 	ApplyRunFunc func(ctx context.Context, tenantID string, w cleaning.RunWrite) error
 	// DecideFunc, if set, alone decides what Decide returns; nothing is stored.
 	DecideFunc func(ctx context.Context, tenantID string, d cleaning.Decision, expectState string, next cleaning.StoredFinding) error
+	// MarkReprojectedFunc, if set, alone decides what MarkReprojected
+	// returns; nothing changes.
+	MarkReprojectedFunc func(ctx context.Context, tenantID, findingID, expectState string, edgeIDs []string) error
+	// MarkStaleFunc, if set, alone decides what MarkStale returns; nothing is
+	// stored.
+	MarkStaleFunc func(ctx context.Context, tenantID string, d cleaning.Decision, expectState string) error
 	// UnprojectedFunc, if set, alone decides what Unprojected returns.
 	UnprojectedFunc func(ctx context.Context, tenantID string) ([]cleaning.StoredFinding, error)
 	// MarkProjectedFunc, if set, alone decides what MarkProjected returns;
@@ -342,6 +348,9 @@ func (f *Fake) Decide(ctx context.Context, tenantID string, d cleaning.Decision,
 	if d.DecidedBy == cleaning.DecidedByPolicy {
 		return fmt.Errorf("decide finding %s: policy decisions are recorded only by ApplyRun; decide as a registered reviewer", d.FindingID)
 	}
+	if d.DecidedBy == cleaning.DecidedByReproject {
+		return fmt.Errorf("decide finding %s: stale decisions are recorded only by MarkStale, during re-projection; decide as a registered reviewer", d.FindingID)
+	}
 	if err := d.Validate(); err != nil {
 		return fmt.Errorf("decide finding %s: %w", d.FindingID, err)
 	}
@@ -378,6 +387,75 @@ func (f *Fake) Decide(ctx context.Context, tenantID string, d cleaning.Decision,
 	current.UpdatedAt = f.now()
 	f.findings[tenantID][d.FindingID] = current
 	f.decisions[tenantID] = ds
+	return nil
+}
+
+// MarkStale records re-projection's stale decision against an unchanged
+// finding and marks it stale and projected.
+func (f *Fake) MarkStale(ctx context.Context, tenantID string, d cleaning.Decision, expectState string) error {
+	if err := checkTenant(ctx, tenantID); err != nil {
+		return err
+	}
+	if f.MarkStaleFunc != nil {
+		return f.MarkStaleFunc(ctx, tenantID, d, expectState)
+	}
+	if d.Verdict != cleaning.VerdictStale || d.DecidedBy != cleaning.DecidedByReproject {
+		return fmt.Errorf("mark finding %s stale: decision %s is a %q decision by %q; MarkStale records only re-projection's %q decision by %q. "+
+			"Record a reviewer's decision with Decide and a policy decision with ApplyRun; nothing was written",
+			d.FindingID, d.ID, d.Verdict, d.DecidedBy, cleaning.VerdictStale, cleaning.DecidedByReproject)
+	}
+	if err := d.Validate(); err != nil {
+		return fmt.Errorf("mark finding %s stale: %w", d.FindingID, err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.load()
+	current, ok := f.findings[tenantID][d.FindingID]
+	if !ok {
+		return fmt.Errorf("mark finding %s stale: %w", d.FindingID, cleaning.ErrFindingNotFound)
+	}
+	if cleaning.StateToken(current) != expectState {
+		return fmt.Errorf("finding %s changed since it was read (it is now %s); nothing was recorded. "+
+			"Re-project again to judge its current state: %w", d.FindingID, current.Status, cleaning.ErrStateChanged)
+	}
+	ds, err := f.insertDecision(slices.Clone(f.decisions[tenantID]), f.findings[tenantID], d)
+	if err != nil {
+		return fmt.Errorf("mark finding %s stale: %w", d.FindingID, err)
+	}
+	current.Status, current.GraphApplied, current.UpdatedAt = cleaning.StatusStale, true, f.now()
+	f.findings[tenantID][d.FindingID] = current
+	f.decisions[tenantID] = ds
+	return nil
+}
+
+// MarkReprojected replaces a projected, unchanged finding's EdgeIDs.
+func (f *Fake) MarkReprojected(ctx context.Context, tenantID, findingID, expectState string, edgeIDs []string) error {
+	if err := checkTenant(ctx, tenantID); err != nil {
+		return err
+	}
+	if f.MarkReprojectedFunc != nil {
+		return f.MarkReprojectedFunc(ctx, tenantID, findingID, expectState, edgeIDs)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.load()
+	s, ok := f.findings[tenantID][findingID]
+	if !ok {
+		return fmt.Errorf("re-project finding %s: %w", findingID, cleaning.ErrFindingNotFound)
+	}
+	if cleaning.StateToken(s) != expectState {
+		return fmt.Errorf("finding %s changed since it was read (it is now %s); nothing was recorded. "+
+			"Re-project again to judge its current state: %w", findingID, s.Status, cleaning.ErrStateChanged)
+	}
+	if !s.GraphApplied {
+		return fmt.Errorf("finding %s has a recorded change not yet applied to the graph, so it was not re-projected and nothing was recorded. "+
+			"Run 'crosscodex admin cleaning run --resume' first: %w", findingID, cleaning.ErrUnprojected)
+	}
+	s.EdgeIDs = slices.Clone(edgeIDs)
+	if err := s.Validate(); err != nil {
+		return fmt.Errorf("re-project finding %s: %w", findingID, err)
+	}
+	f.findings[tenantID][findingID] = s
 	return nil
 }
 

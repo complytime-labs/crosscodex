@@ -33,6 +33,12 @@ type ServerConfig struct {
 	// no cleaning routes, so those RPCs get Connect's 404 (Unimplemented).
 	Cleaning pbconnect.EdgeCleaningServiceHandler
 
+	// Feedback serves FeedbackService (votes, the review queue and
+	// determinations) on the same listener, for the gateway role to forward
+	// to. Nil mounts no feedback routes, so those RPCs get Connect's 404
+	// (Unimplemented).
+	Feedback pbconnect.FeedbackServiceHandler
+
 	// ServiceIdentities lists the client certificates (in practice the
 	// gateway's) allowed to assert a tenant and end user via request
 	// headers; see connectutil.UnaryServerInterceptor. Empty denies every
@@ -51,8 +57,8 @@ type Server struct {
 }
 
 // NewServer mounts a read-only GraphService (Traverse, Query and
-// SimilaritySearch), CrosswalkService and, when cfg.Cleaning is set,
-// EdgeCleaningService on one listener. Graph writes stay with the NATS
+// SimilaritySearch), CrosswalkService and, when set, cfg.Cleaning's
+// EdgeCleaningService and cfg.Feedback's FeedbackService on one listener. Graph writes stay with the NATS
 // materializers, so every other GraphService RPC returns CodeUnimplemented.
 //
 // Every RPC requires mTLS (RequireAndVerifyClientCert); health checks use
@@ -81,6 +87,9 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 	mux.Handle(pbconnect.NewCrosswalkServiceHandler(cfg.Service, opts))
 	if cfg.Cleaning != nil {
 		mux.Handle(pbconnect.NewEdgeCleaningServiceHandler(cfg.Cleaning, opts))
+	}
+	if cfg.Feedback != nil {
+		mux.Handle(pbconnect.NewFeedbackServiceHandler(cfg.Feedback, opts))
 	}
 
 	lis, tlsCfg, err := rpcserver.Listen(ctx, cfg.Addr, cfg.TLS, "graph-server", tls.RequireAndVerifyClientCert)

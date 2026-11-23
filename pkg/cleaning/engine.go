@@ -59,6 +59,10 @@ var (
 	// after its changes were recorded. The recorded changes stand; Resume
 	// applies the rest. It is always returned inside a *ProjectionError.
 	ErrProjectionIncomplete = errors.New("the graph update stopped part-way")
+	// ErrVerdictJobNotFound marks a verdict key whose job is not one of the
+	// tenant's completed jobs. A job of another tenant gets the same error,
+	// so the message reveals nothing about other tenants.
+	ErrVerdictJobNotFound = errors.New("the verdict's job is not one of the tenant's completed jobs")
 )
 
 // resumeHint is the instruction every refusal over unprojected findings

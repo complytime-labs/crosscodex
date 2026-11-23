@@ -33,6 +33,16 @@ func (listFindingsCleaning) ListFindings(context.Context, *connect.Request[pb.Li
 	return connect.NewResponse(&pb.ListFindingsResponse{}), nil
 }
 
+// reviewQueueFeedback stands in for the feedback service the composition
+// root mounts; only GetReviewQueue answers, so a success proves the route.
+type reviewQueueFeedback struct {
+	crosscodexv1connect.UnimplementedFeedbackServiceHandler
+}
+
+func (reviewQueueFeedback) GetReviewQueue(context.Context, *connect.Request[pb.GetReviewQueueRequest]) (*connect.Response[pb.GetReviewQueueResponse], error) {
+	return connect.NewResponse(&pb.GetReviewQueueResponse{}), nil
+}
+
 const readOnlyRefusal = "graph writes go through materialization; this listener serves the gateway's read RPCs only"
 
 var _ = Describe("graph.Server", func() {
@@ -79,6 +89,7 @@ var _ = Describe("graph.Server", func() {
 			},
 			Service:           graph.New(g, nil, nil),
 			Cleaning:          listFindingsCleaning{},
+			Feedback:          reviewQueueFeedback{},
 			ServiceIdentities: identities,
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -248,6 +259,14 @@ var _ = Describe("graph.Server", func() {
 			_, err := cl.ListFindings(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
 		})
+
+		It("routes FeedbackService to the configured feedback handler", func() {
+			fb := crosscodexv1connect.NewFeedbackServiceClient(mtlsClient(), baseURL())
+			req := connect.NewRequest(&pb.GetReviewQueueRequest{TenantContext: tc})
+			asTenant(req.Header(), "")
+			_, err := fb.GetReviewQueue(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+		})
 	})
 
 	It("denies a valid client certificate that is not a service identity, leaving the graph unchanged", func() {
@@ -260,6 +279,16 @@ var _ = Describe("graph.Server", func() {
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodePermissionDenied))
 		Expect(err).To(MatchError(ContainSubstring("tls.service_identities")))
 		Expect(snapshot()).To(Equal(before))
+	})
+
+	It("denies FeedbackService to a valid client certificate that is not a service identity", func() {
+		serve([]authn.X509Match{{CN: "someone-else"}})
+		fb := crosscodexv1connect.NewFeedbackServiceClient(mtlsClient(), baseURL())
+		req := connect.NewRequest(&pb.GetReviewQueueRequest{TenantContext: tc})
+		asTenant(req.Header(), "")
+		_, err := fb.GetReviewQueue(ctx, req)
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodePermissionDenied))
+		Expect(err).To(MatchError(ContainSubstring("tls.service_identities")))
 	})
 
 	It("fails the TLS handshake for a client with no certificate", func() {

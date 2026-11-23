@@ -156,8 +156,17 @@ func NewUpserts(fs ...cleaning.StoredFinding) []cleaning.RunUpsert {
 //   - Decide: records the decision byte for byte and moves the finding to
 //     next with GraphApplied false; a stale state token, an unregistered or
 //     deleted reviewer, an unknown finding, a next for another finding or
-//     one Validate refuses, a policy decision and a run ID are refused with
+//     one Validate refuses, a policy or stale decision and a run ID are refused with
 //     the store unchanged;
+//   - MarkStale: records re-projection's stale decision byte for byte and
+//     marks the finding stale and projected, keeping its targets and edge
+//     IDs; a stale state token, an unknown finding, any other verdict or
+//     decider, a run ID, a decision Validate refuses and a decision ID
+//     already stored are refused with the store unchanged;
+//   - MarkReprojected: replaces a projected finding's edge IDs and nothing
+//     else, UpdatedAt included; a stale state token, an unknown finding and
+//     a finding with an outstanding graph change (cleaning.ErrUnprojected)
+//     are refused with the store unchanged;
 //   - ListFindings: paging returns every match once, in ID order; filters on
 //     signal, status and the unordered catalog pair; a one-sided pair or a
 //     non-positive page size is refused; Findings applies the scope the same
@@ -239,6 +248,13 @@ func FindingStoreContract(setup FindingStoreSetup) {
 				DecidedAt: contractTime.Add(time.Minute),
 			}
 		}
+		// staleDecision is the decision re-projection records when f's
+		// verdicts are gone from the graph.
+		staleDecision := func(id string, f cleaning.StoredFinding) cleaning.Decision {
+			d := decision(id, f, cleaning.VerdictStale)
+			d.DecidedBy = cleaning.DecidedByReproject
+			return d
+		}
 
 		ginkgo.Describe("tenant scope", func() {
 			var seeded cleaning.StoredFinding
@@ -273,6 +289,12 @@ func FindingStoreContract(setup FindingStoreSetup) {
 					next := seeded
 					next.Status = cleaning.StatusDismissed
 					return store.Decide(ctx, t, decision("d-scope", seeded, cleaning.VerdictDismiss), cleaning.StateToken(seeded), next)
+				},
+				"MarkReprojected": func(ctx context.Context, t string) error {
+					return store.MarkReprojected(ctx, t, seeded.ID, cleaning.StateToken(seeded), []string{"x"})
+				},
+				"MarkStale": func(ctx context.Context, t string) error {
+					return store.MarkStale(ctx, t, staleDecision("d-scope", seeded), cleaning.StateToken(seeded))
 				},
 				"Unprojected": func(ctx context.Context, t string) error { _, err := store.Unprojected(ctx, t); return err },
 				"MarkProjected": func(ctx context.Context, t string) error {
@@ -514,6 +536,8 @@ func FindingStoreContract(setup FindingStoreSetup) {
 					errContaining("which is not stored")),
 				ginkgo.Entry("a decision with an unknown verdict", func(w *cleaning.RunWrite) { w.Decisions[0].Verdict = "bogus" },
 					errContaining(`unknown verdict "bogus"`)),
+				ginkgo.Entry("a policy decision with the stale verdict", func(w *cleaning.RunWrite) { w.Decisions[0].Verdict = cleaning.VerdictStale },
+					gomega.And(errContaining("only re-projection records"), errContaining("nothing was written"))),
 				ginkgo.Entry("a decision ID already stored", func(w *cleaning.RunWrite) { w.Decisions[0].ID = "d-0" },
 					errContaining("already recorded")),
 				ginkgo.Entry("a decision without a request", func(w *cleaning.RunWrite) { w.Decisions[0].Request = nil },
@@ -647,6 +671,14 @@ func FindingStoreContract(setup FindingStoreSetup) {
 						d.DecidedBy = cleaning.DecidedByPolicy
 					},
 					errContaining("policy decisions are recorded only by ApplyRun")),
+				ginkgo.Entry("a re-projection's stale decision",
+					func(d *cleaning.Decision, _ *string, _ *cleaning.StoredFinding) {
+						d.Verdict, d.DecidedBy = cleaning.VerdictStale, cleaning.DecidedByReproject
+					},
+					errContaining("stale decisions are recorded only by MarkStale")),
+				ginkgo.Entry("a reviewer's stale verdict",
+					func(d *cleaning.Decision, _ *string, _ *cleaning.StoredFinding) { d.Verdict = cleaning.VerdictStale },
+					gomega.And(errContaining("only re-projection records"), errContaining("nothing was written"))),
 				ginkgo.Entry("a reviewer's decision carrying a run ID",
 					func(d *cleaning.Decision, _ *string, _ *cleaning.StoredFinding) { d.RunID = "run-1" },
 					errContaining("run ID")),
@@ -655,6 +687,117 @@ func FindingStoreContract(setup FindingStoreSetup) {
 						n.Targets = []cleaning.VerdictKey{{JobID: "j", SourceID: "", TargetID: "t"}}
 					},
 					gomega.And(gomega.MatchError(cleaning.ErrInvalidVerdictKey), errContaining("nothing was written"))),
+			)
+		})
+
+		ginkgo.Describe("MarkStale", func() {
+			var f cleaning.StoredFinding
+
+			ginkgo.BeforeEach(func() {
+				f = ContractFinding(1, cleaning.SignalConflictsWith, cleaning.StatusRetired, "cat-x", "cat-y")
+				apply(ctxA, tenA, f)
+			})
+
+			ginkgo.It("records the decision byte for byte and marks the finding stale, projected, with its targets and edges", func() {
+				d := staleDecision("d-1", f)
+				gomega.Expect(store.MarkStale(ctxA, tenA, d, cleaning.StateToken(f))).To(gomega.Succeed())
+				got, ds := get(f.ID)
+				want := f
+				want.Status = cleaning.StatusStale
+				gomega.Expect(withoutStamp(got)).To(gomega.Equal(want))
+				gomega.Expect(ds).To(gomega.Equal([]cleaning.Decision{d}))
+				un, err := store.Unprojected(ctxA, tenA)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(un).To(gomega.BeEmpty())
+			})
+
+			ginkgo.It("lists the finding under the stale status filter", func() {
+				gomega.Expect(store.MarkStale(ctxA, tenA, staleDecision("d-1", f), cleaning.StateToken(f))).To(gomega.Succeed())
+				page, _, err := store.ListFindings(ctxA, tenA, cleaning.FindingFilter{Status: cleaning.StatusStale, PageSize: 10})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(ids(page)).To(gomega.Equal([]string{f.ID}))
+			})
+
+			ginkgo.DescribeTable("refuses the marking and changes nothing",
+				func(mutate func(d *cleaning.Decision, expect *string), want gomegatypes.GomegaMatcher) {
+					d, expect := staleDecision("d-1", f), cleaning.StateToken(f)
+					mutate(&d, &expect)
+					gomega.Expect(store.MarkStale(ctxA, tenA, d, expect)).To(want)
+					got, ds := get(f.ID)
+					gomega.Expect(withoutStamp(got)).To(gomega.Equal(f))
+					gomega.Expect(ds).To(gomega.BeEmpty())
+				},
+				ginkgo.Entry("a finding that changed since it was read",
+					func(_ *cleaning.Decision, expect *string) { *expect = "stale-token" },
+					gomega.And(gomega.MatchError(cleaning.ErrStateChanged), errContaining("nothing was recorded"))),
+				ginkgo.Entry("an unknown finding",
+					func(d *cleaning.Decision, _ *string) { d.FindingID = "unknown" },
+					gomega.MatchError(cleaning.ErrFindingNotFound)),
+				ginkgo.Entry("a reviewer's retire",
+					func(d *cleaning.Decision, _ *string) { d.Verdict, d.DecidedBy = cleaning.VerdictRetire, reviewer },
+					gomega.And(errContaining("MarkStale records only re-projection's"), errContaining("nothing was written"))),
+				ginkgo.Entry("a stale verdict decided by a reviewer",
+					func(d *cleaning.Decision, _ *string) { d.DecidedBy = reviewer },
+					gomega.And(errContaining("MarkStale records only re-projection's"), errContaining("nothing was written"))),
+				ginkgo.Entry("a run ID",
+					func(d *cleaning.Decision, _ *string) { d.RunID = "run-1" },
+					errContaining("run ID")),
+				ginkgo.Entry("a decision without an attestation",
+					func(d *cleaning.Decision, _ *string) { d.Attestation = nil },
+					errContaining("request and attestation")),
+			)
+
+			ginkgo.It("refuses a decision ID already stored and changes nothing", func() {
+				gomega.Expect(store.MarkStale(ctxA, tenA, staleDecision("d-1", f), cleaning.StateToken(f))).To(gomega.Succeed())
+				marked, ds := get(f.ID)
+				gomega.Expect(store.MarkStale(ctxA, tenA, staleDecision("d-1", f), cleaning.StateToken(marked))).
+					To(errContaining("already recorded"))
+				again, after := get(f.ID)
+				gomega.Expect(withoutStamp(again)).To(gomega.Equal(withoutStamp(marked)))
+				gomega.Expect(after).To(gomega.Equal(ds))
+			})
+		})
+
+		ginkgo.Describe("MarkReprojected", func() {
+			var f cleaning.StoredFinding
+
+			ginkgo.BeforeEach(func() {
+				f = ContractFinding(1, cleaning.SignalConflictsWith, cleaning.StatusRetired, "cat-x", "cat-y")
+				apply(ctxA, tenA, f)
+			})
+
+			ginkgo.It("replaces the edge IDs and keeps every other field, UpdatedAt included", func() {
+				stored, _ := get(f.ID)
+				gomega.Expect(store.MarkReprojected(ctxA, tenA, f.ID, cleaning.StateToken(f), []string{"edge-rebuilt"})).To(gomega.Succeed())
+				got, ds := get(f.ID)
+				want := stored
+				want.EdgeIDs = []string{"edge-rebuilt"}
+				gomega.Expect(got).To(gomega.Equal(want))
+				gomega.Expect(ds).To(gomega.BeEmpty())
+			})
+
+			ginkgo.It("refuses a finding with an outstanding graph change and changes nothing", func() {
+				waiting := ContractFinding(2, cleaning.SignalConflictsWith, cleaning.StatusRetired, "cat-x", "cat-y")
+				waiting.GraphApplied = false
+				apply(ctxA, tenA, waiting)
+				err := store.MarkReprojected(ctxA, tenA, waiting.ID, cleaning.StateToken(waiting), []string{"edge-rebuilt"})
+				gomega.Expect(err).To(gomega.And(gomega.MatchError(cleaning.ErrUnprojected), errContaining("--resume")))
+				got, _ := get(waiting.ID)
+				gomega.Expect(withoutStamp(got)).To(gomega.Equal(waiting))
+			})
+
+			ginkgo.DescribeTable("refuses the write and changes nothing",
+				func(id, expect func() string, want gomegatypes.GomegaMatcher) {
+					gomega.Expect(store.MarkReprojected(ctxA, tenA, id(), expect(), []string{"edge-rebuilt"})).To(want)
+					got, _ := get(f.ID)
+					gomega.Expect(withoutStamp(got)).To(gomega.Equal(f))
+				},
+				ginkgo.Entry("a finding that changed since it was read",
+					func() string { return f.ID }, func() string { return "stale-token" },
+					gomega.And(gomega.MatchError(cleaning.ErrStateChanged), errContaining("nothing was recorded"))),
+				ginkgo.Entry("an unknown finding",
+					func() string { return "unknown" }, func() string { return cleaning.StateToken(f) },
+					gomega.MatchError(cleaning.ErrFindingNotFound)),
 			)
 		})
 

@@ -42,11 +42,21 @@ enum VoteType {
 
 message SubmitVoteRequest {
   TenantContext tenant_context = 1;
+  // Required. Must be one of job_id's mappings, else NotFound.
   string mapping_id = 2;
   VoteType vote_type = 3;
-  RelationshipType suggested_type = 4;  // If REFINE
+  // Required with, and only with, REFINE; never RELATIONSHIP_TYPE_UNSPECIFIED.
+  RelationshipType suggested_type = 4;
+  // Required except for AGREE; at most 4096 bytes. Valid UTF-8 without control
+  // characters other than newline and tab.
   string rationale = 5;
+  // At most 32 entries; keys at most 128 bytes, values at most 1024 bytes.
+  // Valid UTF-8 without control characters.
   map<string, string> evidence = 6;
+  // Required. The completed analysis job that owns mapping_id. NotFound for a
+  // job of another tenant or an unknown job; FailedPrecondition when the job
+  // is not completed.
+  string job_id = 7;
 }
 
 message SubmitVoteResponse {
@@ -108,7 +118,14 @@ enum ReviewQueueFilter {
 message GetReviewQueueRequest {
   TenantContext tenant_context = 1;
   ReviewQueueFilter filter = 2;
+  // Paging uses options.pagination only: page_size defaults to 50, at most
+  // 1000 (negative or larger is InvalidArgument); page_token is opaque.
+  // options.filters and options.sorts are not supported.
   ListOptions options = 3;
+  // Required. The completed analysis job whose mappings are queued, viable or
+  // not, ordered by (source, target). NotFound for a job of another tenant or
+  // an unknown job; FailedPrecondition when the job is not completed.
+  string job_id = 4;
 }
 
 message GetReviewQueueResponse {
@@ -135,14 +152,30 @@ message EscalateMappingResponse {
 
 message RecordDeterminationRequest {
   TenantContext tenant_context = 1;
+  // Required. Must be one of job_id's mappings, else NotFound.
   string mapping_id = 2;
+  // false retires the mapping's live edges (refused when it has none, when
+  // cleaning already retired it, or when it is already invalid); true after an
+  // invalid determination restores them, otherwise it only records.
   bool is_valid = 3;
+  // RELATIONSHIP_TYPE_UNSPECIFIED or the mapping's own type. Changing the type
+  // is refused: record is_valid=false and re-run the analysis.
   RelationshipType final_type = 4;
+  // Required (not blank); at most 4096 bytes. Valid UTF-8 without control
+  // characters other than newline and tab.
   string determination_rationale = 5;
+  // At most 32 entries; keys at most 128 bytes, values at most 1024 bytes.
+  // Valid UTF-8 without control characters.
   map<string, string> evidence = 6;
+  // Required. The completed analysis job that owns mapping_id. NotFound for a
+  // job of another tenant or an unknown job; FailedPrecondition when the job
+  // is not completed.
+  string job_id = 7;
 }
 
 message RecordDeterminationResponse {
   string determination_id = 1;
   bool graph_updated = 2;
+  // The mapping's status after this determination: "valid" or "invalid".
+  string mapping_status = 3;
 }

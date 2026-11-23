@@ -3,6 +3,7 @@ syntax = "proto3";
 package crosscodex.v1;
 
 import "crosscodex/v1/common.proto";
+import "google/protobuf/timestamp.proto";
 
 // protolint:disable:next MAX_LINE_LENGTH
 option go_package = "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1;crosscodexv1";
@@ -132,6 +133,28 @@ message ControlMapping {
   // SYNTHESIZED mappings, for jobs that did not run the critique stage, and
   // for a pair the critique produced no result for (kept unreviewed).
   MappingCritique critique = 11;
+  // The latest cleaning finding or reviewer determination that changed this
+  // mapping. Unset: no cleaning or feedback change applies. mapping_id always
+  // names the same verdict, whatever the state.
+  MappingCleaning cleaning = 12;
+}
+
+// MappingCleaning says how cleaning or a reviewer determination changed one
+// mapping. When several decisions apply, the latest wins (changed_at, then
+// source, then ref_id).
+message MappingCleaning {
+  // "retired" (taken out of the graph), "restored" (put back), or "stale" (the
+  // graph was rebuilt from newer jobs and no longer holds this verdict).
+  string state = 1;
+  // "finding" (a cleaning finding) or "determination" (a reviewer's).
+  string source = 2;
+  // ID of the finding or determination named by source.
+  string ref_id = 3;
+  // When the decision took effect.
+  google.protobuf.Timestamp changed_at = 4;
+  // true when the graph reflects the state; false while the projection is
+  // outstanding.
+  bool graph_applied = 5;
 }
 
 // MappingCritique is the critique panel's review of one relationship verdict.

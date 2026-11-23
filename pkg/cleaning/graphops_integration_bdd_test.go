@@ -169,4 +169,13 @@ var _ = Describe("Graph retire and restore against AGE", Ordered, func() {
 		Expect(err).To(MatchError(ContainSubstring(`edge "e1"`)))
 		Expect(err).To(MatchError(ContainSubstring("superseded at 2026-02-01T00:00:00Z")))
 	})
+
+	It("finds a verdict present through its superseded edge only, and another job's verdict gone", func() {
+		retire([]string{"e1"}, retireAt)
+		j1 := cleaning.VerdictKey{JobID: "j1", SourceID: "a1", TargetID: "b1"}
+		j2 := cleaning.VerdictKey{JobID: "j2", SourceID: "a1", TargetID: "b1"}
+		got, err := cleaning.PresentVerdicts(ctx, g, tenant, []cleaning.VerdictKey{j1, j2})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal(map[cleaning.VerdictKey]bool{j1: true, j2: false}))
+	})
 })

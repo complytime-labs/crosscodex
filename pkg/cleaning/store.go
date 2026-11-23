@@ -57,19 +57,28 @@ const (
 	VerdictRetire  = "retire"
 	VerdictDismiss = "dismiss"
 	VerdictRestore = "restore"
+	// VerdictStale is recorded only by re-projection (Engine.Reproject),
+	// always with DecidedByReproject, when a finding's verdicts are gone
+	// from a rebuilt graph. No reviewer can decide it.
+	VerdictStale = "stale"
 )
 
-// DecidedByPolicy is Decision.DecidedBy for a decision a cleaning run's
-// policy made; a reviewer's decision holds the reviewer ID instead.
-const DecidedByPolicy = "policy"
+const (
+	// DecidedByPolicy is Decision.DecidedBy for a decision a cleaning run's
+	// policy made; a reviewer's decision holds the reviewer ID instead.
+	DecidedByPolicy = "policy"
+	// DecidedByReproject is Decision.DecidedBy for re-projection's
+	// VerdictStale decision, and for no other.
+	DecidedByReproject = "reproject"
+)
 
 // Decision is one append-only edge_finding_decisions row.
 type Decision struct {
 	// ID is the hex SHA-256 of Request, the canonical request.
 	ID        string
 	FindingID string
-	Verdict   string // VerdictRetire, VerdictDismiss or VerdictRestore
-	// DecidedBy is DecidedByPolicy or a reviewer ID. RunID is the plan token
+	Verdict   string // VerdictRetire, VerdictDismiss, VerdictRestore or VerdictStale
+	// DecidedBy is DecidedByPolicy, DecidedByReproject or a reviewer ID. RunID is the plan token
 	// of the run that made a policy decision, empty for a reviewer's.
 	DecidedBy, RunID, Rationale string
 	// Request and Attestation are stored and returned byte for byte.
@@ -216,8 +225,23 @@ type FindingStore interface {
 	// next's Status, Targets and EdgeIDs with GraphApplied false; next.ID
 	// must equal d.FindingID and next must pass StoredFinding.Validate. d
 	// must pass Decision.Validate and be a reviewer's: DecidedBy is not
-	// DecidedByPolicy and RunID is empty.
+	// DecidedByPolicy or DecidedByReproject and RunID is empty.
 	Decide(ctx context.Context, tenantID string, d Decision, expectState string, next StoredFinding) error
+	// MarkStale records re-projection's decision d and moves the finding
+	// d.FindingID to StatusStale, keeping its Targets and EdgeIDs, with
+	// GraphApplied true: the graph holds nothing left to change. d must pass
+	// Decision.Validate and be VerdictStale by DecidedByReproject without a
+	// RunID. The finding must still have the state token expectState (else
+	// ErrStateChanged), checked under a row lock.
+	MarkStale(ctx context.Context, tenantID string, d Decision, expectState string) error
+	// MarkReprojected replaces a projected finding's EdgeIDs with edgeIDs
+	// and changes nothing else, UpdatedAt included: the finding's state and
+	// its latest change are unchanged, only the graph's edge IDs for it are.
+	// The finding must still have the state token expectState (else
+	// ErrStateChanged) and GraphApplied true (else ErrUnprojected), both
+	// checked under a row lock, so a decision recorded since re-projection
+	// read the finding is never overwritten.
+	MarkReprojected(ctx context.Context, tenantID, findingID, expectState string, edgeIDs []string) error
 	// Unprojected returns the findings whose graph changes are not applied,
 	// sorted by ID.
 	Unprojected(ctx context.Context, tenantID string) ([]StoredFinding, error)
@@ -238,7 +262,7 @@ func checkPair(source, target string) error {
 }
 
 // statuses are the Status values a finding may have.
-var statuses = []Status{StatusReported, StatusPending, StatusRetired, StatusDismissed, StatusRestored, StatusCleared}
+var statuses = []Status{StatusReported, StatusPending, StatusRetired, StatusDismissed, StatusRestored, StatusCleared, StatusStale}
 
 // Statuses returns every Status a finding may have.
 func Statuses() []Status { return slices.Clone(statuses) }
@@ -334,11 +358,16 @@ func checkStoredSize(f StoredFinding, listRemedy string) error {
 
 // Validate reports whether a store may record d: a known verdict, a request
 // and an attestation, and consistent provenance: a policy decision carries
-// the run ID that made it and a reviewer's decision carries none.
+// the run ID that made it and any other carries none, and VerdictStale is
+// decided by DecidedByReproject, which decides nothing else.
 func (d Decision) Validate() error {
-	if !slices.Contains([]string{VerdictRetire, VerdictDismiss, VerdictRestore}, d.Verdict) {
-		return fmt.Errorf("decision %s: unknown verdict %q; use %q, %q or %q; nothing was written",
-			d.ID, d.Verdict, VerdictRetire, VerdictDismiss, VerdictRestore)
+	if !slices.Contains([]string{VerdictRetire, VerdictDismiss, VerdictRestore, VerdictStale}, d.Verdict) {
+		return fmt.Errorf("decision %s: unknown verdict %q; use %q, %q, %q or %q; nothing was written",
+			d.ID, d.Verdict, VerdictRetire, VerdictDismiss, VerdictRestore, VerdictStale)
+	}
+	if (d.Verdict == VerdictStale) != (d.DecidedBy == DecidedByReproject) {
+		return fmt.Errorf("decision %s: verdict %q decided by %q: only re-projection records a %q decision, always as %q, and it records no other verdict; nothing was written",
+			d.ID, d.Verdict, d.DecidedBy, VerdictStale, DecidedByReproject)
 	}
 	if d.Request == nil || d.Attestation == nil {
 		return fmt.Errorf("decision %s: request and attestation are required so the decision can be verified later; nothing was written", d.ID)

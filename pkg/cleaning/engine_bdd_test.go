@@ -313,7 +313,7 @@ var _ = Describe("Engine", func() {
 			_, err := eng.Preview(ctx, engTenant, cleaning.Scope{})
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring(`stored finding ` + row.ID + ` has unknown status "archived", so the run was refused and nothing was written`))
-			Expect(err.Error()).To(ContainSubstring("set its status back to one of reported, pending, retired, dismissed, restored or cleared"))
+			Expect(err.Error()).To(ContainSubstring("set its status back to one of reported, pending, retired, dismissed, restored, cleared or stale"))
 			Expect(snap()).To(Equal(before))
 		})
 	})
