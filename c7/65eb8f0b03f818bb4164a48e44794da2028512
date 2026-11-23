@@ -1,0 +1,48 @@
+deploy/compose.offline-praxis.yaml
+  s_f49d97586243d8::t_8f498660ff79d2 2-3,13,47-48
+  s_f49d97586243d8::t_96698c45e1618c 50
+.taskfiles/deploy.yml
+  s_f49d97586243d8::t_6c57ad689a79ef 577-653
+  s_f49d97586243d8::t_26e4aae0edf891 116-133
+deploy/README.md
+  s_f49d97586243d8::t_da09281deaa404 297-305,307-335
+  s_f49d97586243d8::t_786c355ae5e74c 306
+deploy/compose.offline.yaml
+  s_f49d97586243d8::t_8f498660ff79d2 1-2,13,50-52
+  s_f49d97586243d8::t_96698c45e1618c 54
+README.md
+  s_f49d97586243d8::t_c49b580c7d825d 323,398-415
+  s_f49d97586243d8::t_91e3002eadd036 416
+deploy/local_up.sh
+  s_f49d97586243d8::t_33e2c03a438f81 14-15
+  s_f49d97586243d8::t_20058501fe94e0 178-180
+test/tooling/deploy-local.venom.yml
+  s_f49d97586243d8::t_5349f12622e670 1-43,45-64,66-74,76-80
+  s_f49d97586243d8::t_fef0f7e2d14bd0 44,75
+  s_f49d97586243d8::t_688d0841078e10 65
+deploy/compose.offline-remote.yaml
+  s_f49d97586243d8::t_8f498660ff79d2 1,3,6,11,22,29-30
+  s_f49d97586243d8::t_96698c45e1618c 32
+docs/dev/podman-dev-container.md
+  s_f49d97586243d8::t_786c355ae5e74c 57
+.gitignore
+  s_f49d97586243d8::t_83ee4fafaa089c 39-40
+test/tooling/lib/deploy-local.sh
+  s_f49d97586243d8::t_63984abdacda79 1-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "c765eb8f0b03f818bb4164a48e44794da2028512",
+  "prompts": {},
+  "sessions": {
+    "s_f49d97586243d8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4248c1a8-b4c1-4738-9359-f790bfdddf78",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
