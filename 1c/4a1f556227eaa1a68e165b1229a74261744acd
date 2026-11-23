@@ -1,0 +1,34 @@
+internal/testcerts/ensure_bdd_test.go
+  s_ae096a3447705c::t_8c7616e997c80f 410-420
+  s_9e08bdb58f24e8::t_4b1ca28cda6d63 115,138,338
+internal/testcerts/services_bdd_test.go
+  s_ae096a3447705c::t_8da4d6b0fd56f8 1-300
+internal/testcerts/ensure.go
+  s_ae096a3447705c::t_f0dc255785ae69 22-23,29-31,186-187,193-195
+internal/testcerts/testcerts.go
+  s_ae096a3447705c::t_fa4dd1d0f2b3d1 24,26,30,39-41,45-46,49-92,100-102,109,125-184,186-188,195,199-211,213-217,222,228-239,266-272,284-285,303-307,326,330-331,334-335,363-475,478-479,481,484,489,491,584-586,588-594,596-597,599
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "1c4a1f556227eaa1a68e165b1229a74261744acd",
+  "prompts": {},
+  "sessions": {
+    "s_9e08bdb58f24e8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a98aa8e3df6e9f7a5",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_ae096a3447705c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d343a774-062d-4869-8667-9110cd18e5a4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
