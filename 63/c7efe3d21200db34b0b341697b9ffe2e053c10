@@ -1,0 +1,21 @@
+test/tooling/deploy-down-volumes.venom.yml
+  s_69378f43942eab::t_483e3d7ac8d43a 21-22
+test/tooling/deploy-local.venom.yml
+  s_69378f43942eab::t_483e3d7ac8d43a 11-12,45-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "63c7efe3d21200db34b0b341697b9ffe2e053c10",
+  "prompts": {},
+  "sessions": {
+    "s_69378f43942eab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0b85eeb6-dff6-428c-9e5b-9aefbb79e42a",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
