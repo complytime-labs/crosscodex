@@ -34,4 +34,21 @@ var _ = Describe("page cursor", func() {
 		Entry("non-string element", base64.RawURLEncoding.EncodeToString([]byte(`["a","b",3]`))),
 		Entry("oversized", strings.Repeat("A", 8193)),
 	)
+	DescribeTable("rejects decoded payloads that are not valid UTF-8",
+		func(payload string) {
+			_, err := results.DecodeCursor(base64.RawURLEncoding.EncodeToString([]byte(payload)))
+			Expect(err).To(MatchError(results.ErrInvalidPageToken))
+			Expect(err.Error()).To(ContainSubstring("pass the next_page_token from the previous response unchanged"))
+		},
+		Entry("invalid byte in the job ID", "[\"\xbe\",\"s\",\"t\"]"),
+		Entry("invalid byte in the source ID", "[\"j\",\"\xbe\",\"t\"]"),
+		Entry("invalid byte in the target ID", "[\"j\",\"s\",\"\xbe\"]"),
+	)
+	It("still round-trips a valid non-ASCII token", func() {
+		token := results.EncodeCursor(results.Cursor{JobID: "j", SourceID: "\u03f0", TargetID: "t"})
+		got, err := results.DecodeCursor(token)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.SourceID).To(Equal("\u03f0"))
+		Expect(results.EncodeCursor(*got)).To(Equal(token))
+	})
 })
