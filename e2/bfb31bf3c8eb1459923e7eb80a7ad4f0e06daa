@@ -1,0 +1,38 @@
+cmd/crosscodex/embedded.go
+  s_f49d97586243d8::t_ed5bf147d6f672 289-291
+pkg/oscal/oscal_mapping_bdd_test.go
+  s_f49d97586243d8::t_7c2f335487425f 267
+pkg/oscal/oscal_fuzz_test.go
+  s_f49d97586243d8::t_6b87f3afa147ed 6,9,153-196
+  s_f49d97586243d8::t_b8c553d55a323e 197-198
+docs/oscal-mapping-export.md
+  s_f49d97586243d8::t_37427ce77b1ae8 9,18,22
+pkg/oscal/mapping.go
+  s_f49d97586243d8::t_b59b362f25a6b9 332
+README.md
+  s_f49d97586243d8::t_37427ce77b1ae8 19,21-25
+  s_f49d97586243d8::t_6db0b38fbfb874 419
+cmd/crosscodex/results.go
+  s_f49d97586243d8::t_e4e883c5ecf7e3 393-397,400,410,435-450,574,779
+  s_f49d97586243d8::t_2504b6ea4d4061 552-563
+  s_f49d97586243d8::t_187f966316baa2 564
+cmd/crosscodex/results_bdd_test.go
+  s_f49d97586243d8::t_0aeba7e75e6504 996-1001,1236-1250
+  s_f49d97586243d8::t_e164946a8ca7b4 1251-1252
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "e2bfb31bf3c8eb1459923e7eb80a7ad4f0e06daa",
+  "prompts": {},
+  "sessions": {
+    "s_f49d97586243d8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4248c1a8-b4c1-4738-9359-f790bfdddf78",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
