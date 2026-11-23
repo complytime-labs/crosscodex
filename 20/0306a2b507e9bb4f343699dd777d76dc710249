@@ -1,0 +1,19 @@
+README.md
+  s_d71649c355d6c1::t_d108504e4afb87 419
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "200306a2b507e9bb4f343699dd777d76dc710249",
+  "prompts": {},
+  "sessions": {
+    "s_d71649c355d6c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e83b76bb-d094-4daf-8b74-cdc4614915d3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
