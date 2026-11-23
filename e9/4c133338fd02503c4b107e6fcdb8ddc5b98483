@@ -1,0 +1,22 @@
+internal/testcerts/services_bdd_test.go
+  s_1963e32741ee2b::t_ee697278725f22 257
+  s_1963e32741ee2b::t_aa40db7ca98892 253-254
+  s_1963e32741ee2b::t_f6a71e9b482092 58,70-72,220-244
+  s_1963e32741ee2b::t_c7146661685984 10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "e94c133338fd02503c4b107e6fcdb8ddc5b98483",
+  "prompts": {},
+  "sessions": {
+    "s_1963e32741ee2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e47dcf4a-928e-4704-9c9c-2ff40f46db28",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
