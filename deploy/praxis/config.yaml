@@ -2,7 +2,9 @@
 # (LLM_GATEWAY=praxis). Praxis terminates mTLS itself, so there is no stunnel
 # sidecar on this path. Validate edits with:
 #   podman run --rm -e OPENAI_API_KEY=x -v ./config.yaml:/etc/praxis/p.yaml:ro,z \
-#     -v <certs-dir>:/certs:ro,z <image> -t -c /etc/praxis/p.yaml
+#     -v <dir holding ca.pem, server.pem, server-key.pem>:/certs:ro,z <image> -t -c /etc/praxis/p.yaml
+# (the crosscodex-certs-praxis volume, or a directory with praxis.pem and
+# praxis-key.pem from deploy/certs copied there as server.pem and server-key.pem)
 #
 # Inbound auth is the client certificate alone (client_cert_mode: require).
 # Praxis has no stable bearer-key filter, so the CROSSCODEX_LLM_API_KEY the

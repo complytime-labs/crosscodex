@@ -312,6 +312,16 @@ Application code runs under a restricted database role, not the table owner. The
 - The daemon enforces this at startup: `pkg/db.CheckRestrictedRole` refuses a superuser, `BYPASSRLS`, table-owner or member-of-one connection, and the daemon never migrates. Schema changes and role passwords go through `crosscodexd migrate`, the only user of the owner DSN (`database.migration_dsn`).
 - Comment in the codebase WHY the restricted role exists, because the next person will be tempted to simplify by using the superuser for everything.
 
+### One Key per TLS Service
+
+Every TLS server in the deploy stack (`db`, `nats`, `litellm`, `praxis`, `crosscodexd`) has its own key and a certificate whose SANs name only that service. A service that held a shared key could impersonate every other holder to a client whose traffic it can redirect (issue #298). The rules, and where each is enforced:
+
+- **Generation and verification** are `internal/testcerts` (`GenerateServices`, `VerifyOptions.Services`), driven by the `services` list in `deploy/certgen/gen.go`. Verification rejects a certificate with a SAN beyond its own service, a certificate that permits clientAuth, a key shared by two certificates, and the shared `server.pem` layout of earlier releases (`ErrSharedServerKey`). A set that fails is replaced whole by the next `deploy:certs`, so upgrades regenerate with no manual step; the cost (new CA, client certificate and attestation keypair) is stated in the error and in `deploy/README.md`.
+- **Volumes**: `certs:load` puts each service's certificate and key in its own volume under the in-container names `server.pem` and `server-key.pem`, so every service reads the same path. Its status check compares file contents as well as names, so another service's key under the right names is replaced.
+- **Smoke** (`test/deploy/smoke_up.sh`) asserts on a live stack: each volume holds exactly its files and its own key, no service container sees another's key, each volume is mounted only by its service, nats refuses every service certificate as a client cert, and each served certificate is valid for its own names and refused for every other service's (`test/deploy/tls_name_probe.py`). `test/tooling` exercises the same gates against stubs and local TLS servers, so a regression shows without a container runtime.
+- **Other PKIs.** `testcerts.Generate` and the embedded CLI PKI keep one shared server cert, since the process holding it is the same one that serves and verifies, but it is serverAuth-only so it never doubles as a client identity. Callers present `client.pem` as the client identity (`test/e2e/run-daemon.sh`, the daemon integration config).
+- **NATS authorization by client identity** is a separate question, deferred until per-role client certificates exist: [ADR 0002](adr/0002-nats-client-authorization.md).
+
 ### No Partial Success on Safety-Critical Operations
 
 When a batch operation (UPDATE, DELETE) touches rows with mixed protection states (some completed, some not), the entire statement must fail — not silently succeed for the unprotected rows. PostgreSQL's per-row BEFORE triggers provide this guarantee, but tests must verify it explicitly because it's the kind of behavior that breaks silently if someone refactors triggers into rules or policies.
