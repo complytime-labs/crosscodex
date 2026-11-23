@@ -1,0 +1,23 @@
+test/deploy/tls_name_probe.py
+  s_a0d9f239796bba::t_3f7d6afe1d2d9f 30-34,38,43-44,47,55,60-62,67-71
+  s_a0d9f239796bba::t_6037b0bf62e5ce 8-9
+test/tooling/lib/tls_probe_server.py
+  s_a0d9f239796bba::t_3f7d6afe1d2d9f 12-14,22,29
+  s_a0d9f239796bba::t_6037b0bf62e5ce 32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d5235f323dcc2983faac53064f73332ea83a477c",
+  "prompts": {},
+  "sessions": {
+    "s_a0d9f239796bba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d945d1b7-660a-42f2-a7e6-bbb0c0ea1d5c",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
