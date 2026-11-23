@@ -61,7 +61,7 @@ type runtime struct {
 	// retentionPurgePool is a dedicated purge_user pool built from
 	// config.Database.PurgeDSN for the retention Purger. It is nil when
 	// retention is not wired or when PurgeDSN is unset (in which case the
-	// Purger reuses the shared app pool and fails closed at the DB trigger).
+	// admin service refuses non-dry-run scans, see buildRetentionAdmin).
 	retentionPurgePool dbpkg.Pool
 }
 
@@ -565,9 +565,16 @@ func (disabledArchive) Stat(context.Context, string) (*storage.ObjectMetadata, e
 }
 func (disabledArchive) Close() error { return nil }
 
+// noPurgeDSNReason is the admin.WithoutPurge refusal for a daemon whose
+// retention wiring has no dedicated purge pool.
+const noPurgeDSNReason = "database.purge_dsn is unset, so this daemon cannot purge. " +
+	"Set database.purge_dsn to a role able to purge (purge_user), or rerun the scan with dry_run"
+
 // buildRetentionAdmin constructs the AdminService handler for role all and
 // the gateway role from wiring (see buildRetentionWiring, whose caller owns the purge_user
-// pool).
+// pool). Without a purge pool every scan that is not a dry run is refused up
+// front (admin.WithoutPurge): archiving would otherwise copy objects the DB
+// immutability trigger then refuses to purge.
 func buildRetentionAdmin(cfg *config.Config, shared *sharedResources, wiring retentionWiring) crosscodexv1connect.AdminServiceHandler {
 	driftSource := func(ctx context.Context) ([]retention.StreamDrift, error) {
 		configured := natsbus.ConfiguredAuditRetention(cfg.NATS.Streams)
@@ -577,7 +584,11 @@ func buildRetentionAdmin(cfg *config.Config, shared *sharedResources, wiring ret
 		}
 		return retention.VerifyStreamRetention(configured, live), nil
 	}
-	return admin.NewService(wiring.engineFor, wiring.defaultPolicy, wiring.holds, driftSource)
+	var opts []admin.ServiceOption
+	if wiring.purgePool == nil {
+		opts = append(opts, admin.WithoutPurge(noPurgeDSNReason))
+	}
+	return admin.NewService(wiring.engineFor, wiring.defaultPolicy, wiring.holds, driftSource, opts...)
 }
 
 // retentionWiring bundles the shared retention resources both the gateway
@@ -593,8 +604,8 @@ type retentionWiring struct {
 	// nil when PurgeDSN is unset, so retire fails closed.
 	retire *catalog.Retention
 	// purgePool is the dedicated purge_user pool (nil when PurgeDSN is unset, in
-	// which case the Purger reuses the app pool and fails closed at the DB
-	// immutability trigger). The caller owns it and must Close it.
+	// which case buildRetentionAdmin refuses non-dry-run scans up front). The
+	// caller owns it and must Close it.
 	purgePool dbpkg.Pool
 }
 
@@ -642,7 +653,7 @@ func buildRetentionWiring(ctx context.Context, cfg *config.Config, shared *share
 		purgePool = pool
 		purgeConn = pool
 	} else {
-		logger.Warn("database.purge_dsn is unset; retention purges will fail closed at the DB immutability trigger (configure purge_dsn as purge_user to enable purging)")
+		logger.Warn("database.purge_dsn is unset; non-dry-run retention scans are refused (configure purge_dsn as purge_user to enable purging)")
 	}
 
 	// tenantAppConn scopes the DBCollector and hold store to the tenant carried

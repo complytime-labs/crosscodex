@@ -25,6 +25,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/cleaning/cleaningtest"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	"github.com/complytime-labs/crosscodex/pkg/tenant/connectutil"
 	"github.com/complytime-labs/crosscodex/pkg/tlsconfig"
@@ -124,7 +125,8 @@ var _ = Describe("crosscodexd role=graph on a split stack", func() {
 		// An archive backend, but no database.purge_dsn: archiving works, so
 		// the purge itself is what the last step shows refused.
 		gwCfg.Retention.Archive.Backend = "local"
-		gwCfg.Retention.Archive.Local.Path = GinkgoT().TempDir()
+		archiveDir := GinkgoT().TempDir()
+		gwCfg.Retention.Archive.Local.Path = archiveDir
 		gwCfg.TLS.Targets = map[string]config.TLSOverride{
 			"gateway-server": {Cert: testTLSServerCertPath, Key: testTLSServerKeyPath},
 		}
@@ -296,7 +298,7 @@ var _ = Describe("crosscodexd role=graph on a split stack", func() {
 			tenantID, decided.Msg.GetDecisionId()).Scan(&decidedBy)).To(Succeed(), "read the stored decision")
 		Expect(decidedBy).To(Equal(graphITReviewerCN))
 
-		By("refusing to purge an expired job on the gateway role, which has no database.purge_dsn, and keeping it")
+		By("refusing to purge an expired job up front on the gateway role, which has no database.purge_dsn, and keeping it")
 		// Last, because a seeded completed job without stages would be read by
 		// the cleaning steps above. jobs' RLS also matches created_by to the
 		// caller, so the job is created by whoever created the one submitted above.
@@ -317,15 +319,49 @@ var _ = Describe("crosscodexd role=graph on a split stack", func() {
 			TenantContext: tenantCtx, Policy: expiredPolicy, DryRun: true}))
 		Expect(err).NotTo(HaveOccurred(), "ApplyRetentionPolicy dry run")
 		Expect(retentionPreview.Msg.GetReport().GetScanned()).To(BeEquivalentTo(1), "only the seeded job is expired: %v", retentionPreview.Msg.GetReport())
-		purge, err := adminService.ApplyRetentionPolicy(ctx, connect.NewRequest(&pb.ApplyRetentionPolicyRequest{
+		_, err = adminService.ApplyRetentionPolicy(ctx, connect.NewRequest(&pb.ApplyRetentionPolicyRequest{
 			TenantContext: tenantCtx, Policy: expiredPolicy, DryRun: false}))
-		// The engine reports a failed archive or purge in the report, not as an RPC error.
-		Expect(err).NotTo(HaveOccurred(), "ApplyRetentionPolicy")
-		Expect(purge.Msg.GetReport().GetArchived()).To(BeEquivalentTo(1), "the archive step ran: %v", purge.Msg.GetReport())
-		Expect(purge.Msg.GetReport().GetPurged()).To(BeZero(), "nothing was purged")
-		Expect(purge.Msg.GetReport().GetErrors()).To(ConsistOf(SatisfyAll(
-			ContainSubstring("retention engine: purge "+expiredJob), ContainSubstring("permission denied"))),
-			"the DB refuses app_user's delete, naming the job")
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition), "ApplyRetentionPolicy: %v", err)
+		Expect(err).To(MatchError(ContainSubstring("database.purge_dsn is unset")))
 		Expect(jobRows()).To(Equal(1), "the refused purge kept the job")
+		// The archive provider creates its own root directory at startup, so
+		// look for archived files rather than for an empty directory.
+		var archived []string
+		Expect(filepath.WalkDir(archiveDir, func(path string, d os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if d.Type().IsRegular() {
+				archived = append(archived, path)
+			}
+			return nil
+		})).To(Succeed(), "walk the archive directory")
+		Expect(archived).To(BeEmpty(), "the refusal came before archiving, so no orphaned archive copy exists")
+
+		By("purging the job on a second gateway role with database.purge_dsn set to purge_user, then closing its purge pool")
+		purgePassword, err := dbtest.RolePassword(dbtest.PurgeUserPasswordEnv)
+		Expect(err).NotTo(HaveOccurred(), "purge_user password")
+		purgeCfg := *gwCfg
+		purgeCfg.Database.PurgeDSN, err = dbtest.RoleDSN(dsn, "purge_user", purgePassword)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(migrateDatabase(ctx, &purgeCfg, GinkgoWriter)).To(Succeed(), "set purge_user's password")
+		purgeGwRT, err := bootstrap(ctx, &purgeCfg)
+		Expect(err).NotTo(HaveOccurred(), "bootstrap gateway role with purge_dsn")
+		defer purgeGwRT.close()
+		Expect(purgeGwRT.start(ctx)).To(Succeed(), "start gateway role with purge_dsn")
+		defer func() { _ = purgeGwRT.stop(context.Background()) }()
+		Expect(purgeGwRT.retentionPurgePool).NotTo(BeNil(), "the gateway role builds the dedicated purge pool")
+
+		purgeAdmin := crosscodexv1connect.NewAdminServiceClient(adminHTTP, "https://"+purgeGwRT.gatewayServer.Addr())
+		purge, err := purgeAdmin.ApplyRetentionPolicy(ctx, connect.NewRequest(&pb.ApplyRetentionPolicyRequest{
+			TenantContext: tenantCtx, Policy: expiredPolicy, DryRun: false}))
+		Expect(err).NotTo(HaveOccurred(), "ApplyRetentionPolicy with purge_dsn")
+		Expect(purge.Msg.GetReport().GetErrors()).To(BeEmpty())
+		Expect(purge.Msg.GetReport().GetPurged()).To(BeEquivalentTo(1), "the expired job was purged: %v", purge.Msg.GetReport())
+		Expect(jobRows()).To(BeZero(), "purge_user deleted the job")
+
+		Expect(purgeGwRT.stop(context.Background())).To(Succeed())
+		purgeGwRT.close()
+		Expect(purgeGwRT.retentionPurgePool.Exec(ctx, "SELECT 1")).NotTo(Succeed(), "close released the purge pool")
 	})
 })
