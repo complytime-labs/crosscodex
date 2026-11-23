@@ -19,14 +19,16 @@ type EnsureOptions struct {
 	// Generate mints a new PKI when the existing set fails verification.
 	Generate func() (*PKI, error)
 	// WriteExtra, if set, writes caller-owned files (checked by
-	// Verify.VerifyExtra) into the staging directory. Ensure fsyncs them.
+	// Verify.VerifyExtra) into the staging directory. Ensure fsyncs them, and
+	// any *.pem among them is covered by the fingerprint.
 	WriteExtra func(dir string) error
 	// DirMode is the permission of the installed directory. Zero means 0o755.
 	DirMode os.FileMode
 	// KeepUnmanaged protects sets Ensure did not generate: a non-empty dir
 	// without .fingerprint (which only Ensure writes) is verified against
-	// Verify, minus the fingerprint and MinRemaining (Ensure cannot renew
-	// it), and kept, never replaced. If it fails verification Ensure returns
+	// Verify, minus the fingerprint, MinRemaining (Ensure cannot renew it) and
+	// ServerAuthOnly (the supplier's certificate policy, not Ensure's), and
+	// kept, never replaced. If it fails verification Ensure returns
 	// an error wrapping ErrUnmanagedDir.
 	KeepUnmanaged bool
 }
@@ -79,6 +81,7 @@ func Ensure(dir string, opts EnsureOptions) (bool, error) {
 			verify := opts.Verify
 			verify.RequireFingerprint = false
 			verify.MinRemaining = 0
+			verify.ServerAuthOnly = false
 			if err := verifyDir(dir, verify); err != nil {
 				return false, fmt.Errorf("%w: %s has no %s, so it is treated as supplied by you and never replaced: %w; fix the certificates, or remove the directory to have a new set generated",
 					ErrUnmanagedDir, dir, fingerprintFile, err)
@@ -181,13 +184,15 @@ func populate(staging string, opts EnsureOptions) error {
 	if err := p.WriteToDir(staging); err != nil {
 		return err
 	}
-	if err := WriteFingerprint(staging); err != nil {
-		return fmt.Errorf("write fingerprint: %w", err)
-	}
+	// Extra files go in before the fingerprint so it covers them: a changed
+	// attestation key then changes the fingerprint consumers compare.
 	if opts.WriteExtra != nil {
 		if err := opts.WriteExtra(staging); err != nil {
 			return err
 		}
+	}
+	if err := WriteFingerprint(staging); err != nil {
+		return fmt.Errorf("write fingerprint: %w", err)
 	}
 	if err := syncDir(staging); err != nil {
 		return err
