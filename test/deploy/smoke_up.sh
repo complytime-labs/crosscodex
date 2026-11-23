@@ -177,8 +177,10 @@ image="crosscodex-db:${TAG:-latest}"
 volume_files() {
 	"${engine}" run --rm --entrypoint sh -v "$1:/v:ro,z" "${image}" -c 'LC_ALL=C ls -A /v | tr "\n" " "'
 }
+# Keys are 0640 root:10001 (certs:load) and the db image runs as uid 999, so
+# the hash needs the cert group, as each service gets it through group_add.
 volume_digest() {
-	"${engine}" run --rm --entrypoint sha256sum -v "$1:/v:ro,z" "${image}" "/v/$2" | cut -d' ' -f1
+	"${engine}" run --rm --group-add 10001 --entrypoint sha256sum -v "$1:/v:ro,z" "${image}" "/v/$2" | cut -d' ' -f1
 }
 host_digest() {
 	sha256sum "${CERTS_DIR}/$1" | cut -d' ' -f1
