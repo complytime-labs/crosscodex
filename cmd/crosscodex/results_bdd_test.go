@@ -27,14 +27,22 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 )
 
-// fakeMappingsClient serves ListJobMappings from a queue of pages and
-// records every request; other GatewayServiceClient methods panic through
+// fakeMappingsClient serves ListJobMappings from a queue of pages and GetJob
+// from job, and records every request; other GatewayServiceClient methods panic through
 // the nil embed.
 type fakeMappingsClient struct {
 	crosscodexv1connect.GatewayServiceClient
 	pages []*pb.ListJobMappingsResponse
 	err   error
 	calls []*pb.ListJobMappingsRequest
+	// job is served by GetJob; jobRequests records each GetJob request.
+	job         *pb.PipelineJob
+	jobRequests []*pb.GetJobRequest
+}
+
+func (f *fakeMappingsClient) GetJob(_ context.Context, req *connectrpc.Request[pb.GetJobRequest]) (*connectrpc.Response[pb.GetJobResponse], error) {
+	f.jobRequests = append(f.jobRequests, req.Msg)
+	return connectrpc.NewResponse(&pb.GetJobResponse{Job: f.job}), nil
 }
 
 func (f *fakeMappingsClient) ListJobMappings(_ context.Context, req *connectrpc.Request[pb.ListJobMappingsRequest]) (*connectrpc.Response[pb.ListJobMappingsResponse], error) {
@@ -985,6 +993,12 @@ var _ = Describe("results candidates", func() {
 		Expect(fake.calls[0].GetControlId()).To(Equal("AC-1"))
 	})
 
+	It("sends the trimmed --control, as export does", func() {
+		_, err := run("job-1", "--control", " AC-1 ")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(fake.calls[0].GetControlId()).To(Equal("AC-1"))
+	})
+
 	It("exports CSV with generators joined by semicolons and catalog IDs made spreadsheet-safe", func() {
 		fake.pages = []*pb.ListJobCandidatesResponse{
 			candidatesPage("", nil, candidate("-AC-1", "t-1", 0.5, "bm25", "dense"), candidate("a", "b", 0.25)),
@@ -1026,5 +1040,273 @@ var _ = Describe("results candidates", func() {
 	It("asks for a job id when none is given", func() {
 		_, err := run()
 		Expect(err).To(MatchError(ContainSubstring("job-id")))
+	})
+})
+
+var _ = Describe("results export --format oscal-mapping", func() {
+	var (
+		fake    *fakeMappingsClient
+		outPath string
+	)
+	stage1 := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	stage2 := time.Date(2026, 3, 1, 12, 30, 0, 0, time.UTC)
+
+	newCmd := func() *cobra.Command {
+		cmd := newResultsCmd(&cliState{client: fake})
+		cmd.PersistentFlags().Bool("json", false, "output as JSON") // root-level in production
+		return cmd
+	}
+	export := func(args ...string) error {
+		_, _, err := execute(newCmd(), append([]string{"export", "job-1", "--format", "oscal-mapping", "--output", outPath}, args...)...)
+		return err
+	}
+	// document returns the exported file parsed generically.
+	document := func() map[string]any {
+		raw, err := os.ReadFile(outPath)
+		Expect(err).NotTo(HaveOccurred())
+		var doc map[string]any
+		Expect(json.Unmarshal(raw, &doc)).To(Succeed())
+		return doc["mapping-collection"].(map[string]any)
+	}
+	provenanceProps := func() [][2]string {
+		var props [][2]string
+		for _, p := range document()["provenance"].(map[string]any)["props"].([]any) {
+			prop := p.(map[string]any)
+			props = append(props, [2]string{prop["name"].(string), prop["value"].(string)})
+		}
+		return props
+	}
+	mapProps := func(mappingID string) map[string]string {
+		for _, m := range document()["mappings"].([]any) {
+			for _, e := range m.(map[string]any)["maps"].([]any) {
+				props := map[string]string{}
+				for _, p := range e.(map[string]any)["props"].([]any) {
+					prop := p.(map[string]any)
+					props[prop["name"].(string)] = prop["value"].(string)
+				}
+				if props["mapping-id"] == mappingID {
+					return props
+				}
+			}
+		}
+		return nil
+	}
+	oscalRow := func(id string, state, outcome string) *pb.ControlMapping {
+		m := &pb.ControlMapping{
+			MappingId: id, SourceControlId: "cat-a/AC-" + id, TargetControlId: "cat-b/X-" + id,
+			RelationshipType: pb.RelationshipType_RELATIONSHIP_TYPE_EQUIVALENT, Confidence: 0.75,
+		}
+		if state != "" {
+			m.Cleaning = &pb.MappingCleaning{State: state}
+		}
+		if outcome != "" {
+			m.Critique = &pb.MappingCritique{Outcome: outcome}
+		}
+		return m
+	}
+	panel := func(models ...*pb.PanelModel) *pb.PanelProvenance { return &pb.PanelProvenance{Models: models} }
+	panelModel := func(alias, observed string) *pb.PanelModel {
+		return &pb.PanelModel{Alias: alias, ObservedModel: observed}
+	}
+	cacheModel := func(alias, observed, revision string) *pb.AnalyzerCacheModel {
+		return &pb.AnalyzerCacheModel{Alias: alias, ObservedModel: observed, Revision: revision}
+	}
+
+	BeforeEach(func() {
+		outPath = filepath.Join(GinkgoT().TempDir(), "out.json")
+		page := mappingsPage("", oscalRow("1", "", ""), oscalRow("2", "retired", ""), oscalRow("3", "restored", ""), oscalRow("4", "", "rejected"))
+		page.Analysis = &pb.JobAnalysis{
+			SourceCatalog: &pb.CatalogSummary{CatalogId: "cat-a", Name: "Catalog A", Version: "1"},
+			TargetCatalog: &pb.CatalogSummary{CatalogId: "cat-b", Name: "Catalog B", Version: "2"},
+		}
+		fake = &fakeMappingsClient{
+			pages: []*pb.ListJobMappingsResponse{page},
+			job: &pb.PipelineJob{
+				JobId:  "job-1",
+				Status: pb.JobStatus_JOB_STATUS_COMPLETED,
+				Stages: []*pb.JobStage{
+					{StageName: "synthesis", CompletedAt: timestamppb.New(stage2)},
+					{StageName: "relationship", CompletedAt: timestamppb.New(stage1),
+						Panel: panel(panelModel("fast", "model-x"), panelModel("slow", "model-z"), panelModel("blank", ""))},
+					{StageName: "critique", Panel: panel(panelModel("fast", "model-x"))},
+					{StageName: "never-ran"},
+				},
+				CacheSummaries: []*pb.AnalyzerCacheSummary{
+					{Analyzer: "relationship", Models: []*pb.AnalyzerCacheModel{cacheModel("fast", "model-x", "r1"), cacheModel("fast", "other-model", "r9")}},
+				},
+			},
+		}
+	})
+
+	It("writes a draft mapping collection dated by the latest stage, naming each model once", func() {
+		Expect(export()).To(Succeed())
+
+		doc := document()
+		Expect(doc["provenance"].(map[string]any)["status"]).To(Equal("draft"))
+		Expect(doc["metadata"].(map[string]any)["last-modified"]).To(Equal("2026-03-01T12:30:00Z"))
+		var models []string
+		for _, p := range provenanceProps() {
+			if p[0] == "model" {
+				models = append(models, p[1])
+			}
+		}
+		// A panel model seen in two stages is named once, with the revision
+		// the result cache recorded; a cache-only model is not added.
+		Expect(models).To(Equal([]string{"fast=model-x@r1", "slow=model-z"}))
+		Expect(fake.jobRequests).To(HaveLen(1))
+		Expect(fake.jobRequests[0].GetJobId()).To(Equal("job-1"))
+		Expect(fake.jobRequests[0].GetIncludeCacheSummaries()).To(BeTrue())
+	})
+
+	It("exports a job with panels but no cache summaries, naming models without a revision", func() {
+		fake.job.CacheSummaries = nil
+		Expect(export()).To(Succeed())
+		Expect(provenanceProps()).To(ContainElements(
+			[2]string{"model", "fast=model-x"}, [2]string{"model", "slow=model-z"}))
+	})
+
+	It("drops retired rows and marks restored and rejected ones", func() {
+		fake.pages[0].Mappings = fake.pages[0].Mappings[:4]
+		Expect(export("--stage", "analyzer")).To(Succeed())
+
+		Expect(mapProps("2")).To(BeNil())
+		Expect(mapProps("1")).NotTo(HaveKey("cleaning-state"))
+		Expect(mapProps("3")).To(HaveKeyWithValue("cleaning-state", "restored"))
+		Expect(mapProps("4")).To(HaveKeyWithValue("critique-outcome", "rejected"))
+	})
+
+	It("records only the stage filter by default", func() {
+		Expect(export()).To(Succeed())
+		var filters [][2]string
+		for _, p := range provenanceProps() {
+			if strings.HasPrefix(p[0], "filter-") {
+				filters = append(filters, p)
+			}
+		}
+		Expect(filters).To(Equal([][2]string{{"filter-stage", "synthesized"}}))
+	})
+
+	It("records each filter that was set, with deterministic values", func() {
+		Expect(export("--stage", "analyzer", "--min-confidence", "0.7", "--type", "equivalent", "--type", "Subset_Of",
+			"--control", " cat-a/AC-1 ", "--exclude-rejected")).To(Succeed())
+		var filters [][2]string
+		for _, p := range provenanceProps() {
+			if strings.HasPrefix(p[0], "filter-") {
+				filters = append(filters, p)
+			}
+		}
+		Expect(filters).To(Equal([][2]string{
+			{"filter-stage", "analyzer"},
+			{"filter-min-confidence", "0.7"},
+			{"filter-type", "EQUIVALENT"},
+			{"filter-type", "SUBSET_OF"},
+			{"filter-control", "cat-a/AC-1"},
+			{"filter-exclude-rejected", "true"},
+		}))
+	})
+
+	It("sends the trimmed control ID, as the filter records it", func() {
+		Expect(export("--control", " cat-a/AC-1 ")).To(Succeed())
+		Expect(fake.calls[0].GetControlId()).To(Equal("cat-a/AC-1"))
+	})
+
+	It("omits a control filter that is only whitespace", func() {
+		Expect(export("--control", "  ")).To(Succeed())
+		for _, p := range provenanceProps() {
+			Expect(p[0]).NotTo(Equal("filter-control"))
+		}
+	})
+
+	DescribeTable("refuses before fetching",
+		func(want string, args ...string) {
+			err := export(args...)
+			Expect(err).To(MatchError(ContainSubstring(want)))
+			Expect(fake.jobRequests).To(BeEmpty())
+			Expect(fake.calls).To(BeEmpty())
+			Expect(outPath).NotTo(BeAnExistingFile())
+		},
+		Entry("vetoed pairs",
+			"--include-vetoed lists pairs that are not mappings, and an OSCAL mapping asserts every pair it contains; export --format json to see them",
+			"--stage", "analyzer", "--include-vetoed"),
+		Entry("non-viable pairs",
+			"--include-non-viable lists pairs that are not mappings, and an OSCAL mapping asserts every pair it contains; export --format json to see them",
+			"--include-non-viable"),
+	)
+
+	DescribeTable("refuses a job it cannot describe before listing its mappings",
+		func(mutate func()) {
+			mutate()
+			Expect(export()).To(HaveOccurred())
+			Expect(fake.jobRequests).NotTo(BeEmpty())
+			Expect(fake.calls).To(BeEmpty(), "ListJobMappings must not run for a job that cannot be exported")
+			Expect(outPath).NotTo(BeAnExistingFile())
+		},
+		Entry("job still running", func() { fake.job.Status = pb.JobStatus_JOB_STATUS_RUNNING }),
+		Entry("no stage completion time", func() { fake.job.Stages = []*pb.JobStage{{StageName: "synthesis"}} }),
+		Entry("no panels", func() {
+			for _, st := range fake.job.Stages {
+				st.Panel = nil
+			}
+		}),
+	)
+
+	DescribeTable("refuses and leaves --output untouched",
+		func(mutate func(), want string, args ...string) {
+			mutate()
+			original := []byte("previous export\n")
+			Expect(os.WriteFile(outPath, original, 0o600)).To(Succeed())
+			before, err := os.Stat(outPath)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(export(args...)).To(MatchError(ContainSubstring(want)))
+
+			Expect(os.ReadFile(outPath)).To(Equal(original))
+			after, err := os.Stat(outPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(after.ModTime()).To(Equal(before.ModTime()))
+		},
+		Entry("job still running", func() { fake.job.Status = pb.JobStatus_JOB_STATUS_RUNNING },
+			"job job-1 is RUNNING; an OSCAL mapping states a finished job's results. Wait for it to complete, or export --format json for partial results."),
+		Entry("no stage completion time", func() { fake.job.Stages = []*pb.JobStage{{StageName: "synthesis"}} },
+			"job job-1 records no stage completion time, so the export cannot date its results; export --format json instead"),
+		Entry("no panels", func() {
+			for _, st := range fake.job.Stages {
+				st.Panel = nil
+			}
+		},
+			"job job-1 records no model for its analyzers, so the export cannot name what produced these mappings; export --format json instead"),
+		Entry("only panel models without an observed name", func() {
+			for _, st := range fake.job.Stages {
+				st.Panel = panel(panelModel("fast", ""))
+			}
+		}, "records no model for its analyzers"),
+		Entry("every row retired", func() { fake.pages[0].Mappings = []*pb.ControlMapping{oscalRow("2", "retired", "")} },
+			"job job-1 has no mappings to export with these filters (retired rows are excluded from OSCAL exports); widen the filters or export --format json to see every row"),
+		Entry("a job whose stored panel record was unreadable, so its panels name no model", func() {
+			for _, st := range fake.job.Stages {
+				st.Panel = &pb.PanelProvenance{Independence: "panel independence not recorded"}
+			}
+		}, "records no model for its analyzers"),
+		Entry("a relationship OSCAL cannot express", func() {
+			fake.pages[0].Mappings[0].RelationshipType = pb.RelationshipType_RELATIONSHIP_TYPE_UNSPECIFIED
+		}, "unknown relationship"),
+	)
+
+	It("refuses candidates in the OSCAL mapping format", func() {
+		_, _, err := execute(newCmd(), "candidates", "job-1", "--format", "oscal-mapping")
+		Expect(err).To(MatchError(ContainSubstring("candidates are not mappings, so they have no OSCAL mapping form; use --format json or csv")))
+	})
+
+	It("names only the formats candidates accepts when its format is invalid", func() {
+		_, _, err := execute(newCmd(), "candidates", "job-1", "--format", "xml")
+		Expect(err).To(MatchError(ContainSubstring("use one of json, csv")))
+		Expect(err.Error()).NotTo(ContainSubstring("oscal-mapping"))
+	})
+
+	It("rejects an unknown format before fetching, listing every format", func() {
+		_, _, err := execute(newCmd(), "export", "job-1", "--format", "xml")
+		Expect(err).To(MatchError(ContainSubstring("use one of json, csv, oscal-mapping")))
+		Expect(fake.jobRequests).To(BeEmpty())
+		Expect(fake.calls).To(BeEmpty())
 	})
 })

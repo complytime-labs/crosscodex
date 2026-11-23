@@ -16,6 +16,14 @@ CrossCodex is in early development. All foundational, domain, and service packag
 
 ## Upgrading
 
+OSCAL mapping export and release readiness (#215, #17). Mostly additive; four behaviours change:
+
+- `crosscodex results export` accepts `--format oscal-mapping`, which writes a completed job as an OSCAL 1.2.3 mapping collection. See [docs/oscal-mapping-export.md](docs/oscal-mapping-export.md).
+- **`--control` is trimmed** of surrounding whitespace for `json` and `csv` exports, and for `results candidates`, so ` AC-1 ` now matches `AC-1`. Otherwise `json` and `csv` output is unchanged.
+- **`task deploy:down VOLUMES=1` removes only the key volumes that exist,** each by exact name and without `-f`. A volume still in use, or a failed volume listing, now fails the task instead of being skipped.
+- **The offline overlays read `CROSSCODEX_GATEWAY_CONFIG_DIR`** for the gateway config directory. It defaults to the previous path, so nothing changes unless you set it.
+- **Embedded-mode `GetJob` returns per-stage panel provenance,** as the daemon does, where it returned none.
+
 Mapping feedback and cleaning re-projection (#230, #289):
 
 - **Database.** Run `crosscodexd migrate` to apply migration `003_mapping_feedback` (the daemon never migrates). It adds `mapping_votes`, `mapping_determinations`, `mapping_reviews` and the view `mapping_cleaning_states`, and lets findings and decisions take the status `stale`. None of these tables is purged by retention.
@@ -444,7 +452,12 @@ crosscodex results export <job-id> --output mappings.json
 
 # Export one control's high-confidence EQUIVALENT mappings as CSV
 crosscodex results export <job-id> --format csv --control <control-id> --type equivalent --min-confidence 0.8
+
+# Export a completed job as an OSCAL mapping collection (see docs/oscal-mapping-export.md)
+crosscodex results export <job-id> --format oscal-mapping --output mapping.json
 ```
+
+`--format oscal-mapping` writes an OSCAL 1.2.3 mapping collection, marked `draft`. [What it contains, what it leaves out and when it refuses](docs/oscal-mapping-export.md).
 
 | Flag | Applies to | Meaning |
 |------|------------|---------|

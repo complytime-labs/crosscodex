@@ -283,7 +283,23 @@ func (b *localPipelineBackend) GetJob(ctx context.Context, req *connectrpc.Reque
 		return nil, connectrpc.NewError(connectrpc.CodeInternal, fmt.Errorf("get stages: %w", err))
 	}
 
-	return connectrpc.NewResponse(&pb.GetJobResponse{Job: localJobToProto(job, stages)}), nil
+	pbJob := localJobToProto(job, stages)
+	// The panel names the models behind a stage. As the daemon does, an
+	// unreadable record is logged and shown as not recorded, with no models,
+	// so run status still works; an OSCAL export then refuses the job. Unlike
+	// the daemon, a stage with no stored record gets no panel at all, where the
+	// daemon shows "not recorded" for a completed panel stage.
+	for i, stage := range stages {
+		panel, err := pipeline.PanelProvenanceFromRecord(stage.PanelRecord)
+		if err != nil {
+			slog.WarnContext(ctx, "a stored panel record is unreadable, so run status shows it as not recorded",
+				"job_id", job.JobID, "stage", stage.StageName, "error", err)
+			panel = &pb.PanelProvenance{Independence: pipeline.PanelNotRecorded}
+		}
+		pbJob.Stages[i].Panel = panel
+	}
+
+	return connectrpc.NewResponse(&pb.GetJobResponse{Job: pbJob}), nil
 }
 
 func (b *localPipelineBackend) ListJobs(ctx context.Context, req *connectrpc.Request[pb.ListJobsRequest]) (*connectrpc.Response[pb.ListJobsResponse], error) {

@@ -728,17 +728,18 @@ var _ = Describe("embedded attestation key guard", func() {
 	})
 })
 
-// failedJobStore serves one failed job of tenant "embedded" with no stages;
-// every other pipeline.Store method panics through the nil embed.
+// failedJobStore serves one job of tenant "embedded" with stages (none by
+// default); every other pipeline.Store method panics through the nil embed.
 type failedJobStore struct {
 	pipeline.Store
-	job *pipeline.Job
+	job    *pipeline.Job
+	stages []*pipeline.Stage
 }
 
 func (s *failedJobStore) GetJob(context.Context, string) (*pipeline.Job, error) { return s.job, nil }
 
 func (s *failedJobStore) GetStages(context.Context, string) ([]*pipeline.Stage, error) {
-	return nil, nil
+	return s.stages, nil
 }
 
 // backendJobClient answers GetJob from an embedded localPipelineBackend, as
@@ -777,6 +778,40 @@ var _ = Describe("run status in embedded mode", func() {
 		var got map[string]any
 		Expect(json.Unmarshal([]byte(statusOf("--json")), &got)).To(Succeed())
 		Expect(got).To(HaveKeyWithValue("error", HaveKeyWithValue("message", want)))
+	})
+})
+
+var _ = Describe("GetJob in embedded mode", func() {
+	getJob := func(stages ...*pipeline.Stage) (*pb.PipelineJob, error) {
+		store := &failedJobStore{
+			job:    &pipeline.Job{JobID: "job-1", TenantID: "embedded", Status: pipeline.JobStatusCompleted, Config: []byte(`{}`)},
+			stages: stages,
+		}
+		client := &backendJobClient{backend: &localPipelineBackend{store: store}}
+		resp, err := client.GetJob(context.Background(), connectrpc.NewRequest(&pb.GetJobRequest{JobId: "job-1"}))
+		if err != nil {
+			return nil, err
+		}
+		return resp.Msg.GetJob(), nil
+	}
+
+	It("returns each stage's panel models from its stored record", func() {
+		job, err := getJob(
+			&pipeline.Stage{StageName: "relationship", PanelRecord: `{"independence":"independent","models":{"fast":"model-x"}}`},
+			&pipeline.Stage{StageName: "synthesis"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(job.GetStages()[0].GetPanel().GetModels()).To(HaveLen(1))
+		Expect(job.GetStages()[0].GetPanel().GetModels()[0].GetAlias()).To(Equal("fast"))
+		Expect(job.GetStages()[0].GetPanel().GetModels()[0].GetObservedModel()).To(Equal("model-x"))
+		Expect(job.GetStages()[1].GetPanel()).To(BeNil())
+	})
+
+	It("shows an unreadable stored record as not recorded, with no models, as the daemon does", func() {
+		job, err := getJob(&pipeline.Stage{StageName: "relationship", PanelRecord: `{"independence":`})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(job.GetStages()[0].GetPanel().GetIndependence()).To(Equal(pipeline.PanelNotRecorded))
+		Expect(job.GetStages()[0].GetPanel().GetModels()).To(BeEmpty())
 	})
 })
 

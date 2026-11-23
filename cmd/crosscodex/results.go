@@ -21,6 +21,7 @@ import (
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
+	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -190,6 +191,7 @@ func mappingRequestFromFlags(cmd *cobra.Command, jobID string) (*pb.ListJobMappi
 	}
 
 	controlID, _ := cmd.Flags().GetString("control")
+	controlID = strings.TrimSpace(controlID)
 	return &pb.ListJobMappingsRequest{
 		JobId:             jobID,
 		Stage:             stage,
@@ -352,15 +354,139 @@ func openOutput(cmd *cobra.Command, path string) (io.Writer, func(err *error), e
 	}, nil
 }
 
-// exportFormats lists the --format values export accepts.
-var exportFormats = []string{"json", "csv"}
+// formatOSCALMapping is the --format value that exports a job as an OSCAL
+// mapping collection.
+const formatOSCALMapping = "oscal-mapping"
+
+// exportFormats lists the --format values export accepts. Candidates accepts
+// all but formatOSCALMapping.
+var exportFormats = []string{"json", "csv", formatOSCALMapping}
+
+// cleaningRetired is the cleaning state of a mapping an OSCAL export drops.
+const cleaningRetired = "retired"
+
+// oscalMappingRefusal is the error for --include-<flag> with oscal-mapping.
+func oscalMappingRefusal(flag string) error {
+	return fmt.Errorf("--%s lists pairs that are not mappings, and an OSCAL mapping asserts every pair it contains; export --format json to see them", flag)
+}
+
+// oscalMappingFilters lists the filters the user set, as the provenance
+// props that record them: stage always, the rest only when set. Values are
+// formatted deterministically so an auditor can reproduce them.
+func oscalMappingFilters(req *pb.ListJobMappingsRequest, stage string) []oscal.Prop {
+	filters := []oscal.Prop{{Name: "stage", Value: stage}}
+	if c := req.GetMinConfidence(); c > 0 {
+		filters = append(filters, oscal.Prop{Name: "min-confidence", Value: strconv.FormatFloat(float64(c), 'f', -1, 32)})
+	}
+	for _, t := range req.GetRelationshipTypes() {
+		filters = append(filters, oscal.Prop{Name: "type", Value: strings.TrimPrefix(t.String(), relationshipTypePrefix)})
+	}
+	if c := req.GetControlId(); c != "" {
+		filters = append(filters, oscal.Prop{Name: "control", Value: c})
+	}
+	if req.GetExcludeRejected() {
+		filters = append(filters, oscal.Prop{Name: "exclude-rejected", Value: "true"})
+	}
+	return filters
+}
+
+// exportableJob refuses a job whose results an OSCAL mapping cannot state
+// (not completed, undated, or with no recorded model) and returns what the
+// export needs from it. It runs before the mappings are listed, so a job that
+// completes mid-export cannot have partial rows exported as a finished job.
+func exportableJob(job *pb.PipelineJob) (time.Time, []oscal.ExportModel, error) {
+	id := job.GetJobId()
+	if job.GetStatus() != pb.JobStatus_JOB_STATUS_COMPLETED {
+		return time.Time{}, nil, fmt.Errorf("job %s is %s; an OSCAL mapping states a finished job's results. Wait for it to complete, or export --format json for partial results.", id, formatJobStatus(job.GetStatus())) //nolint:staticcheck // ST1005: the refusal copy is specified verbatim, with its final sentence
+	}
+
+	var completedAt time.Time
+	for _, st := range job.GetStages() {
+		if t := st.GetCompletedAt(); t != nil && t.AsTime().After(completedAt) {
+			completedAt = t.AsTime()
+		}
+	}
+	if completedAt.IsZero() {
+		return time.Time{}, nil, fmt.Errorf("job %s records no stage completion time, so the export cannot date its results; export --format json instead", id)
+	}
+
+	var models []oscal.ExportModel
+	for _, st := range job.GetStages() {
+		for _, m := range st.GetPanel().GetModels() {
+			model := oscal.ExportModel{Alias: m.GetAlias(), Observed: m.GetObservedModel()}
+			if model.Observed != "" && !slices.ContainsFunc(models, func(have oscal.ExportModel) bool {
+				return have.Alias == model.Alias && have.Observed == model.Observed
+			}) {
+				models = append(models, model)
+			}
+		}
+	}
+	// The result cache, where the job used one, knows each model's revision.
+	for i, model := range models {
+		for _, summary := range job.GetCacheSummaries() {
+			for _, cached := range summary.GetModels() {
+				if cached.GetAlias() == model.Alias && cached.GetObservedModel() == model.Observed && cached.GetRevision() != "" {
+					models[i].Revision = cached.GetRevision()
+				}
+			}
+		}
+	}
+	if len(models) == 0 {
+		return time.Time{}, nil, fmt.Errorf("job %s records no model for its analyzers, so the export cannot name what produced these mappings; export --format json instead", id)
+	}
+
+	return completedAt, models, nil
+}
+
+// toMappingExport is the only conversion from the API's job and mappings to
+// oscal.MappingExport. It refuses, naming the job, a job that is not
+// completed, records no stage completion time or records no panel model; retired
+// mappings are left out. Relationship and catalog conflicts are left to
+// oscal.BuildMappingCollection.
+func toMappingExport(job *pb.PipelineJob, analysis *pb.JobAnalysis, mappings []*pb.ControlMapping, stage string, filters []oscal.Prop) (oscal.MappingExport, error) {
+	id := job.GetJobId()
+	completedAt, models, err := exportableJob(job)
+	if err != nil {
+		return oscal.MappingExport{}, err
+	}
+
+	rows := make([]oscal.ExportMapping, 0, len(mappings))
+	for _, m := range mappings {
+		if m.GetCleaning().GetState() == cleaningRetired {
+			continue
+		}
+		rows = append(rows, oscal.ExportMapping{
+			MappingID:       m.GetMappingId(),
+			SourceControlID: m.GetSourceControlId(),
+			TargetControlID: m.GetTargetControlId(),
+			Relationship:    strings.TrimPrefix(m.GetRelationshipType().String(), relationshipTypePrefix),
+			Confidence:      float64(m.GetConfidence()),
+			CleaningState:   m.GetCleaning().GetState(),
+			CritiqueOutcome: m.GetCritique().GetOutcome(),
+		})
+	}
+	return oscal.MappingExport{
+		JobID:       id,
+		Stage:       stage,
+		Filters:     filters,
+		CompletedAt: completedAt,
+		Source:      exportCatalog(analysis.GetSourceCatalog()),
+		Target:      exportCatalog(analysis.GetTargetCatalog()),
+		Models:      models,
+		Mappings:    rows,
+	}, nil
+}
+
+func exportCatalog(c *pb.CatalogSummary) oscal.ExportCatalog {
+	return oscal.ExportCatalog{ID: c.GetCatalogId(), Name: c.GetName(), Version: c.GetVersion(), VersionDisplay: c.GetVersionDisplay()}
+}
 
 func newResultsExportCmd(state *cliState) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "export <job-id>",
 		Aliases: []string{"dump"},
-		Short:   "Export mappings to JSON or CSV",
-		Long: `Export a job's control mappings to JSON or CSV format.
+		Short:   "Export mappings to JSON, CSV or an OSCAL mapping collection",
+		Long: `Export a job's control mappings to JSON, CSV or OSCAL mapping format.
 
 JSON wraps the mappings with the job's source and target catalogs (ID, name,
 version) and direction under "analysis". For a version of a catalog document,
@@ -395,7 +521,14 @@ Vetoed pairs are not mappings and are left out; with --include-vetoed they
 are listed too. With
 --stage analyzer --exclude-rejected, rejected pairs are left out, for the
 strict view of a job run with veto off. The reasons are the critics' own
-words.`,
+words.
+
+--format oscal-mapping writes an OSCAL 1.2.3 mapping collection of the job's
+mappings, marked draft: unreviewed machine output. It needs a completed job
+that recorded the models its analyzer panels ran, leaves out retired mappings, and records the filters you set as
+provenance. It refuses --include-vetoed and --include-non-viable, because
+OSCAL asserts every pair it contains; use --format json for those. Nothing
+is written to --output unless the whole document is valid.`,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			jobID := args[0]
 			format, _ := cmd.Flags().GetString("format")
@@ -404,14 +537,47 @@ words.`,
 			if !slices.Contains(exportFormats, format) {
 				return fmt.Errorf("invalid --format %q: use one of %s", format, strings.Join(exportFormats, ", "))
 			}
+			if format == formatOSCALMapping {
+				for _, flag := range []string{"include-vetoed", "include-non-viable"} {
+					if set, _ := cmd.Flags().GetBool(flag); set {
+						return oscalMappingRefusal(flag)
+					}
+				}
+			}
 
 			req, err := mappingRequestFromFlags(cmd, jobID)
 			if err != nil {
 				return err
 			}
+			// The job is checked before its mappings are listed: a job that is
+			// not yet complete must never have partial rows exported.
+			var job *pb.PipelineJob
+			if format == formatOSCALMapping {
+				resp, err := state.client.GetJob(cmd.Context(), connectrpc.NewRequest(&pb.GetJobRequest{JobId: jobID, IncludeCacheSummaries: true}))
+				if err != nil {
+					return fmt.Errorf("get job %s: %w", jobID, err)
+				}
+				job = resp.Msg.GetJob()
+				if _, _, err := exportableJob(job); err != nil {
+					return err
+				}
+			}
 			mappings, analysis, err := listAllMappings(cmd.Context(), state.client, req)
 			if err != nil {
 				return err
+			}
+			// Build the whole document before opening --output, so a refusal
+			// never creates or truncates the file.
+			var oscalDoc []byte
+			if format == formatOSCALMapping {
+				stage := strings.ToLower(strings.TrimPrefix(req.GetStage().String(), "MAPPING_STAGE_"))
+				export, err := toMappingExport(job, analysis, mappings, stage, oscalMappingFilters(req, stage))
+				if err != nil {
+					return err
+				}
+				if oscalDoc, err = oscal.BuildMappingCollection(export); err != nil {
+					return err
+				}
 			}
 			// Analyzer mappings have no viability; the server's zero values
 			// are not a verdict, so they are left out.
@@ -424,6 +590,11 @@ words.`,
 			defer closeOutput(&err)
 
 			switch format {
+			case formatOSCALMapping:
+				if _, err := out.Write(oscalDoc); err != nil {
+					return fmt.Errorf("write OSCAL mapping: %w", err)
+				}
+				return nil
 			case "json":
 				// encoding/json would print enums as numbers and drop false and
 				// zero fields; protojson with EmitUnpopulated keeps every field
@@ -535,14 +706,15 @@ words.`,
 	guidedArgs(cmd, cobra.ExactArgs(1), argGuide{
 		noun:  "a job-id",
 		find:  "crosscodex results export <job-id>",
-		usage: "crosscodex results export <job-id> [--format json|csv] [--output file] [--stage synthesized|analyzer] [--type <type>]... [--control <id>] [--min-confidence <0-1>] [--include-non-viable] [--include-vetoed] [--exclude-rejected]",
+		usage: "crosscodex results export <job-id> [--format json|csv|oscal-mapping] [--output file] [--stage synthesized|analyzer] [--type <type>]... [--control <id>] [--min-confidence <0-1>] [--include-non-viable] [--include-vetoed] [--exclude-rejected]",
 		examples: []string{
 			"crosscodex results export abc123",
 			"crosscodex results export abc123 --format csv --output mappings.csv",
+			"crosscodex results export abc123 --format oscal-mapping --output mappings.oscal.json",
 		},
 	})
 
-	cmd.Flags().String("format", "json", "output format (json or csv)")
+	cmd.Flags().String("format", "json", "output format (json, csv or oscal-mapping)")
 	cmd.Flags().String("output", "", "output file path (default: stdout)")
 	addMappingFlags(cmd)
 
@@ -604,9 +776,13 @@ not run it as a formula.`,
 			format, _ := cmd.Flags().GetString("format")
 			outputFile, _ := cmd.Flags().GetString("output")
 			controlID, _ := cmd.Flags().GetString("control")
+			controlID = strings.TrimSpace(controlID)
 
+			if format == formatOSCALMapping {
+				return errors.New("candidates are not mappings, so they have no OSCAL mapping form; use --format json or csv")
+			}
 			if !slices.Contains(exportFormats, format) {
-				return fmt.Errorf("invalid --format %q: use one of %s", format, strings.Join(exportFormats, ", "))
+				return fmt.Errorf("invalid --format %q: use one of json, csv", format)
 			}
 
 			candidates, analysis, err := listAllCandidates(cmd.Context(), state.client, &pb.ListJobCandidatesRequest{JobId: jobID, ControlId: controlID})

@@ -48,6 +48,10 @@ const (
 	panelRecordNotRecorded     = "panel independence not recorded"
 )
 
+// PanelNotRecorded is the independence run status shows for a panel whose
+// record is missing or unreadable.
+const PanelNotRecorded = panelRecordNotRecorded
+
 // panelSpec is one stage's panel: the aliases whose votes the stage counts
 // and whether analysis.<stage>.allow_shared_panel_models is set.
 type panelSpec struct {
