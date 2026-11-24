@@ -1,0 +1,9 @@
+# Test overlay for `task test:integration:ingestion`, loaded after
+# deploy/compose.ingestion.yaml (and deploy/compose.rustfs.yaml for the RustFS
+# run). The Ginkgo suite in test/ingestion sets TEST_INGESTION_MAX_DOCUMENT_BYTES
+# so its oversize document is refused by ingestion.max_document_bytes while the
+# real fixture PDF is converted.
+services:
+  crosscodexd:
+    environment:
+      CROSSCODEX_INGESTION_MAX_DOCUMENT_BYTES: "${TEST_INGESTION_MAX_DOCUMENT_BYTES:?set by the test/ingestion suite}"

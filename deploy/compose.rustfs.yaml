@@ -62,7 +62,9 @@ services:
     mem_limit: ${CROSSCODEX_RUSTFS_INIT_MEM_LIMIT:-64m}
     pids_limit: 32
     read_only: true
-    tmpfs: [/tmp]
+    # /data: the image declares it a VOLUME, so without a mount there every
+    # run creates an anonymous volume that `down --volumes` leaves behind.
+    tmpfs: [/tmp, /data]
     environment:
       RUSTFS_ACCESS_KEY: *rustfs-access-key
       RUSTFS_SECRET_KEY: *rustfs-secret-key

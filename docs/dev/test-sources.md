@@ -57,6 +57,14 @@ Untrimmed crosscodex-ingestion output for two document excerpts that crosscodex-
 | `nist-sp800-171r3-excerpt.json` | <https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-171r3.pdf> | NIST SP 800-171 Rev. 3 (May 2024), PDF pages 13-17; converted 2026-11-24 | 2026-11-19 | `8c46190030db1fd57c126a363bda03b3a01f7b69e8fa59bf21f660f14da00751` |
 | `eurlex-nis2-32022L2555.json` | <https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32022L2555> | Directive (EU) 2022/2555 (NIS2), English OJ HTML, CELEX `32022L2555`, excerpt; converted 2026-11-24 | 2026-11-18 | `8d42c92842e44c9ee76560c77fbd83a705fb88e420dadefe522c1db1bf3f0060` |
 
+## Shipped ingestion input: `test/ingestion/testdata/`
+
+The PDF the ingestion end-to-end suite (`task test:integration:ingestion`) imports; it is the input of `nist-sp800-171r3-excerpt.json` above. Details in [that directory's README](../../test/ingestion/testdata/README.md).
+
+| File | Canonical URL of the original | Version | Retrieved | SHA-256 of the fixture |
+| --- | --- | --- | --- | --- |
+| `nist-sp800-171r3-excerpt.pdf` | <https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-171r3.pdf> | NIST SP 800-171 Rev. 3 (May 2024), PDF pages 13-17, copied unchanged from crosscodex-ingestion `tests/fixtures/documents/` | 2026-11-19 | `61f5d194715293bb7debdc5d8efc8285ca9f9593a3e0abbba2799a231bbbb07b` |
+
 ## Adding a source
 
 When you download material for a test, eval or smoke run, add its row here in the same change: canonical URL (a release or tag URL where the publisher has one, else a commit-pinned URL), version, retrieval date, SHA-256 of the file as used, why it is not shipped, and licence if you checked it. Verify the URL by re-downloading into an empty directory and comparing hashes. Keep the material out of git unless its licence permits redistribution and it is a trimmed fixture; trimmed fixtures go under `testdata/` with their origin recorded as in the [tree fixtures README](../../pkg/oscal/testdata/tree/README.md).
