@@ -1,0 +1,19 @@
+pkg/oscal/oscal_property_test.go
+  s_0ca60d5c9ee635::t_9bdbf8197be4d0 326-328,335
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "294c1dd4e5f070cb836243ea5731bd999bca9a7d",
+  "prompts": {},
+  "sessions": {
+    "s_0ca60d5c9ee635": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c71e9db3-667b-4cc1-83d6-ebed1df1c810",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
