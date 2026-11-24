@@ -1,0 +1,35 @@
+internal/catalog/structuring.go
+  s_0b1becf5bbea3d::t_8cc361c3c0fcb7 82,93
+  s_0b1becf5bbea3d::t_19ab04db9a0c4d 1-81,83-92,95-101
+  s_0b1becf5bbea3d::t_219372ab1a9d97 94
+internal/catalog/service.go
+  s_0b1becf5bbea3d::t_77b8888d7290ef 332-333,347-348,354
+  s_0b1becf5bbea3d::t_4377a60fcd625e 118
+  s_0b1becf5bbea3d::t_1162c1e69baaeb 55-57,65-66,117,119-121,349-353
+cmd/crosscodex/embedded.go
+  s_0b1becf5bbea3d::t_8bd52fe20f53a3 606-609
+internal/catalog/ingestion_parse_bdd_test.go
+  s_0b1becf5bbea3d::t_adc65fd6000b28 324-325
+  s_0b1becf5bbea3d::t_137d29c72e9ea4 261,270-272,275-278
+  s_0b1becf5bbea3d::t_219372ab1a9d97 127,134-135,152,157-175
+  s_0b1becf5bbea3d::t_f938a1c338d3df 1-126,128-133,136-151,156,176-260,262-269,273-274,279-323,326-327
+  s_0b1becf5bbea3d::t_3344ab4dea91ba 153-155
+cmd/crosscodexd/bootstrap.go
+  s_0b1becf5bbea3d::t_8bd52fe20f53a3 407-410
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "e276d9770000c59d8315cedb5c109a55e7f8e9f9",
+  "prompts": {},
+  "sessions": {
+    "s_0b1becf5bbea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "413f3a44-446c-458a-8dd6-69acadf88cd5",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
