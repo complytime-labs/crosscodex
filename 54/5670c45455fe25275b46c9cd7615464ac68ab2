@@ -1,0 +1,31 @@
+README.md
+  s_0b1becf5bbea3d::t_36a074c765c7de 960
+  s_0b1becf5bbea3d::t_ebcf4a2196d32b 888-893
+  s_0b1becf5bbea3d::t_f3ba85c008d5f3 23
+  s_0b1becf5bbea3d::t_fd5cf40490ee1a 652
+  s_0b1becf5bbea3d::t_70cdbad48c1f65 644
+  s_0b1becf5bbea3d::t_8bf871ef8624e5 597
+  s_0b1becf5bbea3d::t_1fe201cddf8f02 956
+  s_0b1becf5bbea3d::t_eb9154752236aa 397-412
+  s_0b1becf5bbea3d::t_db6bc74016b378 939-955,957-959,961-963
+docs/dev/telemetry.md
+  s_0b1becf5bbea3d::t_9225f0244f7fb1 187-189
+docs/dev/service-runtime.md
+  s_0b1becf5bbea3d::t_eee8e7d7885e23 212-233
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "545670c45455fe25275b46c9cd7615464ac68ab2",
+  "prompts": {},
+  "sessions": {
+    "s_0b1becf5bbea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "413f3a44-446c-458a-8dd6-69acadf88cd5",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
