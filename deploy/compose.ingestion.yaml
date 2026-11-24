@@ -1,0 +1,97 @@
+# Document ingestion overlay for the deploy:local stack: runs the
+# crosscodex-ingestion (Docling) service and points crosscodexd at it, so
+# `crosscodex catalog import` accepts PDF, DOCX, HTML and the other formats it
+# converts, not only OSCAL JSON. `task deploy:local INGESTION=1` loads it after
+# the offline overlay; INGESTION=rustfs also loads compose.rustfs.yaml. By hand:
+#   podman-compose -f compose.yaml -f compose.gateway-litellm.yaml \
+#     -f compose.offline.yaml -f compose.ingestion.yaml up -d
+#
+# For local use and CI, not production: ingestion attestation is off (below)
+# and the image is built from source on first `up`.
+#
+# Storage: ingestion writes each conversion to <root>/<tenant>/documents/<id>/
+# and returns file://<absolute path>. crosscodexd reads that file through its
+# own local object store, and accepts the URI only when the path lies under
+# storage.objects.base_path (/var/lib/crosscodex/objects in config.yaml) and the
+# requesting tenant's directory. So both containers mount crosscodex-objects at
+# that same path, and ingestion runs as crosscodexd's uid and gid (65532): the
+# daemon creates each tenant directory mode 0700, which no other uid could
+# write into.
+#
+# mTLS: ingestion serves gRPC on 8080 with its own certificate and key from
+# crosscodex-certs-ingestion (task deploy:certs loads it like every other
+# server volume; the certificate names only "ingestion"), and accepts only
+# clients whose certificate CN or DNS SAN is "client", the daemon's identity.
+# crosscodexd dials with its global tls settings (tls.targets.ingestion is
+# unset, so it inherits them).
+services:
+  ingestion:
+    # No published image exists, so compose builds one from the ingestion
+    # repository pinned to a commit; the tag repeats the commit so a rebuild
+    # of another commit is a different image. Building it downloads the
+    # Docling models (several GB) and takes a while the first time.
+    image: crosscodex-ingestion:d2864009864bdd1d60e3f5678105001d5a90b76a
+    build:
+      context: https://github.com/complytime-labs/crosscodex-ingestion.git#d2864009864bdd1d60e3f5678105001d5a90b76a
+    restart: unless-stopped
+    user: "65532:65532"
+    group_add: ["10001"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    # Docling needs about 6 GB per concurrent conversion (ingestion's
+    # docs/usage/configuration.md); one conversion at a time fits 8g.
+    mem_limit: ${CROSSCODEX_INGESTION_MEM_LIMIT:-8g}
+    # pids_limit counts threads, and the conversion worker's torch thread
+    # pools scale with the host's cores.
+    pids_limit: 2048
+    read_only: true
+    # Conversion scratch files; HOME points here too because uid 65532 has no
+    # home directory in the image and libraries write their caches under it.
+    tmpfs: [/tmp]
+    environment:
+      HOME: /tmp
+      GRPC_PORT: "8080"
+      GRPC_TLS_MODE: mutual
+      GRPC_TLS_CERT: /certs/server.pem
+      GRPC_TLS_KEY: /certs/server-key.pem
+      GRPC_TLS_CA: /certs/ca.pem
+      GRPC_ALLOWED_CLIENTS: client
+      MAX_CONCURRENT_CONVERSIONS: "1"
+      STORAGE_BACKEND: filesystem
+      STORAGE_PATH: /var/lib/crosscodex/objects
+      # Ingestion signs its own in-toto attestation per conversion with a
+      # keypair the deploy PKI does not issue, and the daemon's keypair is
+      # crosscodexd's alone. Off, conversions are unattested (ingestion logs a
+      # warning). crosscodexd's own attestations are unaffected.
+      ATTESTATION_ENABLED: "false"
+    volumes:
+      - crosscodex-certs-ingestion:/certs:ro
+      - crosscodex-objects:/var/lib/crosscodex/objects
+    # TCP connect to the gRPC port, as the image's own HEALTHCHECK does (an
+    # OCI-format build drops that one). Completing the handshake would need a
+    # client certificate.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; socket.create_connection(('localhost', 8080), timeout=5).close()",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  crosscodexd:
+    environment:
+      CROSSCODEX_INGESTION_ADDRESS: ingestion:8080
+    # depends_on merges with the base service's.
+    depends_on:
+      ingestion:
+        condition: service_healthy
+
+volumes:
+  crosscodex-certs-ingestion:
+    external: true
+    name: ${CROSSCODEX_CERTS_VOLUME:-crosscodex-certs}-ingestion

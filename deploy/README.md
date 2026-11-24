@@ -84,7 +84,7 @@ Releases before per-service keys issued one `server.pem` and `server-key.pem` (S
 3. Re-point every client at the new `ca.pem`, `client.pem` and `client-key.pem` (see above).
 4. Remove the volume the old layout used, which still holds the old shared key: `podman volume rm crosscodex-certs` (or `docker volume rm`). `task deploy:down VOLUMES=1` removes it too, along with the data volumes. The old key is no longer trusted by the new CA, but removing it leaves no copy of it on the host.
 
-The `CROSSCODEX_CERTS_VOLUME` variable is now the prefix of the per-service volumes (`<prefix>-db`, `<prefix>-nats`, `<prefix>-litellm`, `<prefix>-praxis`, `<prefix>-crosscodexd`). It no longer names a volume itself.
+The `CROSSCODEX_CERTS_VOLUME` variable is now the prefix of the per-service volumes (`<prefix>-db`, `<prefix>-nats`, `<prefix>-litellm`, `<prefix>-praxis`, `<prefix>-crosscodexd`, `<prefix>-ingestion`). It no longer names a volume itself.
 
 The files are split across separate docker/podman volumes so each service can read only the keys it uses:
 
@@ -95,10 +95,11 @@ The files are split across separate docker/podman volumes so each service can re
 | `crosscodex-certs-litellm` | `ca.pem`, `server.pem`, `server-key.pem` (the `litellm` certificate and key) | `litellm-tls` (at `/certs`) |
 | `crosscodex-certs-praxis` | `ca.pem`, `server.pem`, `server-key.pem` (the `praxis` certificate and key) | `praxis` (at `/certs`) |
 | `crosscodex-certs-crosscodexd` | `ca.pem`, `server.pem`, `server-key.pem` (the `crosscodexd` certificate and key) | `crosscodexd` (at `/server-certs`, for its HTTPS listener) |
+| `crosscodex-certs-ingestion` | `ca.pem`, `server.pem`, `server-key.pem` (the `ingestion` certificate and key) | `ingestion` (at `/certs`), only with [document ingestion](#document-ingestion-ingestion) |
 | `crosscodex-client-certs` | `ca.pem`, `client.pem`, `client-key.pem` | `migrate` and `crosscodexd` (at `/certs`) |
 | `crosscodex-attestation-keys` | `attestation-key.pem`, `attestation-pub.pem` | `crosscodexd` (at `/attestation`) |
 
-Inside a service volume the certificate and key are named `server.pem` and `server-key.pem` whichever service they belong to, so every service reads the same path. All five service volumes are loaded whichever LLM gateway runs; only the gateway in use mounts its own.
+Inside a service volume the certificate and key are named `server.pem` and `server-key.pem` whichever service they belong to, so every service reads the same path. All six service volumes are loaded whichever LLM gateway runs and whether or not ingestion runs; only the services running mount their own.
 
 The CA private key `ca-key.pem` is in none of them; it stays in `deploy/certs/`. A compromised `db`, `nats` or LLM gateway container therefore cannot connect to PostgreSQL or NATS as a client: the daemon's client key is not in its volume, and every server certificate is issued for server authentication only, so PostgreSQL and NATS refuse it as a client certificate. Nor can it sign attestations, and `migrate` cannot sign attestations either. It holds only its own server key, so it cannot pose as another service: that service's key is not in its volume, and its own certificate is rejected for every other service's hostname. (`deploy:smoke` asserts all three.) NATS still lets any client certificate the CA signed publish and subscribe: see [the NATS authorization decision](../docs/dev/adr/0002-nats-client-authorization.md). Each volume holds exactly its listed files plus a `.fingerprint` of the host set: `task deploy:certs` (run by `task deploy:up`) reloads a volume when the fingerprint differs, the volume holds anything else, or any file's content differs from its source (so another service's key under this volume's file names is replaced too). Files are owned by root, group 10001 (keys mode 0640), so every service can read them despite running as different users (postgres, nats=root with every capability dropped, stunnel=nobody, praxis=praxis, crosscodexd=nonroot; see [Container hardening and resource limits](#container-hardening-and-resource-limits)). Set `CROSSCODEX_CERTS_VOLUME` (the per-service prefix), `CROSSCODEX_CLIENT_CERTS_VOLUME` or `CROSSCODEX_ATTESTATION_KEYS_VOLUME` to use other volume names.
 
@@ -206,7 +207,7 @@ Every compose service, in every compose file, runs with:
 - `cap_drop: [ALL]`. Only `backup-init` (backups, `compose.backup.yaml`) adds capabilities back: `CHOWN`, `DAC_OVERRIDE`, `FOWNER` and `FSETID`, the minimum its one-time `chown`/`chmod` of the backup volume needs (without `FSETID` the kernel silently drops the setgid bit on `/backup`). The `certs` task's copy container keeps only `CHOWN` and `DAC_READ_SEARCH`.
 - `security_opt: [no-new-privileges:true]`.
 - A memory limit (overridable, below) and a fixed pids limit.
-- A read-only root filesystem with a tmpfs at `/tmp` (and at `/run/postgresql`, the socket directory, for `db`), except `db-restore`, which keeps a writable root filesystem.
+- A read-only root filesystem with a tmpfs at `/tmp` (and at `/run/postgresql`, the socket directory, for `db`, and at `/logs`, its log directory, for `rustfs`), except `db-restore`, which keeps a writable root filesystem.
 
 `nats` still runs as root because existing JetStream volumes hold root-owned files. Without capabilities, root cannot bypass file permissions, change ownership or regain privileges, but it still owns every root-owned file it can reach. Every file in the certs volume it mounts (`crosscodex-certs-nats`) is owned by root (group 10001), so `nats` can read all of them, including its own `server-key.pem`, just as every service in group 10001 can. That volume holds no key of another service and no client or attestation key: those are in `crosscodex-client-certs` (mounted only by `migrate` and `crosscodexd`) and `crosscodex-attestation-keys` (mounted only by `crosscodexd`). The CA private key (`ca-key.pem`) stays in `deploy/certs/` on the host and is never copied into a volume, so no container can mint certificates. Every service mounts its certs volumes read-only, so none can change the PKI; `nats` can write only its JetStream volume and `/tmp`.
 
@@ -224,6 +225,9 @@ Set any of these in `deploy/.env` to change a memory limit (compose size syntax,
 | `CROSSCODEX_BACKUP_INIT_MEM_LIMIT`  | `backup-init`                        | `64m`   |
 | `CROSSCODEX_DB_RESTORE_MEM_LIMIT`   | `db-restore`                         | `1g`    |
 | `CROSSCODEX_OLLAMA_MEM_LIMIT`       | `ollama` (smoke test only)           | `4g`    |
+| `CROSSCODEX_INGESTION_MEM_LIMIT`    | `ingestion` (`INGESTION=1` or `rustfs`) | `8g`  |
+| `CROSSCODEX_RUSTFS_MEM_LIMIT`       | `rustfs` (`INGESTION=rustfs`)        | `1g`    |
+| `CROSSCODEX_RUSTFS_INIT_MEM_LIMIT`  | `rustfs-init` (`INGESTION=rustfs`)   | `64m`   |
 
 Files written to a tmpfs count against the service's memory limit. Backups therefore do not use `crosscodexd`'s `/tmp`: `compose.backup.yaml` sets its `TMPDIR` to `/backup/tmp` on the backup volume, where each object and the JetStream snapshot are spooled on disk.
 
@@ -330,6 +334,32 @@ task deploy:local:down VOLUMES=1
 ```
 
 It runs `deploy:down VOLUMES=1` on the local stack, then removes `.local/crosscodex` (the PKI) only if that succeeded, so a failed teardown keeps the CA key that matches the volumes still there.
+
+#### Document ingestion (`INGESTION`)
+
+`INGESTION` adds the [crosscodex-ingestion](https://github.com/complytime-labs/crosscodex-ingestion) (Docling) service to the local stack, so a catalog import that is not OSCAL JSON (a PDF or HTML control catalog, for example) is converted by it instead of being refused. OSCAL JSON is still stored unchanged.
+
+| `INGESTION` | Adds | Object storage |
+|---|---|---|
+| `0` (default) | nothing | `crosscodex-objects` volume |
+| `1` | `compose.ingestion.yaml` | `crosscodex-objects` volume, shared by `crosscodexd` and `ingestion` |
+| `rustfs` | `compose.ingestion.yaml`, then `compose.rustfs.yaml` | bucket `crosscodex-objects` on a local RustFS server, for both |
+
+```bash
+task deploy:local INGESTION=1
+task deploy:local:down                  # always removes the ingestion service
+task deploy:local:down INGESTION=rustfs # also needed to remove RustFS and its volume
+```
+
+Any other value is refused before anything is built. Only `deploy:local` and `deploy:local:down` take it; `deploy:up` and `deploy:smoke` ignore it. `deploy:local:down` loads `compose.ingestion.yaml` whatever the value, so the ingestion service is always removed; it loads `compose.rustfs.yaml` only with `INGESTION=rustfs`, because that overlay needs the RustFS keys, so a stack brought up with `INGESTION=rustfs` must be stopped with it too or `rustfs` keeps running (and, with `VOLUMES=1`, `crosscodex-rustfs-data` stays).
+
+- **Image.** No ingestion image is published, so compose builds `crosscodex-ingestion:<commit>` from the ingestion repository at the commit pinned in `compose.ingestion.yaml`. The first build downloads the Docling models and takes a while. Whether later runs reuse the cached layers of this git build context is not yet verified.
+- **Cost.** The service is capped at 8g (`CROSSCODEX_INGESTION_MEM_LIMIT`) and converts one document at a time; ingestion's own documentation allows 6 GB or more per conversion and a 492-page PDF at over 13 minutes on CPU.
+- **mTLS.** `ingestion` serves gRPC on port 8080 inside the compose network (not published) with its own certificate from `crosscodex-local-certs-ingestion`, and accepts only the daemon's client certificate (CN `client`). `crosscodexd` gets `CROSSCODEX_INGESTION_ADDRESS=ingestion:8080` and dials with its global `tls` settings.
+- **Shared volume.** Ingestion writes each conversion under `/var/lib/crosscodex/objects/<tenant>/documents/` and returns its `file://` path; `crosscodexd` reads it from the same volume at the same path (its `storage.objects.base_path`). Both run as uid and gid 65532.
+- **RustFS.** `INGESTION=rustfs` needs `RUSTFS_ACCESS_KEY` and `RUSTFS_SECRET_KEY` in `deploy/.env` (or the environment), for `up` and for `down`; otherwise compose refuses the overlay and names the missing key (podman-compose: `required variable RUSTFS_ACCESS_KEY is missing a value`). Generate each with `openssl rand -hex 24`. A one-shot `rustfs-init` creates the bucket if it is missing. Both services address RustFS path-style at `http://rustfs:9000`; `crosscodexd` receives the keys as `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, so an S3 backup destination cannot use other credentials in the same stack.
+
+These overlays are for trying ingestion locally and for CI, not for production: ingestion's own in-toto attestation is off (`ATTESTATION_ENABLED=false`; `crosscodexd`'s attestations are unaffected), RustFS traffic is plain HTTP inside the compose network, and the RustFS keys are its root credentials.
 
 ### Run smoke test
 
@@ -644,7 +674,7 @@ If `task deploy:up` times out waiting for `/healthz`:
    `/healthz` returns 503 until every dependency the gateway reports (the database, NATS and the graph database) is healthy. In the JSON body `status` fields are numeric enum values; each `services.<name>.message` carries the reason (e.g. `database unreachable`, `nats unreachable`). To read it, run `curl -s --cacert deploy/certs/ca.pem https://localhost:50051/healthz`.
 2. Verify the `.env` file is populated (especially `POSTGRES_PASSWORD`, `APP_USER_PASSWORD`, `GRAPH_USER_PASSWORD` and `CROSSCODEX_LLM_API_KEY`), and that `migrate` succeeded: `task deploy:logs -- migrate`
 3. Ensure no other service is bound to port 50051 on the host: `ss -lntp | grep 50051`
-4. Verify the certs volumes exist and are populated: `podman volume inspect crosscodex-certs-db crosscodex-certs-nats crosscodex-certs-litellm crosscodex-certs-praxis crosscodex-certs-crosscodexd crosscodex-client-certs crosscodex-attestation-keys` (or `docker volume inspect`)
+4. Verify the certs volumes exist and are populated: `podman volume inspect crosscodex-certs-db crosscodex-certs-nats crosscodex-certs-litellm crosscodex-certs-praxis crosscodex-certs-crosscodexd crosscodex-certs-ingestion crosscodex-client-certs crosscodex-attestation-keys` (or `docker volume inspect`)
 
 ### CLI connection refused
 

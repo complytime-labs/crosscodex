@@ -15,6 +15,16 @@ testcases:
           - 'result.systemout ShouldNotContainSubstring "FAIL: hardening"'
           - 'result.systemout ShouldNotContainSubstring "FAIL: certs volume"'
 
+  - name: An INGESTION_OVERLAYS exported in the caller's shell does not reach the smoke stack
+    steps:
+      - type: exec
+        script: INGESTION_OVERLAYS=/leaked/compose.ingestion.yaml bash {{.root}}/test/tooling/lib/smoke-up-hardening.sh {{.root}}
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldContainSubstring task_compose_overlay=
+          - result.systemout ShouldContainSubstring compose.offline.yaml
+          - result.systemout ShouldNotContainSubstring /leaked/
+
   - name: A capability bit beyond the allowlist fails the service
     steps:
       - type: exec

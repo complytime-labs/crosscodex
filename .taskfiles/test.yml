@@ -78,7 +78,9 @@ tasks:
         msg: "venom not found - install from https://github.com/ovh/venom"
     cmds:
       - mkdir -p {{.TEST_DIR}}/tooling
-      - venom run {{.ROOT_DIR}}/test/tooling/*.venom.yml --lib-dir {{.ROOT_DIR}}/test/tooling/lib --output-dir {{.TEST_DIR}}/tooling --var root={{.ROOT_DIR}}
+      # compose_cmd: deploy.yml's COMPOSE_CMD (MISSING without a compose tool),
+      # for the cases that parse the compose overlays with the real tool.
+      - venom run {{.ROOT_DIR}}/test/tooling/*.venom.yml --lib-dir {{.ROOT_DIR}}/test/tooling/lib --output-dir {{.TEST_DIR}}/tooling --var root={{.ROOT_DIR}} --var compose_cmd="{{.COMPOSE_CMD}}"
 
   fuzz:
     desc: Run fuzz tests across all packages

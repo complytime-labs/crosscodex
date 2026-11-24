@@ -21,6 +21,8 @@
 # OLLAMA_{CHAT,EMBED,PANEL}_MODEL(S), OPENAI_COMPAT_HOST,
 # OPENAI_COMPAT_{CHAT,EMBED}_MODEL, OPENAI_COMPAT_PANEL_MODELS, CONTAINER_ENGINE.
 # LLM_GATEWAY=praxis also needs SMOKE_PRAXIS_PORT (compose.offline-praxis.yaml).
+# INGESTION_OVERLAYS (optional): space-separated compose files appended after
+# the offline overlay; the deploy:local task sets it from INGESTION.
 set -euo pipefail
 
 ROOT_DIR="${ROOT_DIR:-$(git rev-parse --show-toplevel)}"
@@ -191,5 +193,9 @@ esac
 bash "${ROOT_DIR}/scripts/generate-llm-gateway-config.sh" all \
 	"${gateway_template}" "${gateway_config}" \
 	"${render_host}" "${provider_chat_model}" "${provider_embed_model}"
+
+if [ -n "${INGESTION_OVERLAYS:-}" ]; then
+	COMPOSE_OVERLAY="${COMPOSE_OVERLAY} ${INGESTION_OVERLAYS}"
+fi
 
 task deploy:up

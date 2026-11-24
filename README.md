@@ -16,6 +16,12 @@ CrossCodex is in early development. All foundational, domain, and service packag
 
 ## Upgrading
 
+Local document ingestion overlays (#214). `task deploy:up` applies the PKI change to an existing deployment:
+
+- **The deploy PKI gains an `ingestion` server certificate**, loaded into a new volume `crosscodex-certs-ingestion` whether or not ingestion runs. A set without it fails verification, so the first `task deploy:up`, `deploy:certs` or `deploy:local` after upgrading replaces the PKI: a new CA, client certificate and attestation keypair. Back up `deploy/certs/attestation-pub.pem` first, let running analysis jobs finish, and re-point clients at the new `ca.pem`, `client.pem` and `client-key.pem`, as for #298 below.
+- **`task deploy:local INGESTION=1`** adds the ingestion service, and `INGESTION=rustfs` also moves object storage to a local RustFS bucket (needs `RUSTFS_ACCESS_KEY` and `RUSTFS_SECRET_KEY` in `deploy/.env`). `deploy:local:down` always removes the ingestion service; pass `INGESTION=rustfs` to it as well to remove RustFS. See [deploy/README.md](deploy/README.md#document-ingestion-ingestion).
+- **`COMPOSE_OVERLAY` is a space-separated list** of overlay files; a single path works as before.
+
 OSCAL mapping export and release readiness (#215, #17). Mostly additive; four behaviours change:
 
 - `crosscodex results export` accepts `--format oscal-mapping`, which writes a completed job as an OSCAL 1.2.3 mapping collection. See [docs/oscal-mapping-export.md](docs/oscal-mapping-export.md).

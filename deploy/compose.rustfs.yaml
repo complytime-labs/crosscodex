@@ -1,0 +1,116 @@
+# RustFS overlay: moves object storage for both crosscodexd and the ingestion
+# service from the shared crosscodex-objects volume to one bucket on a local
+# RustFS (S3-compatible) server. Load it after compose.ingestion.yaml, which
+# defines the ingestion service: `task deploy:local INGESTION=rustfs` does. By
+# hand:
+#   podman-compose -f compose.yaml -f compose.gateway-litellm.yaml \
+#     -f compose.offline.yaml -f compose.ingestion.yaml -f compose.rustfs.yaml up -d
+#
+# Credentials: RUSTFS_ACCESS_KEY and RUSTFS_SECRET_KEY, from deploy/.env or the
+# environment, never this file. Compose refuses to start (or tear down) the
+# stack with either unset or empty; RustFS's built-in default credentials are
+# never used. Generate each with: openssl rand -hex 24
+#
+# For local use and CI only; production hardening is out of scope. Traffic to
+# RustFS is plain HTTP inside the compose network (no TLS), the access key is
+# RustFS's root credential (no per-service users or bucket policy), and the
+# data lives in one RustFS volume with no replication.
+#
+# The bucket name, endpoint and region are the same for both services: the
+# daemon accepts an ingestion output URI only when it names this bucket.
+x-rustfs-bucket: &rustfs-bucket crosscodex-objects
+x-rustfs-endpoint: &rustfs-endpoint http://rustfs:9000
+x-rustfs-region: &rustfs-region us-east-1
+x-rustfs-access-key: &rustfs-access-key "${RUSTFS_ACCESS_KEY:?RUSTFS_ACCESS_KEY required for compose.rustfs.yaml; set it in deploy/.env (openssl rand -hex 24)}"
+x-rustfs-secret-key: &rustfs-secret-key "${RUSTFS_SECRET_KEY:?RUSTFS_SECRET_KEY required for compose.rustfs.yaml; set it in deploy/.env (openssl rand -hex 24)}"
+
+services:
+  rustfs:
+    # 1.0.6, pinned by digest. Verified on this tag: S3 API on 9000 (the
+    # console, 9001, stays off), runs as uid 10001 (rustfs), reads
+    # RUSTFS_ACCESS_KEY / RUSTFS_SECRET_KEY, serves GET /health, and without
+    # RUSTFS_SERVER_DOMAINS accepts path-style requests only, which both
+    # clients send to a custom endpoint.
+    image: docker.io/rustfs/rustfs:1.0.6@sha256:ee717072290bec9b11abfc0365f8310b00df1cd9b3639943edae47bdef05044a
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: ${CROSSCODEX_RUSTFS_MEM_LIMIT:-1g}
+    pids_limit: 256
+    read_only: true
+    # /logs is RustFS's log directory (RUSTFS_OBS_LOG_DIRECTORY in the image).
+    tmpfs: [/tmp, /logs]
+    environment:
+      RUSTFS_ACCESS_KEY: *rustfs-access-key
+      RUSTFS_SECRET_KEY: *rustfs-secret-key
+    volumes:
+      - crosscodex-rustfs-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-o", "/dev/null", "http://localhost:9000/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # One-shot: create the bucket unless it exists. The RustFS image's curl
+  # signs the S3 requests itself (SigV4), so no extra client image is needed.
+  # A wrong credential fails the HEAD and the PUT (403), so the stack stops.
+  rustfs-init:
+    image: docker.io/rustfs/rustfs:1.0.6@sha256:ee717072290bec9b11abfc0365f8310b00df1cd9b3639943edae47bdef05044a
+    restart: "no"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: ${CROSSCODEX_RUSTFS_INIT_MEM_LIMIT:-64m}
+    pids_limit: 32
+    read_only: true
+    tmpfs: [/tmp]
+    environment:
+      RUSTFS_ACCESS_KEY: *rustfs-access-key
+      RUSTFS_SECRET_KEY: *rustfs-secret-key
+      BUCKET: *rustfs-bucket
+      ENDPOINT: *rustfs-endpoint
+      REGION: *rustfs-region
+    entrypoint: ["sh", "-c"]
+    # $$ keeps compose from interpolating the variables; the shell expands
+    # them. The credentials reach curl on stdin (-K -, printf is a shell
+    # builtin), so they never appear in a process's arguments.
+    command:
+      - >-
+        creds() { printf 'user = "%s:%s"\n' "$$RUSTFS_ACCESS_KEY" "$$RUSTFS_SECRET_KEY"; } &&
+        url="$$ENDPOINT/$$BUCKET" && sig="aws:amz:$$REGION:s3" &&
+        { creds | curl -sf -o /dev/null -K - -I --aws-sigv4 "$$sig" "$$url" ||
+          creds | curl -sf -o /dev/null -K - -X PUT --aws-sigv4 "$$sig" "$$url"; }
+    depends_on:
+      rustfs:
+        condition: service_healthy
+
+  crosscodexd:
+    # storage.objects.* from env (pkg/config binds CROSSCODEX_STORAGE_OBJECTS_*).
+    # A set endpoint makes the S3 client use path-style requests. The
+    # credentials reach it through the AWS credential chain, so they replace
+    # the AWS_* an S3 backup destination would use (compose.backup.yaml).
+    environment:
+      CROSSCODEX_STORAGE_OBJECTS_BACKEND: s3
+      CROSSCODEX_STORAGE_OBJECTS_BUCKET: *rustfs-bucket
+      CROSSCODEX_STORAGE_OBJECTS_ENDPOINT: *rustfs-endpoint
+      CROSSCODEX_STORAGE_OBJECTS_REGION: *rustfs-region
+      AWS_ACCESS_KEY_ID: *rustfs-access-key
+      AWS_SECRET_ACCESS_KEY: *rustfs-secret-key
+    depends_on:
+      rustfs-init:
+        condition: service_completed_successfully
+
+  ingestion:
+    # boto3 uses path-style requests for a custom endpoint.
+    environment:
+      STORAGE_BACKEND: s3
+      S3_BUCKET: *rustfs-bucket
+      S3_ENDPOINT: *rustfs-endpoint
+      S3_REGION: *rustfs-region
+      S3_ACCESS_KEY: *rustfs-access-key
+      S3_SECRET_KEY: *rustfs-secret-key
+    depends_on:
+      rustfs-init:
+        condition: service_completed_successfully
+
+volumes:
+  crosscodex-rustfs-data:

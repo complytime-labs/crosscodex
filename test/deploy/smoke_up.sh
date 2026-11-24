@@ -58,6 +58,10 @@ fi
 # and gateway it settles on (LLM_GATEWAY, OLLAMA_CHAT_MODEL, ...) and the podman
 # runtime env reach the assertions below. Located next to this script rather
 # than under ROOT_DIR, which the tooling suites point at a stub tree.
+# deploy:local hands local_up.sh its ingestion overlays in INGESTION_OVERLAYS;
+# the smoke stack runs none, so a value exported in the caller's shell must
+# not reach it.
+unset INGESTION_OVERLAYS
 # shellcheck source=deploy/local_up.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../../deploy/local_up.sh"
 
@@ -187,8 +191,10 @@ host_digest() {
 }
 
 # The services with their own server key, and the compose service that mounts
-# each one's volume (the litellm key is held by its stunnel sidecar).
-cert_services=(db nats litellm praxis crosscodexd)
+# each one's volume (the litellm key is held by its stunnel sidecar). The
+# smoke stack does not run ingestion (compose.ingestion.yaml), but its volume
+# is loaded like the others.
+cert_services=(db nats litellm praxis crosscodexd ingestion)
 declare -A cert_mounter=([db]=db [nats]=nats [litellm]=litellm-tls [praxis]=praxis [crosscodexd]=crosscodexd)
 # Every key file a service container must not see at /certs (besides the CA
 # key): another service's, the client's and the attestation key. Its own is
@@ -271,6 +277,7 @@ declare -A volume_users=(
 	["${CROSSCODEX_CERTS_VOLUME}-litellm"]="litellm-tls"
 	["${CROSSCODEX_CERTS_VOLUME}-praxis"]="praxis"
 	["${CROSSCODEX_CERTS_VOLUME}-crosscodexd"]="crosscodexd"
+	["${CROSSCODEX_CERTS_VOLUME}-ingestion"]="ingestion"
 	["${CROSSCODEX_CLIENT_CERTS_VOLUME}"]="migrate crosscodexd"
 	["${CROSSCODEX_ATTESTATION_KEYS_VOLUME}"]="crosscodexd"
 )
@@ -432,7 +439,7 @@ declare -A service_protocol=([db]=postgres [nats]=nats [litellm]=tls [praxis]=tl
 declare -A service_port=([db]=5432 [nats]=4222 [litellm]=4443 [praxis]=4443 [crosscodexd]=50051)
 declare -A service_names=([db]="db" [nats]="nats" [litellm]="litellm" [praxis]="praxis localhost" [crosscodexd]="crosscodexd localhost")
 probed_services=(db nats "${gateway_service}" crosscodexd)
-all_names=(db nats litellm praxis crosscodexd localhost)
+all_names=(db nats litellm praxis crosscodexd ingestion localhost)
 for svc in "${probed_services[@]}"; do
 	for name in "${all_names[@]}"; do
 		tls_name "${svc}" "${service_protocol[${svc}]}" "${service_port[${svc}]}" "${name}"

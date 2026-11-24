@@ -105,21 +105,22 @@ testcases:
           trap 'rm -rf "$d"' EXIT
           cd {{.root}}
           go run ./deploy/certgen/gen.go "$d/certs" >/dev/null
-          for s in db nats litellm praxis crosscodexd; do
+          for s in db nats litellm praxis crosscodexd ingestion; do
             echo "$s san=$(openssl x509 -in "$d/certs/$s.pem" -noout -ext subjectAltName | tail -n +2 | tr -d ' \n')"
             echo "$s eku=$(openssl x509 -in "$d/certs/$s.pem" -noout -ext extendedKeyUsage | tail -n +2 | tr -d ' \n')"
           done
-          # Public halves of the five service keys, the client key and the CA key.
-          echo "distinct_keys=$(for k in db nats litellm praxis crosscodexd client ca; do openssl pkey -in "$d/certs/$k-key.pem" -pubout | sha256sum; done | sort -u | wc -l)"
+          # Public halves of the six service keys, the client key and the CA key.
+          echo "distinct_keys=$(for k in db nats litellm praxis crosscodexd ingestion client ca; do openssl pkey -in "$d/certs/$k-key.pem" -pubout | sha256sum; done | sort -u | wc -l)"
         assertions:
           - result.systemout ShouldContainSubstring "db san=DNS:db"
           - result.systemout ShouldContainSubstring "nats san=DNS:nats"
           - result.systemout ShouldContainSubstring "litellm san=DNS:litellm"
           - result.systemout ShouldContainSubstring "praxis san=DNS:praxis,DNS:localhost,IPAddress:127.0.0.1"
           - result.systemout ShouldContainSubstring "crosscodexd san=DNS:crosscodexd,DNS:localhost,IPAddress:127.0.0.1"
+          - result.systemout ShouldContainSubstring "ingestion san=DNS:ingestion"
           - result.systemout ShouldContainSubstring "db eku=TLSWebServerAuthentication"
           - result.systemout ShouldNotContainSubstring "ClientAuthentication"
-          - result.systemout ShouldContainSubstring distinct_keys=7
+          - result.systemout ShouldContainSubstring distinct_keys=8
 
   - name: deploy verify rejects an attestation key swapped in from another run (the fingerprint covers it)
     steps:

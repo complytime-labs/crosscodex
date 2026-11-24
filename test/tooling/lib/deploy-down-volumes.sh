@@ -20,7 +20,7 @@ cp "${root}/Taskfile.yml" "$d/"
 cp -r "${root}/.taskfiles" "$d/"
 cp "${root}"/deploy/*.yaml "${root}/deploy/.env.example" "$d/deploy/"
 cp "${root}/deploy/.env.example" "$d/deploy/.env"
-for v in db nats litellm praxis crosscodexd; do echo "crosscodex-local-certs-$v"; done >"$d/vols"
+for v in db nats litellm praxis crosscodexd ingestion; do echo "crosscodex-local-certs-$v"; done >"$d/vols"
 # shellcheck disable=SC2086 # EXTRA_VOLUMES splits into one name per word
 printf '%s\n' crosscodex-local-client-certs crosscodex-local-attestation-keys ${EXTRA_VOLUMES:-} >>"$d/vols"
 printf '%s\n' "${STUCK:-}" >"$d/stuck"

@@ -1,0 +1,131 @@
+name: deploy:local INGESTION adds the ingestion overlays to the compose files
+
+vars:
+  root: "."
+  # The compose command task test:tooling resolves (COMPOSE_CMD in
+  # .taskfiles/deploy.yml). MISSING, the cases that run a real compose tool
+  # are skipped: they need podman-compose, podman compose or docker compose.
+  compose_cmd: MISSING
+
+testcases:
+  - name: Without INGESTION deploy:local loads neither ingestion overlay
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/deploy-ingestion.sh {{.root}} deploy:local
+        assertions:
+          - result.systemout ShouldContainSubstring task_exit=0
+          - "result.systemout ShouldContainSubstring \"compose: -f ROOT/deploy/compose.yaml -f ROOT/deploy/compose.gateway-litellm.yaml -f ROOT/deploy/compose.offline.yaml up -d\""
+          - result.systemout ShouldNotContainSubstring compose.ingestion.yaml
+          - result.systemout ShouldNotContainSubstring compose.rustfs.yaml
+
+  - name: INGESTION=1 loads the ingestion overlay after the offline overlay, without RustFS
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/deploy-ingestion.sh {{.root}} deploy:local INGESTION=1
+        assertions:
+          - result.systemout ShouldContainSubstring task_exit=0
+          - "result.systemout ShouldContainSubstring \"-f ROOT/deploy/compose.offline.yaml -f ROOT/deploy/compose.ingestion.yaml up -d\""
+          - result.systemout ShouldNotContainSubstring compose.rustfs.yaml
+
+  - name: INGESTION=rustfs loads the ingestion overlay, then the RustFS overlay
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/deploy-ingestion.sh {{.root}} deploy:local INGESTION=rustfs
+        assertions:
+          - result.systemout ShouldContainSubstring task_exit=0
+          - "result.systemout ShouldContainSubstring \"-f ROOT/deploy/compose.offline.yaml -f ROOT/deploy/compose.ingestion.yaml -f ROOT/deploy/compose.rustfs.yaml up -d\""
+
+  - name: An unknown INGESTION value is refused before anything is built or started
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/deploy-ingestion.sh {{.root}} deploy:local INGESTION=yes
+        assertions:
+          - result.systemout ShouldNotContainSubstring task_exit=0
+          - "result.systemout ShouldContainSubstring \"INGESTION has an invalid value : 'yes' (allowed values : [0 1 rustfs])\""
+          - result.systemout ShouldNotContainSubstring "compose:"
+
+  - name: deploy:local:down with INGESTION=rustfs tears down the services both overlays add
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/deploy-ingestion.sh {{.root}} deploy:local:down INGESTION=rustfs VOLUMES=1
+        assertions:
+          - result.systemout ShouldContainSubstring task_exit=0
+          - "result.systemout ShouldContainSubstring \"-f ROOT/deploy/compose.offline.yaml -f ROOT/deploy/compose.ingestion.yaml -f ROOT/deploy/compose.rustfs.yaml down --volumes\""
+
+  - name: deploy:local:down without INGESTION still loads the ingestion overlay, but not RustFS's
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/deploy-ingestion.sh {{.root}} deploy:local:down
+        assertions:
+          - result.systemout ShouldContainSubstring task_exit=0
+          - "result.systemout ShouldContainSubstring \"-f ROOT/deploy/compose.offline.yaml -f ROOT/deploy/compose.ingestion.yaml down\""
+          - result.systemout ShouldNotContainSubstring compose.rustfs.yaml
+
+  - name: deploy:local:down INGESTION=1 loads the ingestion overlay, but not RustFS's
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/deploy-ingestion.sh {{.root}} deploy:local:down INGESTION=1
+        assertions:
+          - result.systemout ShouldContainSubstring task_exit=0
+          - "result.systemout ShouldContainSubstring \"-f ROOT/deploy/compose.offline.yaml -f ROOT/deploy/compose.ingestion.yaml down\""
+          - result.systemout ShouldNotContainSubstring compose.rustfs.yaml
+
+  - name: The production deploy:up ignores INGESTION
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/deploy-ingestion.sh {{.root}} deploy:up INGESTION=1
+        assertions:
+          - result.systemout ShouldContainSubstring task_exit=0
+          - "result.systemout ShouldContainSubstring \"compose: -f ROOT/deploy/compose.yaml -f ROOT/deploy/compose.gateway-litellm.yaml up -d\""
+          - result.systemout ShouldNotContainSubstring compose.ingestion.yaml
+
+  - name: "compose.rustfs.yaml refuses to parse without RUSTFS_ACCESS_KEY and creates nothing [needs a compose tool]"
+    skip:
+      - compose_cmd ShouldNotEqual MISSING
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/compose-rustfs-config.sh {{.root}} "{{.compose_cmd}}" unset set
+        assertions:
+          - result.systemout ShouldNotContainSubstring config_exit=0
+          - result.systemout ShouldContainSubstring "RUSTFS_ACCESS_KEY required for compose.rustfs.yaml; set it in deploy/.env"
+          - result.systemout ShouldNotContainSubstring parsed=
+          - result.systemout ShouldContainSubstring "state=containers:0 volumes:0 networks:0"
+
+  - name: "compose.rustfs.yaml refuses to parse without RUSTFS_SECRET_KEY and creates nothing [needs a compose tool]"
+    skip:
+      - compose_cmd ShouldNotEqual MISSING
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/compose-rustfs-config.sh {{.root}} "{{.compose_cmd}}" set unset
+        assertions:
+          - result.systemout ShouldNotContainSubstring config_exit=0
+          - result.systemout ShouldContainSubstring "RUSTFS_SECRET_KEY required for compose.rustfs.yaml; set it in deploy/.env"
+          - result.systemout ShouldNotContainSubstring parsed=
+          - result.systemout ShouldContainSubstring "state=containers:0 volumes:0 networks:0"
+
+  - name: "compose.rustfs.yaml refuses empty RustFS credentials and creates nothing [needs a compose tool]"
+    skip:
+      - compose_cmd ShouldNotEqual MISSING
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/compose-rustfs-config.sh {{.root}} "{{.compose_cmd}}" empty empty
+        assertions:
+          - result.systemout ShouldNotContainSubstring config_exit=0
+          - or:
+            - result.systemout ShouldContainSubstring "RUSTFS_ACCESS_KEY required for compose.rustfs.yaml"
+            - result.systemout ShouldContainSubstring "RUSTFS_SECRET_KEY required for compose.rustfs.yaml"
+          - result.systemout ShouldNotContainSubstring parsed=
+          - result.systemout ShouldContainSubstring "state=containers:0 volumes:0 networks:0"
+
+  - name: "compose.yaml with the ingestion and RustFS overlays parses when both keys are set [needs a compose tool]"
+    skip:
+      - compose_cmd ShouldNotEqual MISSING
+    steps:
+      - type: exec
+        script: bash {{.root}}/test/tooling/lib/compose-rustfs-config.sh {{.root}} "{{.compose_cmd}}" set set
+        assertions:
+          - result.systemout ShouldContainSubstring config_exit=0
+          - result.systemout ShouldContainSubstring parsed=rustfs
+          - result.systemout ShouldContainSubstring parsed=rustfs-init
+          - result.systemout ShouldContainSubstring parsed=ingestion
+          - result.systemout ShouldContainSubstring "state=containers:0 volumes:0 networks:0"

@@ -2,9 +2,9 @@
 
 // Command gen generates and verifies the production TLS PKI for the compose
 // deployment: the CA, one server certificate and key per TLS service (db, nats,
-// litellm, praxis, crosscodexd), each naming only that service, one client
-// certificate (clientAuth only), and the in-toto attestation signing keypair.
-// Written as PEM files with a fingerprint.
+// litellm, praxis, crosscodexd, ingestion), each naming only that service, one
+// client certificate (clientAuth only), and the in-toto attestation signing
+// keypair. Written as PEM files with a fingerprint.
 //
 // Usage:
 //
@@ -51,6 +51,7 @@ var services = []testcerts.ServiceIdentity{
 	{Name: "litellm", DNSNames: []string{"litellm"}},
 	{Name: "praxis", DNSNames: []string{"praxis", "localhost"}, IPs: loopback},
 	{Name: "crosscodexd", DNSNames: []string{"crosscodexd", "localhost"}, IPs: loopback},
+	{Name: "ingestion", DNSNames: []string{"ingestion"}},
 }
 
 func main() {
