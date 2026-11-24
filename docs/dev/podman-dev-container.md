@@ -17,8 +17,10 @@ to detect it, and the fix. The user-facing smoke instructions are in
 - **Detect:** `podman ps --format '{{.Names}} {{.Status}}'` shows `(starting)`
   forever; `podman healthcheck run <container>` run by hand exits 0 once the
   service is up.
-- **What the repo does today:** nothing loops `podman healthcheck run`
-  (`grep -r "healthcheck run" .taskfiles test scripts` finds nothing).
+- **What the repo does today:** only the ingestion end-to-end suite
+  (`test/ingestion`, `task test:integration:ingestion`) runs
+  `podman healthcheck run` itself, every 5 s on its own project's containers
+  while it brings a stack up. Everything else relies on the engine:
   `deploy:up` polls the gateway's `/healthz` from the host with `curl`
   (`.taskfiles/deploy.yml`), and `scripts/integration-health.sh` probes
   published ports from the host for the integration stacks, for the same

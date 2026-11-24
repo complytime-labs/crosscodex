@@ -601,17 +601,38 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, clientCertPat
 	parser := oscal.NewParser("", oscal.WithParserTracer(oscalTracer),
 		oscal.WithRequirementPartNames(cfg.Catalog.RequirementPartNames))
 	catalogTracer, catalogMeter := telemetry.Instrumentation("internal/catalog")
-	catalogSvc := catalog.NewService(
+	catalogOpts := []catalog.ServiceOption{
 		catalog.WithParser(parser),
+		catalog.WithStructuring(cfg.Catalog.Structuring),
 		catalog.WithStore(catalogStore),
 		catalog.WithStorage(localStorage),
 		catalog.WithLogger(logger),
 		catalog.WithTracer(catalogTracer),
 		catalog.WithMeter(catalogMeter),
-	)
+	}
+	// Only a configured ingestion service produces converted documents;
+	// without one, ingestion-shaped JSON is an upload like any other.
+	if cfg.Ingestion.Address != "" {
+		// No Completer: the LLM tiers never run, so a converted document the
+		// heading, table and pattern tiers cannot structure fails closed.
+		catalogOpts = append(catalogOpts,
+			catalog.WithStructurer(oscal.NewStructurer(nil, nil, oscal.WithStructurerTracer(oscalTracer))))
+	}
+	catalogSvc := catalog.NewService(catalogOpts...)
 
-	// Create local ingestion backend (stores raw content to local storage)
-	localIngestion := backend.NewPassthroughIngestion(localStorage)
+	// Ingestion stores OSCAL JSON to local storage unchanged and, when
+	// ingestion.address is set, converts other documents through the
+	// ingestion service. The embedded daemon ignores storage.objects and
+	// keeps objects under dataDir, so that is the directory the ingestion
+	// service must share.
+	ingestionTracer, ingestionMeter := telemetry.Instrumentation("internal/gateway/backend")
+	localIngestion, err := backend.NewIngestion(ctx, cfg.Ingestion, cfg.TLS,
+		config.ObjectStorageConfig{Backend: string(storage.ProviderTypeLocal), BasePath: dataDir}, localStorage,
+		backend.WithIngestionClientTelemetry(ingestionTracer, ingestionMeter))
+	if err != nil {
+		resources.close()
+		return nil, nil, nil, fmt.Errorf("embedded daemon: %w", err)
+	}
 
 	// Create local pipeline backend (records jobs, no execution)
 	pipelineStore := pipeline.NewPGStore(tenantConn, pool,

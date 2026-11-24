@@ -127,7 +127,7 @@ if ! task deploy:certs >"$d/second.log" 2>&1; then
 	exit 1
 fi
 echo "host=[$(ls_c "$CERTS_DIR")]"
-for svc in db nats litellm praxis crosscodexd; do
+for svc in db nats litellm praxis crosscodexd ingestion; do
 	echo "${svc}=[$(ls_c "$STUB_VOLS/srv-$svc")]"
 done
 echo "client=[$(ls_c "$STUB_VOLS/cli")]"

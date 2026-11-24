@@ -80,6 +80,44 @@ func FuzzDecomposeText(f *testing.F) {
 	})
 }
 
+func FuzzDetectCatalogJSON(f *testing.F) {
+	f.Add([]byte(`{"catalog":{"uuid":"abc","metadata":{"title":"t"}}}`))
+	f.Add([]byte(`{"document":{"title":"test"}}`))
+	f.Add([]byte(`{invalid`))
+	f.Add([]byte(``))
+	f.Add([]byte(`null`))
+	f.Add([]byte(`[1,2,3]`))
+	f.Add([]byte(`{"catalog": null}`))
+	f.Add([]byte(`{"CATALOG":{}}`))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		doc := oscal.DetectCatalogJSON(data)
+		title := doc.MetadataString("title")
+		// Metadata is read only from an accepted catalog.
+		if !doc.IsCatalog && title != "" {
+			t.Fatalf("non-catalog input yielded title %q", title)
+		}
+	})
+}
+
+func FuzzIsModelJSON(f *testing.F) {
+	f.Add([]byte(`{"catalog":{"uuid":"abc"}}`))
+	f.Add([]byte(`{"profile":{"imports":[]}}`))
+	f.Add([]byte(`{"mapping-collection":null}`))
+	f.Add([]byte(`{"schema_version":"1.0","elements":[]}`))
+	f.Add([]byte(`[{"profile":{}}]`))
+	f.Add([]byte(`{"profile":`))
+	f.Add([]byte("%PDF-1.7\n"))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		// Every catalog ParseCatalog accepts is an OSCAL model, so the router
+		// never sends one to ingestion.
+		if oscal.DetectCatalogJSON(data).IsCatalog && !oscal.IsModelJSON(data) {
+			t.Fatalf("catalog not detected as an OSCAL model: %q", data)
+		}
+	})
+}
+
 func FuzzValidateSchema(f *testing.F) {
 	// Seed corpus
 	f.Add([]byte(`{"catalog": {}}`))

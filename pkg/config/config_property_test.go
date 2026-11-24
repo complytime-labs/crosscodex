@@ -531,3 +531,32 @@ var _ = Describe("Property Specifications", Ordered, func() {
 		})
 	})
 })
+
+var _ = Describe("Property Specifications", Ordered, func() {
+	Describe("IngestionConfig", func() {
+		It("validates any generated value without panicking, and a valid one survives a YAML round-trip", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				ing := config.IngestionConfig{
+					Address:          rapid.SampledFrom([]string{"", "localhost:8090", "ingestion.internal:8090", "[::1]:8090", "nohost", "a:", "http://x:1"}).Draw(t, "address"),
+					PollInterval:     time.Duration(rapid.Int64Range(-int64(time.Second), int64(time.Minute)).Draw(t, "poll")),
+					ConvertTimeout:   time.Duration(rapid.Int64Range(-int64(time.Second), int64(time.Hour)).Draw(t, "timeout")),
+					MaxDocumentBytes: rapid.Int64Range(-10, 1<<31).Draw(t, "max"),
+				}
+				if ing.Validate() != nil {
+					return
+				}
+				out, err := yaml.Marshal(ing)
+				if err != nil {
+					t.Fatalf("marshal: %v", err)
+				}
+				var back config.IngestionConfig
+				if err := yaml.Unmarshal(out, &back); err != nil {
+					t.Fatalf("unmarshal: %v", err)
+				}
+				if back != ing {
+					t.Fatalf("round-trip changed value: %+v -> %+v", ing, back)
+				}
+			})
+		})
+	})
+})

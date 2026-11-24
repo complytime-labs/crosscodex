@@ -86,7 +86,7 @@ vars:
   CERTS_VOLUME: '{{.CROSSCODEX_CERTS_VOLUME | default "crosscodex-certs"}}'
   # The TLS servers, one key and certificate each. Must match `services` in
   # deploy/certgen/gen.go and the per-service volumes in deploy/compose*.yaml.
-  CERT_SERVICES: db nats litellm praxis crosscodexd
+  CERT_SERVICES: db nats litellm praxis crosscodexd ingestion
   # Key volumes split by consumer (issues #236, #298): one server volume per
   # service in CERT_SERVICES holding only that service's key; CLIENT_CERTS_VOLUME
   # the daemon's client identity (migrate and crosscodexd); ATTESTATION_KEYS_VOLUME
@@ -131,6 +131,17 @@ vars:
   # Praxis offline overlay needs a probe port the local identity does not
   # have), so an explicit LLM_GATEWAY=praxis is refused rather than ignored.
   LOCAL_LLM_GATEWAY: '{{.LLM_GATEWAY | default "litellm"}}'
+  # Document ingestion for the local stack (INGESTION, the CLI var or env; it
+  # ignores deploy/.env like LOCAL_LLM_GATEWAY): 0 (default) runs none, 1 adds
+  # compose.ingestion.yaml (the crosscodex-ingestion service writing to the
+  # shared crosscodex-objects volume), rustfs adds compose.rustfs.yaml on top
+  # (both services on a RustFS S3 bucket). local and local:down validate the
+  # value; LOCAL_INGESTION_OVERLAYS is the overlay list local hands to
+  # deploy:up through COMPOSE_OVERLAY (local:down builds its own list). Only
+  # the local stack takes it:
+  # the ingestion overlay is not hardened for production (deploy/README.md).
+  LOCAL_INGESTION: '{{.INGESTION | default "0"}}'
+  LOCAL_INGESTION_OVERLAYS: '{{if or (eq .LOCAL_INGESTION "1") (eq .LOCAL_INGESTION "rustfs")}}{{.ROOT_DIR}}/deploy/compose.ingestion.yaml{{end}}{{if eq .LOCAL_INGESTION "rustfs"}} {{.ROOT_DIR}}/deploy/compose.rustfs.yaml{{end}}'
   # Opt-in fast build path. LOCAL=1 builds the Go binaries on the host and copies
   # them into thin distroless images (deploy/Dockerfile.local), skipping the
   # hermetic in-container Go build. Requires a local Go toolchain and trades
@@ -145,7 +156,9 @@ vars:
   # compose.offline.yaml (LiteLLM) or compose.offline-praxis.yaml (Praxis) for a
   # local baked Ollama, or compose.offline-remote.yaml (LiteLLM only) for a
   # remote OLLAMA_HOST or an OPENAI_COMPAT_HOST. go-task reads exported env vars as vars, so
-  # smoke_up.sh's child `task deploy:up` picks this up.
+  # smoke_up.sh's child `task deploy:up` picks this up. It is a space-separated
+  # list, loaded in order: deploy:local appends the ingestion overlays
+  # (LOCAL_INGESTION_OVERLAYS) to the offline one.
   COMPOSE_OVERLAY: '{{.COMPOSE_OVERLAY | default ""}}'
 
 tasks:
@@ -396,7 +409,7 @@ tasks:
       # compose config hash changes, not when its image is rebuilt under the
       # same tag, so without it a re-run of deploy:up after an upgrade kept the
       # old crosscodexd running. Volumes persist; services restart briefly.
-      - "{{.COMPOSE_CMD}} {{.COMPOSE_FILES}} {{if .COMPOSE_OVERLAY}}-f {{.COMPOSE_OVERLAY}}{{end}} up -d --build --force-recreate"
+      - "{{.COMPOSE_CMD}} {{.COMPOSE_FILES}}{{range splitList \" \" .COMPOSE_OVERLAY}}{{if .}} -f {{.}}{{end}}{{end}} up -d --build --force-recreate"
       - |
         echo "Waiting for gateway /healthz ..."
         # 150 x 2s = 300s. Covers the worst-case cold start of the full chain:
@@ -436,7 +449,7 @@ tasks:
       # the production project is named after the directory ("deploy"), so it
       # would also delete unrelated containers in any project named "deploy",
       # such as the backup sidecars or a stack run from another deploy/ dir.
-      - '{{.COMPOSE_CMD}} -f {{.ROOT_DIR}}/deploy/compose.yaml -f {{.ROOT_DIR}}/deploy/compose.gateway-litellm.yaml -f {{.ROOT_DIR}}/deploy/compose.gateway-praxis.yaml -f {{.ROOT_DIR}}/deploy/compose.gateway-praxis-models.yaml {{if .COMPOSE_OVERLAY}}-f {{.COMPOSE_OVERLAY}}{{end}} down {{if eq .VOLUMES "1"}}--volumes{{end}}'
+      - '{{.COMPOSE_CMD}} -f {{.ROOT_DIR}}/deploy/compose.yaml -f {{.ROOT_DIR}}/deploy/compose.gateway-litellm.yaml -f {{.ROOT_DIR}}/deploy/compose.gateway-praxis.yaml -f {{.ROOT_DIR}}/deploy/compose.gateway-praxis-models.yaml{{range splitList " " .COMPOSE_OVERLAY}}{{if .}} -f {{.}}{{end}}{{end}} down {{if eq .VOLUMES "1"}}--volumes{{end}}'
       # compose's own `down --volumes` does NOT remove `external` volumes, so
       # the key volumes must be dropped explicitly: the per-service server
       # volumes, the client volume and the attestation volume, plus the
@@ -590,13 +603,16 @@ tasks:
       - rm -rf {{.SMOKE_CERTS_DIR}}
 
   local:
-    desc: Bring up a persistent, offline stack to try CrossCodex under its own identity (project crosscodex-local, port 50251, PKI in .local/crosscodex/pki), then build the CLI and print how to connect (LOCAL=1 for the fast host-build path)
+    desc: Bring up a persistent, offline stack to try CrossCodex under its own identity (project crosscodex-local, port 50251, PKI in .local/crosscodex/pki), then build the CLI and print how to connect (LOCAL=1 for the fast host-build path; INGESTION=1 adds document ingestion, INGESTION=rustfs also moves object storage to RustFS)
     vars:
       LLM_GATEWAY: "{{.LOCAL_LLM_GATEWAY}}"
+      INGESTION: "{{.LOCAL_INGESTION}}"
     requires:
       vars:
         - name: LLM_GATEWAY
           enum: [litellm]
+        - name: INGESTION
+          enum: ["0", "1", rustfs]
     # Checked before cmds, so nothing is built or started without deploy/.env;
     # same message as deploy:up, which local_up.sh's child would otherwise
     # reach only after the provider checks and image builds.
@@ -617,6 +633,9 @@ tasks:
       ROOT_DIR: "{{.ROOT_DIR}}"
       LLM_GATEWAY: "{{.LLM_GATEWAY}}"
       PRAXIS_MODELS_ENDPOINT: "false"
+      # Overlays local_up.sh appends to its offline overlay (empty unless
+      # INGESTION is 1 or rustfs).
+      INGESTION_OVERLAYS: "{{.LOCAL_INGESTION_OVERLAYS}}"
       # Offline LLM provider knobs, as for smoke:up: the baked-model Ollama
       # container by default, OLLAMA_HOST for an existing Ollama, or
       # OPENAI_COMPAT_HOST for another OpenAI-compatible server.
@@ -649,8 +668,16 @@ tasks:
     desc: >-
       Stop the deploy:local stack, keeping its data volumes and PKI. Pass VOLUMES=1 to drop them: it runs
       deploy:down VOLUMES=1 on the local stack, then removes .local/crosscodex (the PKI and its CA key) only if that succeeded.
+      It always removes the ingestion service; pass INGESTION=rustfs, as for deploy:local, to remove the RustFS services and volume too.
+    vars:
+      INGESTION: "{{.LOCAL_INGESTION}}"
+    requires:
+      vars:
+        - name: INGESTION
+          enum: ["0", "1", rustfs]
     # Same identity as local, so deploy:down acts on the local stack. The
-    # offline overlay lets compose also remove the ollama service it added;
+    # offline overlay lets compose also remove the ollama service it added,
+    # and the ingestion overlays the services they add (below);
     # CROSSCODEX_GATEWAY_CONFIG_DIR keeps its mount on the local dir.
     env:
       COMPOSE_PROJECT_NAME: "{{.LOCAL_PROJECT}}"
@@ -658,7 +685,12 @@ tasks:
       CROSSCODEX_CLIENT_CERTS_VOLUME: "{{.LOCAL_CLIENT_CERTS_VOLUME}}"
       CROSSCODEX_ATTESTATION_KEYS_VOLUME: "{{.LOCAL_ATTESTATION_KEYS_VOLUME}}"
       CROSSCODEX_GATEWAY_PORT: "{{.LOCAL_GATEWAY_PORT}}"
-      COMPOSE_OVERLAY: "{{.ROOT_DIR}}/deploy/compose.offline.yaml"
+      # compose.ingestion.yaml is loaded whatever INGESTION is, as deploy:down
+      # loads every gateway fragment, so an ingestion container is removed
+      # even when INGESTION is not repeated here; it needs no secrets.
+      # compose.rustfs.yaml only with INGESTION=rustfs: it refuses to parse
+      # without the RustFS keys.
+      COMPOSE_OVERLAY: '{{.ROOT_DIR}}/deploy/compose.offline.yaml {{.ROOT_DIR}}/deploy/compose.ingestion.yaml{{if eq .INGESTION "rustfs"}} {{.ROOT_DIR}}/deploy/compose.rustfs.yaml{{end}}'
       CROSSCODEX_GATEWAY_CONFIG_DIR: "{{.LOCAL_DIR}}"
     cmds:
       # Same podman runtime view as local_up.sh (TMPDIR/STORAGE_DRIVER in a

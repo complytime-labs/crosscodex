@@ -21,3 +21,9 @@ var ExportSelectProp = selectProp
 
 // ExportNISTNamespace exposes nistNamespace for BDD tests.
 const ExportNISTNamespace = nistNamespace
+
+// ExportApplyDecomposition exposes the Structurer's decomposition step for BDD
+// tests, which need items carrying ParentID and GroupID that no tier emits.
+func ExportApplyDecomposition(items []ControlItem, opts StructureOptions) []ControlItem {
+	return (&defaultStructurer{}).applyDecomposition(items, opts)
+}

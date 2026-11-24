@@ -20,7 +20,8 @@
 # via group_add so it can read the keys despite running as a different user
 # (postgres, nats=root, stunnel=nobody, praxis=praxis, crosscodexd=nonroot).
 # This GID MUST match CERT_GID in .taskfiles/deploy.yml (the deploy:certs task).
-# The LLM gateway fragments declare the litellm and praxis volumes.
+# The LLM gateway fragments declare the litellm and praxis volumes, and
+# compose.ingestion.yaml the ingestion one (deploy:certs fills it either way).
 #
 # The LLM gateway is not defined here: each deploy:* task also loads
 # compose.gateway-${LLM_GATEWAY}.yaml (litellm by default, or praxis). Running

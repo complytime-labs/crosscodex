@@ -1,0 +1,95 @@
+name: Ingestion integration
+
+# End-to-end document ingestion (task test:integration:ingestion): builds the
+# crosscodex-ingestion image (several GB: torch + Docling), brings the deploy
+# stack up over the shared volume and over RustFS, and imports a real PDF.
+#
+# Kept out of ci.yml because the build and run take tens of minutes. It runs
+# only when something it exercises changes, on main, or on demand.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/ingestion-integration.yml"
+      - "deploy/compose*.yaml"
+      - "deploy/certgen/**"
+      - "deploy/local_up.sh"
+      - ".taskfiles/deploy.yml"
+      - ".taskfiles/test/integration.yml"
+      - "test/ingestion/**"
+      - "internal/gateway/backend/ingestion*"
+      - "internal/catalog/**"
+      - "pkg/oscal/**"
+      - "pkg/config/**"
+      - "cmd/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ingestion-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ingestion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CONTAINER_ENGINE: podman
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          lfs: true # test/ingestion/testdata PDFs are LFS objects
+
+      - uses: ./.github/actions/go-setup
+        with:
+          github-token: ${{ github.token }}
+
+      # The ingestion image tag embeds the pinned upstream commit, so hashing
+      # the overlay keys the cache on exactly the image being built.
+      - uses: ./.github/actions/integration-setup
+        with:
+          image-tar-path: /tmp/crosscodex-ingestion.tar
+          image-cache-key: ingestion-image-${{ runner.os }}-${{ hashFiles('deploy/compose.ingestion.yaml') }}
+
+      # deploy/.env is gitignored. The suite needs the file but no real
+      # provider: no LLM runs, so the API keys are placeholders and the
+      # database passwords are random per run.
+      - name: Write throwaway deploy/.env
+        run: |
+          {
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
+            echo "APP_USER_PASSWORD=$(openssl rand -hex 16)"
+            echo "GRAPH_USER_PASSWORD=$(openssl rand -hex 16)"
+            echo "OPENAI_API_KEY=unused-no-llm-in-this-suite"
+            echo "CROSSCODEX_LLM_API_KEY=unused-no-llm-in-this-suite"
+            echo "CROSSCODEX_LLM_DEFAULT_MODEL=default"
+            echo "CROSSCODEX_LLM_EMBEDDING_MODEL=embed"
+          } > deploy/.env
+
+      - name: Run ingestion integration tests
+        run: task test:integration:ingestion
+
+      - name: Save ingestion image for cache
+        if: always()
+        run: |
+          # A tar here came from an exact cache hit; actions/cache only
+          # uploads on a miss, and podman save cannot overwrite an archive.
+          image=$(grep -m1 -oE 'crosscodex-ingestion:[0-9a-f]{40}' deploy/compose.ingestion.yaml)
+          if [ ! -e /tmp/crosscodex-ingestion.tar ] && podman image inspect "$image" >/dev/null 2>&1; then
+            podman save -o /tmp/crosscodex-ingestion.tar "$image"
+          fi
+
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ingestion-integration-output
+          path: .test-output/
+          if-no-files-found: ignore
+          retention-days: 7

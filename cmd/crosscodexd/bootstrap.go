@@ -340,8 +340,9 @@ func checkDefaultTenant(ctx context.Context, role string, cfg *config.Config, po
 
 // buildIngestGateway builds the gateway.Service that serves catalog import for
 // role (all or gateway): X.509 authn through auth.x509_mappings (refusing
-// to start without one), pass-through ingestion
-// into the caller's tenant's object storage (objectStore), and a catalog
+// to start without one), ingestion into the caller's tenant's object storage
+// (objectStore; OSCAL JSON passes through, other documents convert through
+// the ingestion service when ingestion.address is set), and a catalog
 // service that persists controls and publishes them for graph projection.
 // Each import's in-toto ingest attestation is signed with its tenant's
 // attestation key pair (pipeline.NewAttestors, so a key pair that does not
@@ -403,6 +404,7 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 	catalogOpts := []catalog.ServiceOption{
 		catalog.WithParser(oscal.NewParser("", oscal.WithParserTracer(oscalTracer),
 			oscal.WithRequirementPartNames(cfg.Catalog.RequirementPartNames))),
+		catalog.WithStructuring(cfg.Catalog.Structuring),
 		catalog.WithStore(catalog.NewPGStore(dbpkg.NewTenantPool(shared.appPool))),
 		catalog.WithStorage(storageProvider),
 		catalog.WithBus(shared.natsClient),
@@ -410,11 +412,24 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 		catalog.WithTracer(catalogTracer),
 		catalog.WithMeter(catalogMeter),
 	}
+	// Only a configured ingestion service produces converted documents;
+	// without one, ingestion-shaped JSON is an upload like any other.
+	if cfg.Ingestion.Address != "" {
+		// No Completer: the LLM tiers never run, so a converted document the
+		// heading, table and pattern tiers cannot structure fails closed.
+		catalogOpts = append(catalogOpts,
+			catalog.WithStructurer(oscal.NewStructurer(nil, nil, oscal.WithStructurerTracer(oscalTracer))))
+	}
 	if retire != nil {
 		catalogOpts = append(catalogOpts, catalog.WithRetention(*retire))
 	}
 	catalogSvc := catalog.NewService(catalogOpts...)
-	ingestion := backend.NewPassthroughIngestion(storageProvider)
+	ingestionTracer, ingestionMeter := telemetry.Instrumentation("internal/gateway/backend")
+	ingestion, err := backend.NewIngestion(ctx, cfg.Ingestion, cfg.TLS, cfg.Storage.Objects, storageProvider,
+		backend.WithIngestionClientTelemetry(ingestionTracer, ingestionMeter))
+	if err != nil {
+		return nil, fmt.Errorf("%s role: %w", role, err)
+	}
 
 	resultsSvc := newMappingsBackend(shared)
 

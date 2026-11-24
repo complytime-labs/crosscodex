@@ -478,7 +478,7 @@ var _ = Describe("Edge cases (green)", func() {
 	})
 
 	It("#22 parses OSCAL bytes even when the format hint is UNSPECIFIED", func() {
-		// The isOSCALJSON content-sniff (internal/catalog/service.go) overrides the format hint.
+		// The oscal.DetectCatalogJSON content-sniff (ParseCatalog) overrides the format hint.
 		_, err := importCatalog(ctx, sharedState.client, fixture("minimal-catalog.json"),
 			pb.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED, "sniffed")
 		Expect(err).NotTo(HaveOccurred())

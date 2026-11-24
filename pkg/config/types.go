@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"net"
 	"slices"
 	"strconv"
 	"strings"
@@ -31,6 +32,7 @@ type Config struct {
 	Analysis      AnalysisConfig      `yaml:"analysis"      json:"analysis"`
 	Worker        WorkerConfig        `yaml:"worker"        json:"worker"`
 	Pipeline      PipelineConfig      `yaml:"pipeline"      json:"pipeline"`
+	Ingestion     IngestionConfig     `yaml:"ingestion"     json:"ingestion"`
 	Graph         GraphConfig         `yaml:"graph"         json:"graph"`
 	Synthesis     SynthesisConfig     `yaml:"synthesis"     json:"synthesis"`
 	Cleaning      CleaningConfig      `yaml:"cleaning"      json:"cleaning"`
@@ -1231,6 +1233,58 @@ func (c *PipelineConfig) validate(tracker *sourceTracker) error {
 			"it is how long a job's graph stage waits for the graph role to confirm the job's graph is written, so set a positive duration "+
 			"no longer than pipeline.stage_timeout, such as 30m: %w",
 			c.GraphMaterializeTimeout, formatSource(tracker, "pipeline.graph_materialize_timeout"), c.StageTimeout, ErrInvalidConfig)
+	}
+	return p.err()
+}
+
+// IngestionConfig configures the client of the crosscodex-ingestion
+// (Docling) document-conversion service. The connection's TLS settings live
+// in tls.targets.ingestion.
+//
+// Every field is global-only: there is no tenant_overrides map. The service
+// is one shared deployment, and its address, polling cadence, deadline and
+// size cap protect capacity all tenants share.
+type IngestionConfig struct {
+	// Address is the host:port of the ingestion service. Empty means the
+	// service is not configured and ingestion of non-OSCAL documents through
+	// it is unavailable. Example: ingestion.internal:8090.
+	Address string `yaml:"address" json:"address"`
+	// PollInterval is how often the client asks the service whether a
+	// conversion has finished. Must be positive. Default: 2s.
+	PollInterval time.Duration `yaml:"poll_interval" json:"poll_interval"`
+	// ConvertTimeout is the longest the client waits for one document's
+	// conversion before giving up. Must be at least PollInterval. Default: 10m.
+	ConvertTimeout time.Duration `yaml:"convert_timeout" json:"convert_timeout"`
+	// MaxDocumentBytes is the largest document, in bytes, the client sends
+	// for conversion; larger ones are rejected before upload. Must be
+	// positive. Default: 52428800 (50 MiB).
+	MaxDocumentBytes int64 `yaml:"max_document_bytes" json:"max_document_bytes"`
+}
+
+// Validate checks IngestionConfig for consistency.
+func (c *IngestionConfig) Validate() error { return c.validate(nil) }
+
+func (c *IngestionConfig) validate(tracker *sourceTracker) error {
+	var p problems
+	if c.Address != "" {
+		if _, port, err := net.SplitHostPort(c.Address); err != nil || port == "" {
+			p.add("ingestion.address", "ingestion.address %q%s is not host:port: set it to the ingestion service's listener, for example ingestion.internal:8090: %w",
+				c.Address, formatSource(tracker, "ingestion.address"), ErrInvalidConfig)
+		}
+	}
+	if c.PollInterval <= 0 {
+		p.add("ingestion.poll_interval", "ingestion.poll_interval %s%s must be positive: it is how often a conversion's status is checked, so set a duration such as 2s: %w",
+			c.PollInterval, formatSource(tracker, "ingestion.poll_interval"), ErrInvalidConfig)
+	}
+	// Compared with poll_interval only when that is valid, so a bad
+	// poll_interval is reported once, by its own check.
+	if c.ConvertTimeout <= 0 || (c.PollInterval > 0 && c.ConvertTimeout < c.PollInterval) {
+		p.add("ingestion.convert_timeout", "ingestion.convert_timeout %s%s must be positive and at least ingestion.poll_interval %s: it is how long one conversion may take, so set a duration such as 10m: %w",
+			c.ConvertTimeout, formatSource(tracker, "ingestion.convert_timeout"), c.PollInterval, ErrInvalidConfig)
+	}
+	if c.MaxDocumentBytes <= 0 {
+		p.add("ingestion.max_document_bytes", "ingestion.max_document_bytes %d%s must be positive: it caps the size of a document sent for conversion, so set a byte count such as 52428800 (50 MiB): %w",
+			c.MaxDocumentBytes, formatSource(tracker, "ingestion.max_document_bytes"), ErrInvalidConfig)
 	}
 	return p.err()
 }

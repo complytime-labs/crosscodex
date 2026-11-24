@@ -23,6 +23,89 @@ import (
 // This file only registers Describe nodes; Ginkgo collects them automatically.
 
 var _ = Describe("Property Specifications", Ordered, func() {
+	Context("DetectCatalogJSON — fail-closed on invalid JSON", func() {
+		It("never panics on arbitrary bytes", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				data := rapid.SliceOf(rapid.Byte()).Draw(t, "data")
+				// Must never panic — result does not matter.
+				_ = oscal.DetectCatalogJSON(data).MetadataString("title")
+			})
+		})
+
+		It("returns true for a JSON object with the catalog key, false without", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				hasCatalog := rapid.Bool().Draw(t, "hasCatalog")
+				obj := make(map[string]interface{})
+				nKeys := rapid.IntRange(0, 3).Draw(t, "nKeys")
+				for i := 0; i < nKeys; i++ {
+					key := rapid.StringMatching(`^[a-z]{1,8}$`).Draw(t, "key")
+					if key == oscal.CatalogRootKey {
+						continue // don't accidentally add the catalog key
+					}
+					obj[key] = rapid.String().Draw(t, "val")
+				}
+				if hasCatalog {
+					obj[oscal.CatalogRootKey] = map[string]interface{}{
+						"uuid": rapid.String().Draw(t, "uuid"),
+					}
+				}
+				data, err := json.Marshal(obj)
+				if err != nil {
+					t.Fatalf("json.Marshal: %v", err)
+				}
+				if got := oscal.DetectCatalogJSON(data).IsCatalog; got != hasCatalog {
+					t.Fatalf("IsCatalog = %v, want %v for %s", got, hasCatalog, data)
+				}
+			})
+		})
+
+		It("IsModelJSON is true exactly when a JSON object has a model root key, and covers every catalog", func() {
+			models := oscal.ModelRootKeys()
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				obj := map[string]any{}
+				nKeys := rapid.IntRange(0, 3).Draw(t, "nKeys")
+				for i := 0; i < nKeys; i++ {
+					// Hyphenated lowercase keys, the shape of OSCAL model names.
+					key := rapid.StringMatching(`^[a-z]{1,8}(-[a-z]{1,8})?$`).Draw(t, "key")
+					if slices.Contains(models, key) {
+						continue
+					}
+					obj[key] = rapid.String().Draw(t, "val")
+				}
+				hasModel := rapid.Bool().Draw(t, "hasModel")
+				if hasModel {
+					obj[rapid.SampledFrom(models).Draw(t, "model")] = map[string]any{}
+				}
+				data, err := json.Marshal(obj)
+				if err != nil {
+					t.Fatalf("json.Marshal: %v", err)
+				}
+				if got := oscal.IsModelJSON(data); got != hasModel {
+					t.Fatalf("IsModelJSON = %v, want %v for %s", got, hasModel, data)
+				}
+				if oscal.DetectCatalogJSON(data).IsCatalog && !oscal.IsModelJSON(data) {
+					t.Fatalf("a catalog is not detected as an OSCAL model: %s", data)
+				}
+			})
+		})
+
+		It("returns any string metadata field unchanged", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				title := rapid.String().Draw(t, "title")
+				data, err := json.Marshal(map[string]any{
+					oscal.CatalogRootKey: map[string]any{oscal.MetadataKey: map[string]any{"title": title}},
+				})
+				if err != nil {
+					t.Fatalf("json.Marshal: %v", err)
+				}
+				// rapid.String draws valid UTF-8, which round-trips through JSON.
+				if got := oscal.DetectCatalogJSON(data).MetadataString("title"); got != title {
+					t.Fatalf("MetadataString = %q, want %q", got, title)
+				}
+			})
+		})
+	})
+
 	Context("UsableTitle", func() {
 		It("returns either empty or the trimmed title", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {
@@ -240,13 +323,16 @@ var _ = Describe("Property Specifications", Ordered, func() {
 	})
 
 	Context("BuildMappingCollection", func() {
+		// The OSCAL 1.2.3 date-time pattern rejects 29 Feb in every 19xx leap year
+		// (its alternation binds "19" alone), so draw timestamps from 2000-01-01.
+		const oscalSchemaLeapDaySafeFrom = 946_684_800
 		relationships := []string{"EQUIVALENT", "SUPERSET_OF", "SUBSET_OF", "NO_RELATIONSHIP", "CONTRIBUTES_TO", "COMPLEMENTS", "PARTIAL", "CONFLICTS_WITH"}
 
 		drawExport := func(t *rapid.T) oscal.MappingExport {
 			in := oscal.MappingExport{
 				JobID:       "job",
 				Stage:       rapid.SampledFrom([]string{"synthesized", "analyzer"}).Draw(t, "stage"),
-				CompletedAt: time.Unix(rapid.Int64Range(0, 4_000_000_000).Draw(t, "completed"), 0),
+				CompletedAt: time.Unix(rapid.Int64Range(oscalSchemaLeapDaySafeFrom, 4_000_000_000).Draw(t, "completed"), 0),
 				Source:      oscal.ExportCatalog{ID: "src", Name: rapid.String().Draw(t, "srcName"), Version: "1"},
 				Target:      oscal.ExportCatalog{ID: "tgt", Name: rapid.String().Draw(t, "tgtName"), VersionDisplay: "v2"},
 			}
@@ -325,6 +411,81 @@ var _ = Describe("Property Specifications", Ordered, func() {
 				in.Mappings[i].Relationship = rapid.SampledFrom(relationships).Filter(func(r string) bool { return r != old }).Draw(t, "newRelationship")
 				if after := docUUID(t, in); after == before {
 					t.Fatalf("uuid unchanged after relationship %s -> %s", old, in.Mappings[i].Relationship)
+				}
+			})
+		})
+	})
+
+	Context("BuildTree — structure from links only", func() {
+		It("keeps every non-group item once, in order, and gives each a known container key", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				// Draw a forest: each item links only to an earlier item, so
+				// the links are acyclic by construction. IDs are opaque.
+				n := rapid.IntRange(1, 30).Draw(t, "n")
+				items := make([]oscal.ControlItem, n)
+				groups := map[int]bool{}
+				for i := range items {
+					items[i].ID = fmt.Sprintf("%s-%d", rapid.StringMatching(`[A-Za-z0-9.()]{1,6}`).Draw(t, "id"), i)
+					if i == 0 {
+						continue
+					}
+					switch rapid.IntRange(0, 2).Draw(t, "link") {
+					case 1: // in a group: the target becomes (or stays) a group
+						var eligible []int // a group has no ParentID
+						for j := range i {
+							if items[j].ParentID == "" {
+								eligible = append(eligible, j)
+							}
+						}
+						g := rapid.SampledFrom(eligible).Draw(t, "group")
+						items[i].GroupID = items[g].ID
+						groups[g] = true
+					case 2: // a child of an earlier non-group item
+						p := rapid.IntRange(0, i-1).Draw(t, "parent")
+						if !groups[p] {
+							items[i].ParentID = items[p].ID
+						}
+					}
+				}
+				// A drawn parent may have become a group later; drop those links.
+				for i := range items {
+					for g := range groups {
+						if items[i].ParentID == items[g].ID {
+							items[i].ParentID = ""
+						}
+					}
+				}
+
+				tree, err := oscal.BuildTree(items)
+				if err != nil {
+					t.Fatalf("BuildTree rejected an acyclic forest: %v", err)
+				}
+				if len(tree.Containers) != len(groups) || len(tree.Items) != n-len(groups) {
+					t.Fatalf("got %d containers and %d items from %d items with %d groups", len(tree.Containers), len(tree.Items), n, len(groups))
+				}
+				keys := map[string]bool{}
+				for _, c := range tree.Containers {
+					if c.ParentKey != "" && !keys[c.ParentKey] {
+						t.Fatalf("container %q precedes or lacks its parent %q", c.Key, c.ParentKey)
+					}
+					keys[c.Key] = true
+				}
+				next := 0
+				for i, item := range items {
+					if groups[i] {
+						continue
+					}
+					got := tree.Items[next]
+					next++
+					if got.ID != item.ID || got.ParentID != item.ParentID || got.GroupID != item.GroupID {
+						t.Fatalf("item %d changed: %+v -> %+v", i, item, got)
+					}
+					if item.GroupID != "" && got.ContainerKey == "" {
+						t.Fatalf("item %q has GroupID %q but container key %q", got.ID, item.GroupID, got.ContainerKey)
+					}
+					if got.ContainerKey != "" && !keys[got.ContainerKey] {
+						t.Fatalf("item %q names unknown container key %q", got.ID, got.ContainerKey)
+					}
 				}
 			})
 		})

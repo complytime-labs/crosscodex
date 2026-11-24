@@ -23,6 +23,15 @@ vars:
   RUSTFS_ACCESS_KEY: '{{.RUSTFS_ACCESS_KEY | default "rustfsadmin"}}'
   RUSTFS_SECRET_KEY: '{{.RUSTFS_SECRET_KEY | default "rustfsadmin"}}'
   RUSTFS_BUCKET: '{{.RUSTFS_BUCKET | default "crosscodex-test"}}'
+  # RustFS root credentials for the ingestion suite's RustFS stack, fresh per
+  # run (compose.rustfs.yaml refuses to start without them). Cached per
+  # command string like the role passwords above.
+  INGESTION_RUSTFS_ACCESS_KEY:
+    sh: "od -An -tx1 -N24 /dev/urandom | tr -d ' \\n' # ingestion rustfs access"
+    secret: true
+  INGESTION_RUSTFS_SECRET_KEY:
+    sh: "od -An -tx1 -N24 /dev/urandom | tr -d ' \\n' # ingestion rustfs secret"
+    secret: true
   COMPOSE_CMD:
     sh: |
       # Derive compose command from CONTAINER_ENGINE to avoid cross-engine
@@ -92,6 +101,10 @@ env:
   TEST_COMPOSE_CMD: "{{.COMPOSE_CMD}}"
   TEST_CONTAINER_ENGINE: "{{.CONTAINER_ENGINE}}"
   TEST_BACKUP_COMPOSE_FILE: "{{.ROOT_DIR}}/test/compose.backup.yaml"
+  TEST_INGESTION_ROOT_DIR: "{{.ROOT_DIR}}"
+  TEST_INGESTION_OUT_DIR: "{{.TEST_DIR}}/ingestion"
+  TEST_INGESTION_RUSTFS_ACCESS_KEY: "{{.INGESTION_RUSTFS_ACCESS_KEY}}"
+  TEST_INGESTION_RUSTFS_SECRET_KEY: "{{.INGESTION_RUSTFS_SECRET_KEY}}"
   TEST_BACKUP_DATABASE_DSN: "postgres://{{.POSTGRES_USER}}:{{.POSTGRES_PASSWORD}}@localhost:25432/{{.POSTGRES_DB}}?sslmode=verify-full&sslrootcert={{.TEST_DIR}}/certs/ca.pem&sslcert={{.TEST_DIR}}/certs/client.pem&sslkey={{.TEST_DIR}}/certs/client-key.pem" # DevSkim: ignore DS162092 - integration test fixture DSN
 
 tasks:
@@ -401,6 +414,25 @@ tasks:
           REPORT: integration-backup
           COVERAGE: integration-backup-coverage.out
           PACKAGES: "{{.ROOT_DIR}}/test/backup/..."
+
+  ingestion:
+    desc: >-
+      Run the document ingestion end-to-end tests: the deploy stack with deploy/compose.ingestion.yaml, once over the shared
+      object volume and once over RustFS, importing a real PDF through the gateway (no LLM). Needs deploy/.env, as deploy:smoke does;
+      the first run builds the ingestion image (several GB of models). The suite brings each stack up and tears it down itself.
+    deps: [ensure-deps]
+    preconditions:
+      - sh: "test -f {{.ROOT_DIR}}/deploy/.env"
+        msg: "deploy/.env missing. Copy deploy/.env.example to deploy/.env and fill it in."
+    cmds:
+      - mkdir -p {{.TEST_DIR}}/ingestion
+      - task: run-ginkgo
+        vars:
+          TAGS: integration_ingestion
+          TIMEOUT: 120m
+          REPORT: integration-ingestion
+          COVERAGE: integration-ingestion-coverage.out
+          PACKAGES: "{{.ROOT_DIR}}/test/ingestion/..."
 
   authn:
     desc: Run authn container integration tests (nginx mTLS proxy)

@@ -48,6 +48,23 @@ Nine OSCAL catalogs fetched together at `2026-11-10T22:18:12Z` (`sweep/FETCHED_A
 | `bsi_app_4_4` | <https://raw.githubusercontent.com/ComplianceAsCode/oscal-content/a0b4e40513c78995d3cb8f8fc76f5c1f2764e558/catalogs/bsi_app_4_4/catalog.json> | BSI APP.4.4 | 1.0 | `fdfd7ab8631d515ca80107b25186553c466e04f9b12950377121dc0fe1b187ea` | full document, 0.03 MB; repo licence Apache-2.0 |
 | `grundschutz` | <https://raw.githubusercontent.com/BSI-Bund/Stand-der-Technik-Bibliothek/10f3c22898a4b15eb95fa228d78654cff32208e4/control_layer/Grundschutz%2B%2B/Grundschutz%2B%2B-resolved_catalog.json> | "Anwenderkatalog Grundschutz++" | `metadata.version` is a timestamp, 2026-10-29T08:03:12Z | `592410c513691c18631402db3982dda6a4530dd6f2960868a6999017d311fa28` | full document, 5.4 MB; repo licence CC-BY-SA-4.0 |
 
+## Shipped ingestion output: `internal/catalog/testdata/ingestion/`
+
+Untrimmed crosscodex-ingestion output for two document excerpts that crosscodex-ingestion ships as its own fixtures; the converter version, inputs and their hashes are in [that directory's README](../../internal/catalog/testdata/ingestion/README.md).
+
+| File | Canonical URL of the original | Version | Retrieved | SHA-256 of the fixture |
+| --- | --- | --- | --- | --- |
+| `nist-sp800-171r3-excerpt.json` | <https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-171r3.pdf> | NIST SP 800-171 Rev. 3 (May 2024), PDF pages 13-17; converted 2026-11-24 | 2026-11-19 | `8c46190030db1fd57c126a363bda03b3a01f7b69e8fa59bf21f660f14da00751` |
+| `eurlex-nis2-32022L2555.json` | <https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32022L2555> | Directive (EU) 2022/2555 (NIS2), English OJ HTML, CELEX `32022L2555`, excerpt; converted 2026-11-24 | 2026-11-18 | `8d42c92842e44c9ee76560c77fbd83a705fb88e420dadefe522c1db1bf3f0060` |
+
+## Shipped ingestion input: `test/ingestion/testdata/`
+
+The PDF the ingestion end-to-end suite (`task test:integration:ingestion`) imports; it is the input of `nist-sp800-171r3-excerpt.json` above. Details in [that directory's README](../../test/ingestion/testdata/README.md).
+
+| File | Canonical URL of the original | Version | Retrieved | SHA-256 of the fixture |
+| --- | --- | --- | --- | --- |
+| `nist-sp800-171r3-excerpt.pdf` | <https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-171r3.pdf> | NIST SP 800-171 Rev. 3 (May 2024), PDF pages 13-17, copied unchanged from crosscodex-ingestion `tests/fixtures/documents/` | 2026-11-19 | `61f5d194715293bb7debdc5d8efc8285ca9f9593a3e0abbba2799a231bbbb07b` |
+
 ## Adding a source
 
 When you download material for a test, eval or smoke run, add its row here in the same change: canonical URL (a release or tag URL where the publisher has one, else a commit-pinned URL), version, retrieval date, SHA-256 of the file as used, why it is not shipped, and licence if you checked it. Verify the URL by re-downloading into an empty directory and comparing hashes. Keep the material out of git unless its licence permits redistribution and it is a trimmed fixture; trimmed fixtures go under `testdata/` with their origin recorded as in the [tree fixtures README](../../pkg/oscal/testdata/tree/README.md).

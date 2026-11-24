@@ -8,22 +8,6 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
 )
 
-func FuzzIsOSCALJSON(f *testing.F) {
-	f.Add([]byte(`{"catalog":{"uuid":"abc"}}`))
-	f.Add([]byte(`{"document":{"title":"test"}}`))
-	f.Add([]byte(`{invalid`))
-	f.Add([]byte(``))
-	f.Add([]byte(`null`))
-	f.Add([]byte(`[1,2,3]`))
-	f.Add([]byte(`{"catalog": null}`))
-	f.Add([]byte(`{"CATALOG":{}}`))
-
-	f.Fuzz(func(t *testing.T, data []byte) {
-		// Must never panic.
-		_ = catalog.ExportIsOSCALJSON(data)
-	})
-}
-
 func FuzzGenerateCatalogID(f *testing.F) {
 	f.Add("hash1", "tenant-1")
 	f.Add("", "")
@@ -65,5 +49,39 @@ func FuzzValidateTree(f *testing.F) {
 		}
 		// Must never panic.
 		_ = catalog.ExportValidateTree(&tree)
+	})
+}
+
+func FuzzAdaptIngestionOutput(f *testing.F) {
+	f.Add([]byte(`{"schema_version":"1.2","elements":[{"element_id":"e-1","type":"heading","content":"A","level":1,"parent_id":null},{"element_id":"e-2","type":"table","content":"| a |\n|---|\n| 1 |","level":null,"parent_id":"e-1"}]}`))
+	f.Add([]byte(`{"schema_version":"2.0","elements":[]}`))
+	f.Add([]byte(`{"schema_version":"1.0","elements":[{"element_id":"e-1","type":"heading","content":"A","level":100}]}`))
+	f.Add([]byte(`{"schema_version":"1.0","elements":[{"element_id":"e-1","type":"table","content":"| a \\| |\n|---|\n|\\|"}]}`))
+	f.Add([]byte(`{"schema_version":"1.0","elements":[{"element_id":"e-1","type":"paragraph","content":"x","parent_id":"e-1"}]}`))
+	f.Add([]byte(`{"schema_version":"99999999999999999999.0","elements":[[[[[[]]]]]]}`))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		doc, meta, err := catalog.AdaptIngestionOutput(data)
+		if err != nil {
+			return
+		}
+		if !catalog.IsIngestionOutput(data) {
+			t.Fatalf("accepted output is not detected as ingestion output")
+		}
+		if meta.SchemaVersion == "" {
+			t.Fatalf("accepted output has no schema version")
+		}
+		for i, s := range doc.Sections {
+			if s.Level < 1 || s.Level > 100 {
+				t.Fatalf("section %d has level %d", i, s.Level)
+			}
+		}
+		for i, table := range doc.Tables {
+			for j, row := range table.Rows {
+				if len(row) != len(table.Headers) {
+					t.Fatalf("table %d row %d has %d cells, header has %d", i, j, len(row), len(table.Headers))
+				}
+			}
+		}
 	})
 }

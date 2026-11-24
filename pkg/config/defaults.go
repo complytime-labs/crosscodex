@@ -247,6 +247,11 @@ pipeline:
   graph_materialize_timeout: 30m
   addr: ""
   endpoint: ""
+ingestion:
+  address: ""
+  poll_interval: 2s
+  convert_timeout: 10m
+  max_document_bytes: 52428800
 graph:
   max_bulk_edges: 1000
   max_similarity_catalogs: 100

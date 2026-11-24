@@ -15,7 +15,8 @@
 #                each service volume holds ca.pem, server.pem and server-key.pem
 #                (the key's content is the service name), the client and
 #                attestation volumes their own files; default none.
-# Prints smoke_up.sh output, then "smoke_up exit=<code>".
+# Prints smoke_up.sh output (with the stub task's "task_compose_overlay=<overlays>"),
+# then "smoke_up exit=<code>".
 set -u
 root="${1:?Usage: smoke-up-hardening.sh <repo-root>}"
 d=$(mktemp -d)
@@ -25,7 +26,9 @@ cp "${root}/test/deploy/podman_env.sh" "$d/test/deploy/"
 cp "${root}/scripts/in-container.sh" "${root}/scripts/generate-llm-gateway-config.sh" \
 	"${root}/scripts/check-openai-compat-models.sh" "$d/scripts/"
 cp "${root}"/deploy/litellm/*.tmpl "$d/deploy/litellm/"
-printf '#!/bin/sh\nexit 0\n' >"$d/bin/task"
+# The stub task prints the overlays the child `task deploy:up` would load.
+# shellcheck disable=SC2016 # the $ must reach the stub unexpanded
+printf '#!/bin/sh\necho "task_compose_overlay=$COMPOSE_OVERLAY"\nexit 0\n' >"$d/bin/task"
 
 default_table='db 0000000000000000 256 crosscodex-smoke-certs-db
 nats 0000000000000000 256 crosscodex-smoke-certs-nats
@@ -40,7 +43,7 @@ printf '%s\n' "${PRESENT:-}" >"$d/present"
 # told apart by content.
 host="$d/.test-output/deploy-smoke/certs"
 mkdir -p "$host"
-for k in ca client attestation db nats litellm praxis crosscodexd; do
+for k in ca client attestation db nats litellm praxis crosscodexd ingestion; do
 	printf '%s\n' "$k" >"$host/$k-key.pem"
 done
 mkvol() { # mkvol <volume> <file>=<content>...
@@ -51,7 +54,7 @@ mkvol() { # mkvol <volume> <file>=<content>...
 	for f in "$@"; do printf '%s\n' "${f#*=}" >"$v/${f%%=*}"; done
 	printf 'fingerprint\n' >"$v/.fingerprint"
 }
-for svc in db nats litellm praxis crosscodexd; do
+for svc in db nats litellm praxis crosscodexd ingestion; do
 	mkvol "crosscodex-smoke-certs-$svc" ca.pem=ca server.pem="$svc" server-key.pem="$svc"
 done
 mkvol smoke-client-certs ca.pem=ca client.pem=client client-key.pem=client
