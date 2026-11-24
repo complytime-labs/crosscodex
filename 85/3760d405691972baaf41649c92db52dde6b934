@@ -1,0 +1,23 @@
+internal/analysis/options.go
+  s_51f263053339cb::t_c6454a949e19fc 57
+internal/analysis/progress.go
+  s_51f263053339cb::t_9b675ff6c7cd94 225-228
+internal/analysis/progress_bdd_test.go
+  s_51f263053339cb::t_688d603448a953 403-429
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "853760d405691972baaf41649c92db52dde6b934",
+  "prompts": {},
+  "sessions": {
+    "s_51f263053339cb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1ed4a700-2209-4f05-a54a-7a3c4228c5f4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
