@@ -23,6 +23,89 @@ import (
 // This file only registers Describe nodes; Ginkgo collects them automatically.
 
 var _ = Describe("Property Specifications", Ordered, func() {
+	Context("DetectCatalogJSON — fail-closed on invalid JSON", func() {
+		It("never panics on arbitrary bytes", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				data := rapid.SliceOf(rapid.Byte()).Draw(t, "data")
+				// Must never panic — result does not matter.
+				_ = oscal.DetectCatalogJSON(data).MetadataString("title")
+			})
+		})
+
+		It("returns true for a JSON object with the catalog key, false without", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				hasCatalog := rapid.Bool().Draw(t, "hasCatalog")
+				obj := make(map[string]interface{})
+				nKeys := rapid.IntRange(0, 3).Draw(t, "nKeys")
+				for i := 0; i < nKeys; i++ {
+					key := rapid.StringMatching(`^[a-z]{1,8}$`).Draw(t, "key")
+					if key == oscal.CatalogRootKey {
+						continue // don't accidentally add the catalog key
+					}
+					obj[key] = rapid.String().Draw(t, "val")
+				}
+				if hasCatalog {
+					obj[oscal.CatalogRootKey] = map[string]interface{}{
+						"uuid": rapid.String().Draw(t, "uuid"),
+					}
+				}
+				data, err := json.Marshal(obj)
+				if err != nil {
+					t.Fatalf("json.Marshal: %v", err)
+				}
+				if got := oscal.DetectCatalogJSON(data).IsCatalog; got != hasCatalog {
+					t.Fatalf("IsCatalog = %v, want %v for %s", got, hasCatalog, data)
+				}
+			})
+		})
+
+		It("IsModelJSON is true exactly when a JSON object has a model root key, and covers every catalog", func() {
+			models := oscal.ModelRootKeys()
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				obj := map[string]any{}
+				nKeys := rapid.IntRange(0, 3).Draw(t, "nKeys")
+				for i := 0; i < nKeys; i++ {
+					// Hyphenated lowercase keys, the shape of OSCAL model names.
+					key := rapid.StringMatching(`^[a-z]{1,8}(-[a-z]{1,8})?$`).Draw(t, "key")
+					if slices.Contains(models, key) {
+						continue
+					}
+					obj[key] = rapid.String().Draw(t, "val")
+				}
+				hasModel := rapid.Bool().Draw(t, "hasModel")
+				if hasModel {
+					obj[rapid.SampledFrom(models).Draw(t, "model")] = map[string]any{}
+				}
+				data, err := json.Marshal(obj)
+				if err != nil {
+					t.Fatalf("json.Marshal: %v", err)
+				}
+				if got := oscal.IsModelJSON(data); got != hasModel {
+					t.Fatalf("IsModelJSON = %v, want %v for %s", got, hasModel, data)
+				}
+				if oscal.DetectCatalogJSON(data).IsCatalog && !oscal.IsModelJSON(data) {
+					t.Fatalf("a catalog is not detected as an OSCAL model: %s", data)
+				}
+			})
+		})
+
+		It("returns any string metadata field unchanged", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				title := rapid.String().Draw(t, "title")
+				data, err := json.Marshal(map[string]any{
+					oscal.CatalogRootKey: map[string]any{oscal.MetadataKey: map[string]any{"title": title}},
+				})
+				if err != nil {
+					t.Fatalf("json.Marshal: %v", err)
+				}
+				// rapid.String draws valid UTF-8, which round-trips through JSON.
+				if got := oscal.DetectCatalogJSON(data).MetadataString("title"); got != title {
+					t.Fatalf("MetadataString = %q, want %q", got, title)
+				}
+			})
+		})
+	})
+
 	Context("UsableTitle", func() {
 		It("returns either empty or the trimmed title", func() {
 			rapid.Check(GinkgoT(), func(t *rapid.T) {

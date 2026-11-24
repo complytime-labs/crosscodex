@@ -290,8 +290,8 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 
 	// Detect actual format from content, decoding the document once for
 	// detection and for its metadata (title, version).
-	doc := readOSCALDocument(data)
-	detectedIsOSCAL := doc.isOSCAL
+	doc := oscal.DetectCatalogJSON(data)
+	detectedIsOSCAL := doc.IsCatalog
 
 	// Validate format hint against detected format
 	var isOSCAL bool
@@ -351,13 +351,13 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 	// Derive catalog name from OSCAL metadata.title if not provided
 	catalogName := req.Msg.GetCatalogName()
 	if catalogName == "" && isOSCAL {
-		catalogName = doc.metadataString(OSCALTitleKey)
+		catalogName = doc.MetadataString(OSCALTitleKey)
 	}
 	// The catalog's own version, so a crosswalk shows the exact versions it
 	// mapped. Only OSCAL documents carry one; any other format records "".
 	var catalogVersion string
 	if isOSCAL {
-		catalogVersion = doc.metadataString(OSCALVersionKey)
+		catalogVersion = doc.MetadataString(OSCALVersionKey)
 	}
 
 	var (
@@ -426,7 +426,7 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		} else {
 			catalogRecord.DocumentSlug = slug
 			var verr *connect.Error
-			version, versionLabel, supersededID, changeReport, verr = s.importVersion(ctx, catalogRecord, containerRecords, controlRecords, explicitLabel, doc.metadataString(OSCALVersionKey))
+			version, versionLabel, supersededID, changeReport, verr = s.importVersion(ctx, catalogRecord, containerRecords, controlRecords, explicitLabel, doc.MetadataString(OSCALVersionKey))
 			if verr != nil {
 				return nil, verr
 			}
@@ -859,44 +859,6 @@ func (s *Service) SearchControls(ctx context.Context, req *connect.Request[cross
 
 // Helper functions
 
-// oscalDocument is what ParseCatalog reads from a document before parsing
-// its controls: whether it is OSCAL JSON (a JSON object with the "catalog"
-// key, whatever its value) and the catalog's metadata object, nil when absent
-// or not an object.
-type oscalDocument struct {
-	isOSCAL  bool
-	metadata map[string]interface{}
-}
-
-// readOSCALDocument decodes data once. A document that is not a JSON object
-// is not OSCAL.
-func readOSCALDocument(data []byte) oscalDocument {
-	var root map[string]interface{}
-	if err := json.Unmarshal(data, &root); err != nil {
-		return oscalDocument{}
-	}
-	rawCatalog, ok := root[OSCALRootKey]
-	if !ok {
-		return oscalDocument{}
-	}
-	doc := oscalDocument{isOSCAL: true}
-	if catalog, ok := rawCatalog.(map[string]interface{}); ok {
-		doc.metadata, _ = catalog[OSCALMetadataKey].(map[string]interface{})
-	}
-	return doc
-}
-
-// oscalProfileRootKey is the top-level key of an OSCAL profile, which selects
-// controls from a catalog rather than being one.
-const oscalProfileRootKey = "profile"
-
-// oscalOtherModelRootKeys are the top-level keys of the OSCAL models that
-// neither are a catalog nor resolve into one.
-var oscalOtherModelRootKeys = []string{
-	"component-definition", "system-security-plan", "assessment-plan",
-	"assessment-results", "plan-of-action-and-milestones", "mapping-collection",
-}
-
 // UnsupportedFormatError explains why a document that failed OSCAL detection
 // cannot be imported. Only OSCAL JSON is supported, so the advice depends on
 // what was sent: a declared Gemara catalog, OSCAL in XML or YAML, bytes that
@@ -922,7 +884,7 @@ func UnsupportedFormatError(format crosscodexv1.CatalogFormat, data []byte) erro
 			_, rest, _ := bytes.Cut(yamlBody, []byte("\n"))
 			yamlBody = bytes.TrimSpace(rest)
 		}
-		if bytes.HasPrefix(yamlBody, []byte(OSCALRootKey+":")) || bytes.HasPrefix(yamlBody, []byte(oscalProfileRootKey+":")) {
+		if bytes.HasPrefix(yamlBody, []byte(OSCALRootKey+":")) || bytes.HasPrefix(yamlBody, []byte(oscal.ProfileRootKey+":")) {
 			return fmt.Errorf("unsupported catalog format: the document is YAML. %s; convert it to "+
 				"OSCAL JSON (NIST's oscal-cli converts between OSCAL formats) and import the JSON file", supported)
 		}
@@ -932,12 +894,15 @@ func UnsupportedFormatError(format crosscodexv1.CatalogFormat, data []byte) erro
 	}
 	var root map[string]json.RawMessage
 	if json.Unmarshal(data, &root) == nil {
-		if _, ok := root[oscalProfileRootKey]; ok {
+		if _, ok := root[oscal.ProfileRootKey]; ok {
 			return fmt.Errorf("unsupported catalog format: the document is an OSCAL profile, not a catalog. "+
 				"Resolve the profile into a catalog (NIST's oscal-cli resolves profiles), or import the "+
 				"resolved-profile catalog its publisher provides. %s", supported)
 		}
-		for _, key := range oscalOtherModelRootKeys {
+		for _, key := range oscal.ModelRootKeys() {
+			if key == oscal.CatalogRootKey || key == oscal.ProfileRootKey {
+				continue // a catalog never reaches here; a profile has its own advice above
+			}
 			if _, ok := root[key]; ok {
 				return fmt.Errorf("unsupported catalog format: the document is an OSCAL %q, not a catalog. "+
 					"%s; import the catalog whose controls it references instead", key, supported)
@@ -1010,14 +975,6 @@ func generateCatalogID(contentHash, tenantID string) string {
 	h.Write([]byte(contentHash))
 	h.Write([]byte(tenantID))
 	return hex.EncodeToString(h.Sum(nil))[:16]
-}
-
-// metadataString returns the string field key of the catalog's metadata
-// (OSCALTitleKey, OSCALVersionKey), or "" when the document is not OSCAL
-// JSON or the field is absent or not a string.
-func (d oscalDocument) metadataString(key string) string {
-	value, _ := d.metadata[key].(string)
-	return value
 }
 
 // formatStringToEnum maps the stored format string to CatalogFormat enum.

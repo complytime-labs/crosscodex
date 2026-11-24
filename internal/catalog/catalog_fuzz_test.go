@@ -8,22 +8,6 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
 )
 
-func FuzzIsOSCALJSON(f *testing.F) {
-	f.Add([]byte(`{"catalog":{"uuid":"abc"}}`))
-	f.Add([]byte(`{"document":{"title":"test"}}`))
-	f.Add([]byte(`{invalid`))
-	f.Add([]byte(``))
-	f.Add([]byte(`null`))
-	f.Add([]byte(`[1,2,3]`))
-	f.Add([]byte(`{"catalog": null}`))
-	f.Add([]byte(`{"CATALOG":{}}`))
-
-	f.Fuzz(func(t *testing.T, data []byte) {
-		// Must never panic.
-		_ = catalog.ExportIsOSCALJSON(data)
-	})
-}
-
 func FuzzGenerateCatalogID(f *testing.F) {
 	f.Add("hash1", "tenant-1")
 	f.Add("", "")

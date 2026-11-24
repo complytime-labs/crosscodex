@@ -1,5 +1,7 @@
 package catalog
 
+import "github.com/complytime-labs/crosscodex/pkg/oscal"
+
 // Catalog format type strings used throughout the service.
 // These match the stored provenance format field and are mapped
 // to protobuf enum values via formatStringToEnum.
@@ -17,10 +19,7 @@ const (
 // OSCAL JSON structure keys per OSCAL specification
 const (
 	// OSCALRootKey is the top-level key in OSCAL JSON catalogs
-	OSCALRootKey = "catalog"
-
-	// OSCALMetadataKey is the metadata object key within a catalog
-	OSCALMetadataKey = "metadata"
+	OSCALRootKey = oscal.CatalogRootKey
 
 	// OSCALTitleKey is the title field within metadata
 	OSCALTitleKey = "title"

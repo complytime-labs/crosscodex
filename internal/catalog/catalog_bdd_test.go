@@ -1198,18 +1198,6 @@ var _ = Describe("Service", func() {
 // Helper function specs (from service_test.go, using export bridges)
 // ===========================================================================
 
-var _ = Describe("isOSCALJSON", func() {
-	DescribeTable("detects OSCAL documents",
-		func(data string, want bool) {
-			Expect(catalog.ExportIsOSCALJSON([]byte(data))).To(Equal(want))
-		},
-		Entry("valid OSCAL", `{"catalog":{"uuid":"abc"}}`, true),
-		Entry("not OSCAL", `{"document":{"title":"test"}}`, false),
-		Entry("invalid JSON", `{invalid`, false),
-		Entry("empty", ``, false),
-	)
-})
-
 var _ = Describe("validateTree", func() {
 	valid := func() *oscal.Tree {
 		return &oscal.Tree{

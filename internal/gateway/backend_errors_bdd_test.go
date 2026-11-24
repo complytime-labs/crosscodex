@@ -18,10 +18,31 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/internal/gateway/backend"
+	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
+
+// failedConversionRPC is an ingestion service whose every conversion fails
+// with message. Only the two RPCs the ingestion client calls are implemented;
+// the embedded nil interface makes any other call panic.
+type failedConversionRPC struct {
+	crosscodexv1connect.IngestionServiceClient
+	message string
+}
+
+func (failedConversionRPC) ConvertDocument(context.Context, *connect.Request[pb.ConvertDocumentRequest]) (*connect.Response[pb.ConvertDocumentResponse], error) {
+	return connect.NewResponse(&pb.ConvertDocumentResponse{DocumentId: "doc-1", Status: pb.JobStatus_JOB_STATUS_PENDING}), nil
+}
+
+func (r failedConversionRPC) GetDocument(context.Context, *connect.Request[pb.GetDocumentRequest]) (*connect.Response[pb.GetDocumentResponse], error) {
+	return connect.NewResponse(&pb.GetDocumentResponse{Document: &pb.Document{
+		DocumentId: "doc-1", ConversionStatus: pb.JobStatus_JOB_STATUS_FAILED, Error: &pb.Error{Message: r.message},
+	}}), nil
+}
 
 var _ = Describe("Backend errors at the gateway boundary", func() {
 	// secret stands in for driver detail a backend might return unsanitized:
@@ -350,6 +371,19 @@ var _ = Describe("Backend errors at the gateway boundary", func() {
 		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnimplemented))
 		Expect(message(err)).To(Equal("only inline content is supported; source_uri is not implemented"))
 		Expect(logs.String()).To(BeEmpty())
+	})
+
+	It("withholds the ingestion client's conversion failure text and logs it once", func() {
+		rpc := failedConversionRPC{message: "docling: " + secret}
+		client, err := backend.NewIngestionClient(rpc, &storagetest.Fake{}, backend.StorageBackend{Kind: "local", Root: "/srv/objects"},
+			config.IngestionConfig{PollInterval: time.Millisecond, ConvertTimeout: time.Second, MaxDocumentBytes: 1024})
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = newService(gateway.WithIngestionBackend(client)).SubmitDocument(ctxFor(userCtx("user-a"), localTrace), docRequest)
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
+		withheldRef(err)
+		Expect(message(err)).NotTo(ContainSubstring("secret_admin"))
+		Expect(strings.Count(logs.String(), "secret_admin")).To(Equal(1), "the ingestion text must be logged exactly once")
 	})
 
 	// The policy is an allowlist: only codes a caller can act on keep their

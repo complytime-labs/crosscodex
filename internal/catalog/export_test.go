@@ -3,22 +3,12 @@ package catalog
 // Export unexported functions for property and fuzz testing.
 
 var (
-	ExportIsOSCALJSON          = isOSCALJSON
 	ExportValidateTree         = validateTree
 	ExportGenerateCatalogID    = generateCatalogID
 	ExportMergeResults         = mergeResults
 	ExportCatalogRecordToProto = catalogRecordToProto
 	ExportControlRecordToProto = controlRecordToProto
 )
-
-// isOSCALJSON reports whether data is OSCAL JSON, as ParseCatalog detects it.
-func isOSCALJSON(data []byte) bool { return readOSCALDocument(data).isOSCAL }
-
-// oscalMetadataString returns the metadata field key of data, as ParseCatalog
-// reads the title and version.
-func oscalMetadataString(data []byte, key string) string {
-	return readOSCALDocument(data).metadataString(key)
-}
 
 // Type aliases for test accessibility.
 type ExportControlRecord = ControlRecord

@@ -610,8 +610,19 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, clientCertPat
 		catalog.WithMeter(catalogMeter),
 	)
 
-	// Create local ingestion backend (stores raw content to local storage)
-	localIngestion := backend.NewPassthroughIngestion(localStorage)
+	// Ingestion stores OSCAL JSON to local storage unchanged and, when
+	// ingestion.address is set, converts other documents through the
+	// ingestion service. The embedded daemon ignores storage.objects and
+	// keeps objects under dataDir, so that is the directory the ingestion
+	// service must share.
+	ingestionTracer, ingestionMeter := telemetry.Instrumentation("internal/gateway/backend")
+	localIngestion, err := backend.NewIngestion(ctx, cfg.Ingestion, cfg.TLS,
+		config.ObjectStorageConfig{Backend: string(storage.ProviderTypeLocal), BasePath: dataDir}, localStorage,
+		backend.WithIngestionClientTelemetry(ingestionTracer, ingestionMeter))
+	if err != nil {
+		resources.close()
+		return nil, nil, nil, fmt.Errorf("embedded daemon: %w", err)
+	}
 
 	// Create local pipeline backend (records jobs, no execution)
 	pipelineStore := pipeline.NewPGStore(tenantConn, pool,

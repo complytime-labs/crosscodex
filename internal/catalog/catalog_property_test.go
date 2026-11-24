@@ -1,7 +1,6 @@
 package catalog_test
 
 import (
-	"encoding/json"
 	"regexp"
 	"time"
 
@@ -18,48 +17,6 @@ import (
 var hexPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 var _ = Describe("Property Specifications", Ordered, func() {
-
-	Context("isOSCALJSON — fail-closed on invalid JSON", func() {
-		It("never panics on arbitrary bytes", func() {
-			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				data := rapid.SliceOf(rapid.Byte()).Draw(t, "data")
-				// Must never panic — result does not matter.
-				_ = catalog.ExportIsOSCALJSON(data)
-			})
-		})
-
-		It("returns true for valid JSON with catalog key, false without", func() {
-			rapid.Check(GinkgoT(), func(t *rapid.T) {
-				hasCatalog := rapid.Bool().Draw(t, "hasCatalog")
-				obj := make(map[string]interface{})
-				// Add 0-3 random keys.
-				nKeys := rapid.IntRange(0, 3).Draw(t, "nKeys")
-				for i := 0; i < nKeys; i++ {
-					key := rapid.StringMatching(`^[a-z]{1,8}$`).Draw(t, "key")
-					if key == "catalog" {
-						continue // don't accidentally add catalog key
-					}
-					obj[key] = rapid.String().Draw(t, "val")
-				}
-				if hasCatalog {
-					obj["catalog"] = map[string]interface{}{
-						"uuid": rapid.String().Draw(t, "uuid"),
-					}
-				}
-				data, err := json.Marshal(obj)
-				if err != nil {
-					t.Fatalf("json.Marshal: %v", err)
-				}
-				result := catalog.ExportIsOSCALJSON(data)
-				if hasCatalog && !result {
-					t.Fatalf("expected true for JSON with catalog key, got false: %s", data)
-				}
-				if !hasCatalog && result {
-					t.Fatalf("expected false for JSON without catalog key, got true: %s", data)
-				}
-			})
-		})
-	})
 
 	Context("validateTree — duplicate detection", func() {
 		It("returns error when at least two items share the same ID", func() {
