@@ -1,0 +1,39 @@
+test/tooling/lib/fake-crosscodex.sh
+  s_51f263053339cb::t_7eabce10182c50 10-11,32-33
+  s_51f263053339cb::t_e82d03bbd72068 34
+.taskfiles/eval.yml
+  s_51f263053339cb::t_bf8c9ddafdd580 19,40
+test/tooling/eval-crosswalk.venom.yml
+  s_51f263053339cb::t_7eabce10182c50 89-144,147,150
+  s_51f263053339cb::t_0ee0edca56b367 145-146,148-149
+test/eval/crosswalk/cmd/crosswalk-eval/main_bdd_test.go
+  s_51f263053339cb::t_52fc22668287f2 126-159
+test/eval/crosswalk/labelinput.go
+  s_51f263053339cb::t_c8d398070f8c54 1-42,44-45,47-75,77-103,105-159
+  s_51f263053339cb::t_1ffb4723298fbf 43,46,76,104
+test/eval/crosswalk/labelinput_bdd_test.go
+  s_51f263053339cb::t_b23a914f602a96 1-153
+test/eval/crosswalk/cmd/crosswalk-eval/main.go
+  s_51f263053339cb::t_52fc22668287f2 7,34,54-55,227-233
+  s_51f263053339cb::t_f1086d421135d8 234-235
+test/eval/crosswalk/run.sh
+  s_51f263053339cb::t_bf8c9ddafdd580 17-20,44,223-226,231-237
+  s_51f263053339cb::t_2206ecdee50f51 227-230
+  s_51f263053339cb::t_e29cc3b771bbdb 238
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "620706d0f7b1e214d92fa73b2ef490eba4f79566",
+  "prompts": {},
+  "sessions": {
+    "s_51f263053339cb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1ed4a700-2209-4f05-a54a-7a3c4228c5f4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
