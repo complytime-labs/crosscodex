@@ -1,0 +1,38 @@
+test/tooling/deploy-ingestion.venom.yml
+  s_0b1becf5bbea3d::t_2353583537effb 5-8,81-131
+  s_0b1becf5bbea3d::t_c647bfbd3948f3 55,61-71
+test/tooling/smoke-up-hardening.venom.yml
+  s_0b1becf5bbea3d::t_c647bfbd3948f3 18-27
+.taskfiles/deploy.yml
+  s_0b1becf5bbea3d::t_ba835af71f8747 139-141,671,680,688-693
+test/tooling/lib/smoke-up-hardening.sh
+  s_0b1becf5bbea3d::t_c647bfbd3948f3 18-19,29-31
+.taskfiles/test.yml
+  s_0b1becf5bbea3d::t_2353583537effb 81-83
+test/deploy/smoke_up.sh
+  s_0b1becf5bbea3d::t_ba835af71f8747 61-64
+README.md
+  s_0b1becf5bbea3d::t_aa6b97acfcb292 22
+test/tooling/lib/compose-rustfs-config.sh
+  s_0b1becf5bbea3d::t_af78af67d9b69a 8,43-45
+  s_0b1becf5bbea3d::t_a97efc5d9de1bf 1-7,12-25,28-31,33-34,36-42,46-49
+  s_0b1becf5bbea3d::t_1ba740c069f220 9-11,26-27,32,35
+deploy/README.md
+  s_0b1becf5bbea3d::t_aa6b97acfcb292 350-351,354,356
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "4f569582d3f0de98d1bfa3c43dc7bc5331b36003",
+  "prompts": {},
+  "sessions": {
+    "s_0b1becf5bbea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "413f3a44-446c-458a-8dd6-69acadf88cd5",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
