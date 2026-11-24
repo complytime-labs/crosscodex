@@ -20,6 +20,7 @@ Local document ingestion overlays (#214). `task deploy:up` applies the PKI chang
 
 - **The deploy PKI gains an `ingestion` server certificate**, loaded into a new volume `crosscodex-certs-ingestion` whether or not ingestion runs. A set without it fails verification, so the first `task deploy:up`, `deploy:certs` or `deploy:local` after upgrading replaces the PKI: a new CA, client certificate and attestation keypair. Back up `deploy/certs/attestation-pub.pem` first, let running analysis jobs finish, and re-point clients at the new `ca.pem`, `client.pem` and `client-key.pem`, as for #298 below.
 - **`task deploy:local INGESTION=1`** adds the ingestion service, and `INGESTION=rustfs` also moves object storage to a local RustFS bucket (needs `RUSTFS_ACCESS_KEY` and `RUSTFS_SECRET_KEY` in `deploy/.env`). `deploy:local:down` always removes the ingestion service; pass `INGESTION=rustfs` to it as well to remove RustFS. See [deploy/README.md](deploy/README.md#document-ingestion-ingestion).
+- **A new `ingestion` config block** (`address`, `poll_interval`, `convert_timeout`, `max_document_bytes`; all global-only, TLS from `tls.targets.ingestion`) wires the gateway to the ingestion service. With `ingestion.address` empty, the default, nothing changes: a document that is not OSCAL JSON is still rejected. With it set, everything except OSCAL JSON goes to ingestion, including OSCAL XML and YAML, which no longer get the `oscal-cli` conversion advice. A converted document that the heading, table and numbering rules cannot split is refused with `FailedPrecondition`. See [Document ingestion](#document-ingestion).
 - **`COMPOSE_OVERLAY` is a space-separated list** of overlay files; a single path works as before.
 
 OSCAL mapping export and release readiness (#215, #17). Mostly additive; four behaviours change:
@@ -393,6 +394,24 @@ crosscodex catalog retire --yes "nist-800-53@Rev 3" "nist-800-53@Rev 4"
 
 Without `--yes` the command refuses and lists the `<slug>@<label>` versions it would retire; run `crosscodex catalog list` to review them first. Each version is archived, then deleted with its controls, embeddings and cached results. **Retiring cannot be undone from the CLI:** there is no restore command, and the archive copy is the only one left. The version that superseded it is linked to its predecessor. Versions named in one command are retired together or not at all. Retire refuses, naming the blocker, a document's current version, a version a legal hold covers, and a version used by a job that is still pending or running, is under a legal hold or has attestations. Graph nodes are left in place. See [docs/dev/retention.md](docs/dev/retention.md#retiring-a-catalog-version) and, for the lineage model and limits, [docs/dev/catalog-versions.md](docs/dev/catalog-versions.md).
 
+#### Import a document (PDF, HTML, DOCX)
+
+With the ingestion service configured (`ingestion.address`, see [Document ingestion](#document-ingestion)), `catalog import` also takes a PDF, HTML, DOCX or text document. The CLI's own help text still says only OSCAL JSON is accepted; that describes a server without ingestion. The document is converted by [crosscodex-ingestion](https://github.com/complytime-labs/crosscodex-ingestion) (Docling), then split into controls by the heading, table and numbering rules:
+
+```sh
+crosscodex catalog import --document sp800-171 --version-label "Rev 3" nist-sp800-171r3.pdf
+```
+
+Conversion can take minutes for a long PDF. The import fails and no catalog is stored when:
+
+- the document is larger than `ingestion.max_document_bytes` (50 MiB by default; `ResourceExhausted`, refused before upload to the service);
+- conversion takes longer than `ingestion.convert_timeout` (10 minutes by default);
+- no heading, table or numbering rule in the converted text finds the controls (`FailedPrecondition` naming `catalog.structuring.section_pattern`: set it to a regular expression whose group 1 is the control identifier and group 2 its text, then import again).
+
+A failed import can still leave objects in the tenant's storage; see the orphaned-output limitation under [Document ingestion](#document-ingestion).
+
+Without ingestion configured, a document that is not OSCAL JSON is rejected as before.
+
 ### 7. List and inspect catalogs
 
 ```sh
@@ -577,7 +596,7 @@ flowchart TD
         docs["Documents<br/>PDF, DOCX, HTML"]
     end
     subgraph processing ["Processing Pipeline"]
-        ingestion["Ingestion Service<br/>Python + Docling<br/>separate repo, not yet wired"]
+        ingestion["Ingestion Service<br/>Python + Docling<br/>separate repo"]
         catalog["Catalog Service<br/>Go + OSCAL"]
         analysis["Analysis Engine<br/>Go + Plugins"]
         llm["LLM Workers<br/>Go + AI Models"]
@@ -624,7 +643,7 @@ flowchart TD
 
 | Service             | Purpose                                         | Technology          |
 |---------------------|-------------------------------------------------|---------------------|
-| **Ingestion**       | Docling conversion; not yet wired, own repo     | Python gRPC service |
+| **Ingestion**       | Docling conversion; optional, own repo          | Python gRPC service |
 | **Catalog**         | OSCAL parsing, document structuring, validation | Go                  |
 | **Analysis Engine** | Host for analyzer plugins, DAG execution        | Go                  |
 | **LLM Workers**     | Horizontally scalable LLM task execution        | Go                  |
@@ -632,7 +651,7 @@ flowchart TD
 | **Graph**           | openCypher queries via Apache AGE on PostgreSQL | Go                  |
 | **Pipeline**        | Job orchestration, state tracking, retry logic  | Go                  |
 
-The Ingestion service lives in its own repository, [complytime-labs/crosscodex-ingestion](https://github.com/complytime-labs/crosscodex-ingestion). The gateway does not call it yet: it stores uploads unchanged, and the Catalog service imports only OSCAL JSON. Wiring Docling conversion into imports is tracked in issue [#214](https://github.com/complytime-labs/crosscodex/issues/214).
+The Ingestion service lives in its own repository, [complytime-labs/crosscodex-ingestion](https://github.com/complytime-labs/crosscodex-ingestion). When `ingestion.address` is set, the gateway sends every upload except OSCAL JSON to it and the Catalog service structures the result into controls; without it, uploads are stored unchanged and the Catalog service imports only OSCAL JSON. See [Document ingestion](#document-ingestion).
 
 ### Deployment Modes
 
@@ -868,6 +887,12 @@ graph:
   addr: ""                               # host:port the standalone graph role listens on for the gateway (mutual TLS, target graph-server); required by role graph, empty otherwise (global-only)
   endpoint: ""                            # host:port the gateway role dials to reach the graph role (mutual TLS, target graph-client); required by role gateway, empty otherwise (global-only)
 
+ingestion:                                # Document conversion service; see "Document ingestion"
+  address: ""                             # host:port; empty = not configured (global-only)
+  poll_interval: 2s                       # > 0 (global-only)
+  convert_timeout: 10m                    # >= poll_interval (global-only)
+  max_document_bytes: 52428800            # > 0; 50 MiB (global-only)
+
 catalog:
   requirement_part_names: [statement]     # Ordered OSCAL part names that hold a control's requirement text; the first a control has wins; at least one, each an OSCAL token (global-only)
   structuring:
@@ -912,6 +937,31 @@ catalog:
 ```
 
 A header the extractor wraps across lines does not match a one-line pattern; write the pattern for the layout your documents have.
+
+#### Document ingestion
+
+The `ingestion` block points the gateway at the [crosscodex-ingestion](https://github.com/complytime-labs/crosscodex-ingestion) service, which converts PDF, HTML, DOCX and text to structured JSON.
+
+```yaml
+ingestion:
+  address: ""                             # host:port of the ingestion service, for example ingestion.internal:8090; empty (default) = not configured, so documents that are not OSCAL JSON are rejected as before (global-only)
+  poll_interval: 2s                       # > 0; how often a running conversion is checked (global-only)
+  convert_timeout: 10m                    # >= poll_interval; longest wait for one document (global-only)
+  max_document_bytes: 52428800            # > 0; largest document sent for conversion, 50 MiB by default; larger is refused before any call (global-only)
+```
+
+All four fields are global-only (no `tenant_overrides`): the service and its capacity are shared by every tenant. The connection follows `tls.targets.ingestion` merged over the global `tls` settings; a resolved mode of `off` dials plaintext (dev and tests only). `CROSSCODEX_INGESTION_ADDRESS` sets the address. A bad value fails config loading with a message naming the field.
+
+- **Routing.** OSCAL JSON of any OSCAL model is stored unchanged, as before; every other document goes to ingestion. Known limitation: with ingestion configured, OSCAL XML and YAML also go to ingestion, so the advice to convert them with `oscal-cli` is no longer shown. Convert them to JSON first.
+- **Shared storage.** Ingestion writes its output to storage the gateway also reads: the same directory at the same absolute path (`storage.objects.base_path`, which must exist) or the same S3 bucket (`storage.objects.bucket`). The gateway accepts only output inside the calling tenant's own path and refuses any other URI. The embedded daemon shares its data directory.
+- **Structuring.** Controls are found by the heading, table and numbering rules, or by `catalog.structuring.section_pattern` when set. No LLM is wired for structuring, so a document those rules cannot split is refused and no catalog is stored. `catalog.structuring.section_pattern`, `decompose` (default `true`), `min_decompose_words`, `filter_by_keywords`, `keywords`, `max_heading_repeats` and `print_artifact_patterns` apply; `chunk_chars` affects only the LLM tiers and `max_validation_chars` and `allowed_formats` are not read.
+- **Provenance.** A stored catalog's `source_uri` is the converted document's storage key, and its extractor is `crosscodex-ingestion` at the output's `schema_version`.
+- **Known limitation: no groups.** Imported documents currently produce titled controls but no group containers, so a catalog's hierarchy is flat.
+- **Errors.** The ingestion service's error text is logged on the server and never returned. The caller gets a generic message with an error reference, to give to an operator, who finds the cause in the server log.
+- **Known limitation: orphaned output.** A conversion that fails, times out or is cancelled can leave files in the shared storage that CrossCodex does not remove. When the converted document is refused (`InvalidArgument`, `FailedPrecondition`) the gateway deletes the converted output, but when structuring or storing it fails with an internal error the output stays in the tenant's storage. With its attestation enabled, the ingestion service also writes a second object per conversion (`attestation.link`, next to the output), which CrossCodex never deletes. The ingestion service has no cancel or delete call, so CrossCodex cannot reclaim any of these; clear them from storage when it matters.
+- **Cost.** A conversion can take minutes on CPU; `ingestion.convert_timeout` and `ingestion.max_document_bytes` bound it, and `crosscodex.ingestion.conversion.duration_ms` shows how long conversions take. No LLM calls are made.
+
+To try it locally, `task deploy:local INGESTION=1` (or `INGESTION=rustfs`) starts the service; see [deploy/README.md](deploy/README.md#document-ingestion-ingestion). How it works is in the [Service Runtime Guide](docs/dev/service-runtime.md#document-ingestion).
 
 #### Analyzer `enabled` settings
 
