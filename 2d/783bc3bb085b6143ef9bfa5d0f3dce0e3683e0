@@ -1,0 +1,30 @@
+internal/catalog/service.go
+  s_0b1becf5bbea3d::t_68a5e8133a7659 347,349-350
+internal/catalog/structuring.go
+  s_0b1becf5bbea3d::t_68a5e8133a7659 24-29
+docs/dev/service-runtime.md
+  s_0b1becf5bbea3d::t_b4cc894430d0ec 224
+internal/catalog/ingestion_parse_bdd_test.go
+  s_0b1becf5bbea3d::t_9de530e7720276 302,309-311
+cmd/crosscodex/embedded.go
+  s_0b1becf5bbea3d::t_b6e21069c3cf8a 604,612-621
+cmd/crosscodexd/bootstrap.go
+  s_0b1becf5bbea3d::t_b6e21069c3cf8a 415-421
+  s_0b1becf5bbea3d::t_0609fc8c2cbfe3 422
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "2d783bc3bb085b6143ef9bfa5d0f3dce0e3683e0",
+  "prompts": {},
+  "sessions": {
+    "s_0b1becf5bbea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "413f3a44-446c-458a-8dd6-69acadf88cd5",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
