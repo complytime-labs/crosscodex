@@ -1,0 +1,30 @@
+pkg/config/validate.go
+  s_0b1becf5bbea3d::t_ade7f3875ff0ea 60
+pkg/config/defaults.go
+  s_0b1becf5bbea3d::t_ade7f3875ff0ea 250-254
+pkg/config/types.go
+  s_0b1becf5bbea3d::t_ade7f3875ff0ea 7,35,1240-1288,1290
+  s_0b1becf5bbea3d::t_2f7fb2e9516540 1289,1291
+pkg/config/config_property_test.go
+  s_0b1becf5bbea3d::t_0163d5c9fbd22b 534-562
+pkg/config/helpers_test.go
+  s_0b1becf5bbea3d::t_567331c5b4d219 40-44
+pkg/config/ingestion_bdd_test.go
+  s_0b1becf5bbea3d::t_0163d5c9fbd22b 1-75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "238019d93139734be0bf20875e97f2850af85160",
+  "prompts": {},
+  "sessions": {
+    "s_0b1becf5bbea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "413f3a44-446c-458a-8dd6-69acadf88cd5",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
