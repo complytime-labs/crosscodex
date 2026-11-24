@@ -1,0 +1,22 @@
+docs/dev/service-runtime.md
+  s_0b1becf5bbea3d::t_dd99b69a988365 232
+.github/workflows/ingestion-integration.yml
+  s_0b1becf5bbea3d::t_2c17f704d87fab 89
+  s_0b1becf5bbea3d::t_0f7d812dc6b4e8 1-88,90-94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "78360232166d3b3d886a9a8eb3a64280ef888b7e",
+  "prompts": {},
+  "sessions": {
+    "s_0b1becf5bbea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "413f3a44-446c-458a-8dd6-69acadf88cd5",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
