@@ -1,0 +1,21 @@
+README.md
+  s_0b1becf5bbea3d::t_51f8859a987bb2 405,411-412,953,957,961
+docs/dev/service-runtime.md
+  s_0b1becf5bbea3d::t_c92edb6e61f189 222,224
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "9ebd2950b73ed38e1974bbfc1aecbcd59c8b480d",
+  "prompts": {},
+  "sessions": {
+    "s_0b1becf5bbea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "413f3a44-446c-458a-8dd6-69acadf88cd5",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
