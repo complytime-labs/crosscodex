@@ -1,0 +1,37 @@
+test/eval/crosswalk/labelsmerge_fuzz_test.go
+  s_51f263053339cb::t_54f79c90c62b01 25
+  s_51f263053339cb::t_7af41b70dc98a3 1-24,26-53
+test/eval/crosswalk/labelsmerge.go
+  s_51f263053339cb::t_72928bec8487b0 1-71,73-77,79-81,84-108,111-475
+  s_51f263053339cb::t_54f79c90c62b01 72,78,82-83,109-110
+test/eval/crosswalk/labelsmerge_bdd_test.go
+  s_51f263053339cb::t_4c37624d56865c 148
+  s_51f263053339cb::t_bddc1873098ab6 1-147,149-304
+test/eval/crosswalk/cmd/crosswalk-eval/main_bdd_test.go
+  s_51f263053339cb::t_403efdd5aab8e1 6,9,163-256
+  s_51f263053339cb::t_176d94e4cb4f24 257
+test/eval/crosswalk/labelsmerge_property_test.go
+  s_51f263053339cb::t_7af41b70dc98a3 5-6,82,110-113
+  s_51f263053339cb::t_bddc1873098ab6 1-4,7-81,83-109,114-137
+test/eval/crosswalk/labels.go
+  s_51f263053339cb::t_376e3bb65084db 85-91
+test/eval/crosswalk/cmd/crosswalk-eval/main.go
+  s_51f263053339cb::t_403efdd5aab8e1 8,21,23,31-33,40,62-63,244-309
+  s_51f263053339cb::t_1dc493739e4916 310
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "245529a3e3b418307545b9b996f2e94a9f766574",
+  "prompts": {},
+  "sessions": {
+    "s_51f263053339cb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1ed4a700-2209-4f05-a54a-7a3c4228c5f4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
