@@ -1,0 +1,32 @@
+pkg/oscal/oscal_property_test.go
+  s_0b1becf5bbea3d::t_7bfb7d95e61544 71-73
+  s_0b1becf5bbea3d::t_2ad13dc5592190 26-70,74-78
+internal/catalog/service.go
+  s_0b1becf5bbea3d::t_d75e4b2f66adb9 293-294,354,360,429
+cmd/crosscodex/embedded_integration_bdd_test.go
+  s_0b1becf5bbea3d::t_907cc3c2795ea3 481
+pkg/oscal/detect.go
+  s_0b1becf5bbea3d::t_58fcfd50f0497c 1-50
+pkg/oscal/oscal_detect_bdd_test.go
+  s_0b1becf5bbea3d::t_774390d892eb66 1-71
+pkg/oscal/oscal_fuzz_test.go
+  s_0b1becf5bbea3d::t_5b412c0abfc3f3 83-102
+internal/catalog/format_constants.go
+  s_0b1becf5bbea3d::t_d75e4b2f66adb9 3-4,22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "ffbb7df190e024bbfb7f61f813b963847a363e6b",
+  "prompts": {},
+  "sessions": {
+    "s_0b1becf5bbea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "413f3a44-446c-458a-8dd6-69acadf88cd5",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
