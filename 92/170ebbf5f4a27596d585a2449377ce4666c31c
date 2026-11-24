@@ -1,0 +1,60 @@
+api/proto/crosscodex/v1/pipeline.proto
+  s_51f263053339cb::t_74c6c12a1aeace 428
+  s_51f263053339cb::t_6933827964384e 43-50
+  s_51f263053339cb::t_091a0e0cadf934 407-427,429-433
+internal/gateway/stream_bdd_test.go
+  s_51f263053339cb::t_3a2537018de541 166-169
+internal/pipeline/service_bdd_test.go
+  s_51f263053339cb::t_745e162c480a89 10-11
+  s_51f263053339cb::t_31a6dd71d960a1 34-35
+  s_51f263053339cb::t_71972412455864 2336,2408-2413
+  s_51f263053339cb::t_03c9b9aa5d5de2 2261-2335,2337-2407,2414-2472
+  s_51f263053339cb::t_8476fa109af176 40
+cmd/crosscodex/catalog_controls_bdd_test.go
+  s_51f263053339cb::t_0d1979da213c65 55,88
+  s_51f263053339cb::t_4a200171b1f4a4 1-54,56-87,89-116
+internal/gateway/gateway_bdd_test.go
+  s_51f263053339cb::t_3a2537018de541 117-118,158-161,397-439,1409-1410
+  s_51f263053339cb::t_764dffc47fe84f 1411-1412
+internal/pipeline/catalog_controls_rpc.go
+  s_51f263053339cb::t_bcd301e7f8a3de 53
+  s_51f263053339cb::t_9ddab0fea68bdf 25-27
+  s_51f263053339cb::t_593e3dfe4c883b 1-24,28-52,54-96
+internal/gateway/backend_errors_bdd_test.go
+  s_51f263053339cb::t_3a2537018de541 218-225
+internal/gateway/pipeline_client.go
+  s_51f263053339cb::t_1cce273a22a189 112-115
+internal/gateway/backends.go
+  s_51f263053339cb::t_53b80d207ba85a 33-35
+api/proto/crosscodex/v1/gateway.proto
+  s_51f263053339cb::t_0aa187452d2453 95-104
+internal/gateway/catalog.go
+  s_51f263053339cb::t_f922d0382393f4 91
+  s_51f263053339cb::t_1cce273a22a189 76-90,92-110
+cmd/crosscodex/embedded_bdd_test.go
+  s_51f263053339cb::t_c9e61de3fe4c3d 13-15,20,523-573
+  s_51f263053339cb::t_dc7fe35659f833 574
+cmd/crosscodex/embedded.go
+  s_51f263053339cb::t_ab24e884dc1fd9 245-246,248-250,254-256,662-666,668
+  s_51f263053339cb::t_80a9877ae42370 251,257,667
+  s_51f263053339cb::t_4de98b5564a71e 252-253
+cmd/crosscodex/catalog.go
+  s_51f263053339cb::t_b396ed7651fe95 8,18,35,487-566
+  s_51f263053339cb::t_4b5e8771304b2d 567-573
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "92170ebbf5f4a27596d585a2449377ce4666c31c",
+  "prompts": {},
+  "sessions": {
+    "s_51f263053339cb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1ed4a700-2209-4f05-a54a-7a3c4228c5f4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
