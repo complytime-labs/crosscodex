@@ -323,13 +323,16 @@ var _ = Describe("Property Specifications", Ordered, func() {
 	})
 
 	Context("BuildMappingCollection", func() {
+		// The OSCAL 1.2.3 date-time pattern rejects 29 Feb in every 19xx leap year
+		// (its alternation binds "19" alone), so draw timestamps from 2000-01-01.
+		const oscalSchemaLeapDaySafeFrom = 946_684_800
 		relationships := []string{"EQUIVALENT", "SUPERSET_OF", "SUBSET_OF", "NO_RELATIONSHIP", "CONTRIBUTES_TO", "COMPLEMENTS", "PARTIAL", "CONFLICTS_WITH"}
 
 		drawExport := func(t *rapid.T) oscal.MappingExport {
 			in := oscal.MappingExport{
 				JobID:       "job",
 				Stage:       rapid.SampledFrom([]string{"synthesized", "analyzer"}).Draw(t, "stage"),
-				CompletedAt: time.Unix(rapid.Int64Range(0, 4_000_000_000).Draw(t, "completed"), 0),
+				CompletedAt: time.Unix(rapid.Int64Range(oscalSchemaLeapDaySafeFrom, 4_000_000_000).Draw(t, "completed"), 0),
 				Source:      oscal.ExportCatalog{ID: "src", Name: rapid.String().Draw(t, "srcName"), Version: "1"},
 				Target:      oscal.ExportCatalog{ID: "tgt", Name: rapid.String().Draw(t, "tgtName"), VersionDisplay: "v2"},
 			}
