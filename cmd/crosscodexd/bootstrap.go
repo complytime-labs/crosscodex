@@ -404,9 +404,6 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 	catalogOpts := []catalog.ServiceOption{
 		catalog.WithParser(oscal.NewParser("", oscal.WithParserTracer(oscalTracer),
 			oscal.WithRequirementPartNames(cfg.Catalog.RequirementPartNames))),
-		// No Completer: the LLM tiers never run, so a converted document the
-		// heading, table and pattern tiers cannot structure fails closed.
-		catalog.WithStructurer(oscal.NewStructurer(nil, nil, oscal.WithStructurerTracer(oscalTracer))),
 		catalog.WithStructuring(cfg.Catalog.Structuring),
 		catalog.WithStore(catalog.NewPGStore(dbpkg.NewTenantPool(shared.appPool))),
 		catalog.WithStorage(storageProvider),
@@ -414,6 +411,14 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 		catalog.WithLogger(slog.Default()),
 		catalog.WithTracer(catalogTracer),
 		catalog.WithMeter(catalogMeter),
+	}
+	// Only a configured ingestion service produces converted documents;
+	// without one, ingestion-shaped JSON is an upload like any other.
+	if cfg.Ingestion.Address != "" {
+		// No Completer: the LLM tiers never run, so a converted document the
+		// heading, table and pattern tiers cannot structure fails closed.
+		catalogOpts = append(catalogOpts,
+			catalog.WithStructurer(oscal.NewStructurer(nil, nil, oscal.WithStructurerTracer(oscalTracer))))
 	}
 	if retire != nil {
 		catalogOpts = append(catalogOpts, catalog.WithRetention(*retire))

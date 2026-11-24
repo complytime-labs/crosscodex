@@ -299,15 +299,16 @@ var _ = Describe("ParseCatalog with ingestion output", func() {
 		expectUnchanged(cats, ctrls, conts)
 	})
 
-	It("refuses converted documents when no structurer is configured, and stores nothing", func() {
+	It("treats ingestion-shaped JSON as any other unsupported document when no structurer is configured, and stores nothing", func() {
 		seed()
 		cats, ctrls, conts := snapshot()
 		data, _ := readIngestionFixture("nist-sp800-171r3-excerpt.json")
 
 		_, err := parse(newService(), data, crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED)
 
-		Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
-		Expect(err).To(MatchError(ContainSubstring("document structurer not configured")))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+		Expect(err).To(MatchError(connect.NewError(connect.CodeInvalidArgument,
+			catalog.UnsupportedFormatError(crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED, data)).Error()))
 		expectUnchanged(cats, ctrls, conts)
 	})
 

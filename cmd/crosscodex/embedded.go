@@ -601,18 +601,24 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, clientCertPat
 	parser := oscal.NewParser("", oscal.WithParserTracer(oscalTracer),
 		oscal.WithRequirementPartNames(cfg.Catalog.RequirementPartNames))
 	catalogTracer, catalogMeter := telemetry.Instrumentation("internal/catalog")
-	catalogSvc := catalog.NewService(
+	catalogOpts := []catalog.ServiceOption{
 		catalog.WithParser(parser),
-		// No Completer: the LLM tiers never run, so a converted document the
-		// heading, table and pattern tiers cannot structure fails closed.
-		catalog.WithStructurer(oscal.NewStructurer(nil, nil, oscal.WithStructurerTracer(oscalTracer))),
 		catalog.WithStructuring(cfg.Catalog.Structuring),
 		catalog.WithStore(catalogStore),
 		catalog.WithStorage(localStorage),
 		catalog.WithLogger(logger),
 		catalog.WithTracer(catalogTracer),
 		catalog.WithMeter(catalogMeter),
-	)
+	}
+	// Only a configured ingestion service produces converted documents;
+	// without one, ingestion-shaped JSON is an upload like any other.
+	if cfg.Ingestion.Address != "" {
+		// No Completer: the LLM tiers never run, so a converted document the
+		// heading, table and pattern tiers cannot structure fails closed.
+		catalogOpts = append(catalogOpts,
+			catalog.WithStructurer(oscal.NewStructurer(nil, nil, oscal.WithStructurerTracer(oscalTracer))))
+	}
+	catalogSvc := catalog.NewService(catalogOpts...)
 
 	// Ingestion stores OSCAL JSON to local storage unchanged and, when
 	// ingestion.address is set, converts other documents through the

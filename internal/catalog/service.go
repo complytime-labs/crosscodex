@@ -344,8 +344,10 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 			}
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("parse OSCAL: %v", err))
 		}
-	case req.Msg.GetFormat() != crosscodexv1.CatalogFormat_CATALOG_FORMAT_GEMARA && IsIngestionOutput(data):
+	case s.structurer != nil && req.Msg.GetFormat() != crosscodexv1.CatalogFormat_CATALOG_FORMAT_GEMARA && IsIngestionOutput(data):
 		// Auto-detected crosscodex-ingestion output: a converted document.
+		// Without a structurer (ingestion.address unset) the same JSON is a
+		// caller's upload, not conversion output, and takes the default.
 		var cerr *connect.Error
 		tree, cerr = s.structureIngestion(ctx, prov, req.Msg.GetDocumentId(), data)
 		if cerr != nil {

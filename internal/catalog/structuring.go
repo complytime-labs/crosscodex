@@ -2,7 +2,6 @@ package catalog
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"connectrpc.com/connect"
@@ -22,10 +21,12 @@ const IngestionExtractorName = "crosscodex-ingestion"
 
 // WithStructurer sets the Structurer that turns converted documents
 // (crosscodex-ingestion output) into controls. Without one, ParseCatalog
-// refuses converted documents with CodeFailedPrecondition. Wiring contract:
-// cmd/crosscodexd and the embedded CLI pass oscal.NewStructurer with no
-// Completer, so the LLM tiers never run; it has no pkg/config field of its
-// own (catalog.structuring.* feeds WithStructuring).
+// does not treat any document as converted output, so ingestion-shaped JSON
+// gets the same UnsupportedFormatError as any other non-OSCAL document.
+// Wiring contract: cmd/crosscodexd and the embedded CLI pass
+// oscal.NewStructurer with no Completer (the LLM tiers never run), and only
+// when ingestion.address is set; it has no pkg/config field of its own
+// (catalog.structuring.* feeds WithStructuring).
 func WithStructurer(st oscal.Structurer) ServiceOption {
 	return func(s *Service) {
 		s.structurer = st
@@ -57,10 +58,6 @@ func WithStructuring(cfg config.StructuringConfig) ServiceOption {
 // from the fallback tier, which splits paragraphs rather than finding
 // controls, is refused before anything is stored.
 func (s *Service) structureIngestion(ctx context.Context, prov *oscal.Provenance, documentID string, data []byte) (*oscal.Tree, *connect.Error) {
-	if s.structurer == nil {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New(
-			"document structurer not configured: this server cannot import converted documents. Import an OSCAL JSON catalog instead, or ask an operator to enable document structuring"))
-	}
 	// Every outcome is counted by the tier that ran ("none" before one did)
 	// and its result; "structured" means a tree was built, before ParseCatalog
 	// validates and stores it.
