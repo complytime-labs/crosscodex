@@ -1,0 +1,19 @@
+pkg/db/db_integration_bdd_test.go
+  s_51f263053339cb::t_b667adb9642864 1364-1366,1368-1401,1412-1419
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "48420a67d032b0b921c28cb3e759f038e27c37b0",
+  "prompts": {},
+  "sessions": {
+    "s_51f263053339cb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1ed4a700-2209-4f05-a54a-7a3c4228c5f4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
