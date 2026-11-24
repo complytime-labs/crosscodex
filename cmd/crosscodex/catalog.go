@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/catalog"
 	"github.com/complytime-labs/crosscodex/pkg/catalogversion"
+	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/spf13/cobra"
 )
 
@@ -43,10 +45,14 @@ func newCatalogImportCmd(state *cliState) *cobra.Command {
 
 Supported formats:
   - OSCAL JSON catalogs (.json)
+  - PDF, DOCX, HTML and other documents, when the server has ingestion
+    configured (ingestion.address): crosscodex-ingestion converts them and
+    the server splits the result into controls. Without it they are
+    rejected as an unsupported catalog format.
 
-With --raw the server detects the format from the content instead of
-assuming OSCAL. Only OSCAL JSON is accepted today; other documents are
-rejected as an unsupported catalog format.
+A file that is OSCAL JSON is sent as OSCAL; any other file lets the server
+detect the format. With --raw the server detects the format of every file,
+OSCAL JSON included.
 
 With --document the catalog is stored as a version of that document. Import
 the next edition of the same document under the same slug and it becomes the
@@ -87,12 +93,24 @@ document cannot be moved to this one.`,
 			}
 			defer file.Close()
 
-			stream := state.client.StreamDocument(cmd.Context())
-
-			catalogFormat := pb.CatalogFormat_CATALOG_FORMAT_OSCAL
-			if raw {
-				catalogFormat = pb.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED
+			// OSCAL JSON (of any model, so the server can explain a
+			// non-catalog one) is sent as OSCAL; anything else, and every
+			// file under --raw, lets the server detect the format, which is
+			// what routes a PDF or other document to conversion.
+			var content io.Reader = file
+			catalogFormat := pb.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED
+			if !raw {
+				data, err := io.ReadAll(file)
+				if err != nil {
+					return fmt.Errorf("failed to read file: %w", err)
+				}
+				if oscal.IsModelJSON(data) {
+					catalogFormat = pb.CatalogFormat_CATALOG_FORMAT_OSCAL
+				}
+				content = bytes.NewReader(data)
 			}
+
+			stream := state.client.StreamDocument(cmd.Context())
 
 			if err := stream.Send(&pb.StreamDocumentChunk{
 				Payload: &pb.StreamDocumentChunk_Metadata{
@@ -108,7 +126,7 @@ document cannot be moved to this one.`,
 
 			buf := make([]byte, chunkSize)
 			for {
-				n, readErr := file.Read(buf)
+				n, readErr := content.Read(buf)
 				if n > 0 {
 					if err := stream.Send(&pb.StreamDocumentChunk{
 						Payload: &pb.StreamDocumentChunk_Chunk{
@@ -168,7 +186,7 @@ document cannot be moved to this one.`,
 		},
 	})
 
-	cmd.Flags().Bool("raw", false, "Let the server detect the format instead of assuming OSCAL")
+	cmd.Flags().Bool("raw", false, "Let the server detect the format even of OSCAL JSON, instead of sending it as OSCAL")
 	cmd.Flags().String("document", "", "Store the catalog as a version of this document (slug: a-z, 0-9 and '-', e.g. nist-800-53); re-import under the same slug to supersede the current version")
 	cmd.Flags().String("version-label", "", "Name this version, e.g. \"Rev 5\" (needs --document; default: the OSCAL metadata version, else import date and content hash)")
 

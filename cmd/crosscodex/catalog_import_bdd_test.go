@@ -28,6 +28,8 @@ type importGateway struct {
 	resp *pb.SubmitDocumentResponse
 	// metadata records the first message of the last stream.
 	metadata *pb.StreamDocumentMetadata
+	// content records the chunks of the last stream, concatenated.
+	content []byte
 	// catalogs answers ListCatalogs.
 	catalogs []*pb.Catalog
 }
@@ -45,6 +47,7 @@ func (g *importGateway) StreamDocument(_ context.Context, stream *connectrpc.Cli
 		if m := stream.Msg().GetMetadata(); m != nil {
 			g.metadata = m
 		}
+		g.content = append(g.content, stream.Msg().GetChunk()...)
 	}
 	if err := stream.Err(); err != nil {
 		return nil, err
@@ -170,31 +173,67 @@ var _ = Describe("catalog import reporting", func() {
 	})
 })
 
+// serveCatalogCmd starts gw and returns a runner for `catalog` CLI args
+// against it; an import is given a file holding content as its argument.
+func serveCatalogCmd(gw *importGateway, content []byte) func(args ...string) (string, error) {
+	path, handler := crosscodexv1connect.NewGatewayServiceHandler(gw)
+	mux := http.NewServeMux()
+	mux.Handle(path, handler)
+	srv := httptest.NewServer(mux)
+	DeferCleanup(srv.Close)
+
+	file := filepath.Join(GinkgoT().TempDir(), "cat.json")
+	Expect(os.WriteFile(file, content, 0o600)).To(Succeed())
+
+	return func(args ...string) (string, error) {
+		root := &cobra.Command{Use: "crosscodex"}
+		root.PersistentFlags().Bool("json", false, "")
+		root.PersistentFlags().Bool("plain", false, "")
+		root.PersistentFlags().Bool("no-color", false, "")
+		root.AddCommand(newCatalogCmd(&cliState{client: crosscodexv1connect.NewGatewayServiceClient(srv.Client(), srv.URL)}))
+		full := append([]string{"catalog"}, args...)
+		if full[1] == "import" {
+			full = append(full[:2], append([]string{file}, full[2:]...)...)
+		}
+		stdout, _, err := execute(root, full...)
+		return stdout, err
+	}
+}
+
+var _ = Describe("catalog import format hint", func() {
+	resp := &pb.SubmitDocumentResponse{DocumentId: "d", CatalogId: "c"}
+	catalogJSON := []byte(`{"catalog":{"uuid":"u","metadata":{"title":"T"}}}`)
+
+	DescribeTable("sends OSCAL only for OSCAL model JSON unless --raw, and the file unchanged",
+		func(content []byte, want pb.CatalogFormat, args ...string) {
+			gw := &importGateway{resp: resp}
+			_, err := serveCatalogCmd(gw, content)(append([]string{"import", "--plain"}, args...)...)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(gw.metadata.GetCatalogFormat()).To(Equal(want))
+			Expect(gw.content).To(Equal(content))
+		},
+		Entry("OSCAL catalog JSON: OSCAL", catalogJSON, pb.CatalogFormat_CATALOG_FORMAT_OSCAL),
+		Entry("OSCAL profile JSON: OSCAL, so the server explains it is not a catalog",
+			[]byte(`{"profile":{"uuid":"u"}}`), pb.CatalogFormat_CATALOG_FORMAT_OSCAL),
+		Entry("PDF bytes: unspecified, so the server detects and converts",
+			[]byte("%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj\n"), pb.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED),
+		Entry("non-OSCAL JSON: unspecified", []byte(`{"elements":[]}`), pb.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED),
+		Entry("--raw on OSCAL catalog JSON: unspecified", catalogJSON, pb.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED, "--raw"),
+	)
+
+	It("says in --help that documents need ingestion configured on the server", func() {
+		out, err := serveCatalogCmd(&importGateway{resp: resp}, catalogJSON)("import", "--help")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(ContainSubstring("PDF, DOCX, HTML"))
+		Expect(out).To(ContainSubstring("ingestion.address"))
+		Expect(out).NotTo(ContainSubstring("Only OSCAL JSON is accepted"))
+	})
+})
+
 var _ = Describe("catalog import under a document", func() {
 	// serve starts a gateway fake and returns a runner for CLI args against it.
 	serve := func(gw *importGateway) func(args ...string) (string, error) {
-		path, handler := crosscodexv1connect.NewGatewayServiceHandler(gw)
-		mux := http.NewServeMux()
-		mux.Handle(path, handler)
-		srv := httptest.NewServer(mux)
-		DeferCleanup(srv.Close)
-
-		file := filepath.Join(GinkgoT().TempDir(), "cat.json")
-		Expect(os.WriteFile(file, []byte(`{}`), 0o600)).To(Succeed())
-
-		return func(args ...string) (string, error) {
-			root := &cobra.Command{Use: "crosscodex"}
-			root.PersistentFlags().Bool("json", false, "")
-			root.PersistentFlags().Bool("plain", false, "")
-			root.PersistentFlags().Bool("no-color", false, "")
-			root.AddCommand(newCatalogCmd(&cliState{client: crosscodexv1connect.NewGatewayServiceClient(srv.Client(), srv.URL)}))
-			full := append([]string{"catalog"}, args...)
-			if full[1] == "import" {
-				full = append(full[:2], append([]string{file}, full[2:]...)...)
-			}
-			stdout, _, err := execute(root, full...)
-			return stdout, err
-		}
+		return serveCatalogCmd(gw, []byte(`{}`))
 	}
 
 	versioned := &pb.SubmitDocumentResponse{

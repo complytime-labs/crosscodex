@@ -396,7 +396,7 @@ Without `--yes` the command refuses and lists the `<slug>@<label>` versions it w
 
 #### Import a document (PDF, HTML, DOCX)
 
-With the ingestion service configured (`ingestion.address`, see [Document ingestion](#document-ingestion)), `catalog import` also takes a PDF, HTML, DOCX or text document. The CLI's own help text still says only OSCAL JSON is accepted; that describes a server without ingestion. The document is converted by [crosscodex-ingestion](https://github.com/complytime-labs/crosscodex-ingestion) (Docling), then split into controls by the heading, table and numbering rules:
+With the ingestion service configured (`ingestion.address`, see [Document ingestion](#document-ingestion)), `catalog import` also takes a PDF, HTML, DOCX or text document; no flag is needed. The CLI sends a file that is OSCAL JSON as OSCAL and lets the server detect the format of any other file (or of every file, with `--raw`). The document is converted by [crosscodex-ingestion](https://github.com/complytime-labs/crosscodex-ingestion) (Docling), then split into controls by the heading, table and numbering rules:
 
 ```sh
 crosscodex catalog import --document sp800-171 --version-label "Rev 3" nist-sp800-171r3.pdf
