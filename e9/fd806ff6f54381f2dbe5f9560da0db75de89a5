@@ -1,0 +1,26 @@
+internal/catalog/ingestion_adapter.go
+  s_0b1becf5bbea3d::t_cb09d02c6e0bb5 157-158
+  s_0b1becf5bbea3d::t_1120112f78c437 60-62,64-65,69-128,149-152,163-165,278-282,298-302
+internal/catalog/ingestion_adapter_property_test.go
+  s_0b1becf5bbea3d::t_02d1445b7d3acd 42-74
+internal/catalog/ingestion_adapter_bdd_test.go
+  s_0b1becf5bbea3d::t_62be20d3f7a6f5 299-300
+  s_0b1becf5bbea3d::t_5a39811d535158 262-279
+  s_0b1becf5bbea3d::t_a2918937c45db5 154-163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "e9fd806ff6f54381f2dbe5f9560da0db75de89a5",
+  "prompts": {},
+  "sessions": {
+    "s_0b1becf5bbea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "413f3a44-446c-458a-8dd6-69acadf88cd5",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
