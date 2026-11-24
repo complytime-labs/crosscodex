@@ -1,0 +1,19 @@
+test/ingestion/ingestion_integration_bdd_test.go
+  s_abd0fe5264bef3::t_c3090774b42d1f 412-413
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "a634a7125b5e4dda182e41c10a59ea219641ac31",
+  "prompts": {},
+  "sessions": {
+    "s_abd0fe5264bef3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a8911f522a90b6b77",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
