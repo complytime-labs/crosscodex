@@ -12,6 +12,10 @@ const (
 	// FormatGemara represents Gemara (unstructured text) catalog format
 	FormatGemara = "gemara"
 
+	// FormatIngestion represents crosscodex-ingestion structured output
+	// (a converted PDF, HTML, DOCX or text document)
+	FormatIngestion = "ingestion"
+
 	// SourceTypeDocument represents a catalog sourced from a document ID
 	SourceTypeDocument = "document"
 )

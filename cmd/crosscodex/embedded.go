@@ -603,6 +603,10 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, clientCertPat
 	catalogTracer, catalogMeter := telemetry.Instrumentation("internal/catalog")
 	catalogSvc := catalog.NewService(
 		catalog.WithParser(parser),
+		// No Completer: the LLM tiers never run, so a converted document the
+		// heading, table and pattern tiers cannot structure fails closed.
+		catalog.WithStructurer(oscal.NewStructurer(nil, nil, oscal.WithStructurerTracer(oscalTracer))),
+		catalog.WithStructuring(cfg.Catalog.Structuring),
 		catalog.WithStore(catalogStore),
 		catalog.WithStorage(localStorage),
 		catalog.WithLogger(logger),

@@ -52,6 +52,9 @@ type Service struct {
 	retireOps         metric.Int64Counter
 	retiredVersions   metric.Int64Counter
 	retireDuration    metric.Int64Histogram
+	structurer        oscal.Structurer
+	structureOpts     oscal.StructureOptions
+	structuredTotal   metric.Int64Counter
 }
 
 // ServiceOption configures a Service.
@@ -59,7 +62,8 @@ type ServiceOption func(*Service)
 
 // NewService creates a new CatalogService with the given options.
 // Required: WithParser, WithStore, WithStorage.
-// Optional: WithAssembler, WithVectorDB, WithEmbedder, WithBus, WithRetention, WithTracer, WithMeter, WithLogger.
+// Optional: WithAssembler, WithVectorDB, WithEmbedder, WithBus, WithRetention,
+// WithStructurer, WithStructuring, WithTracer, WithMeter, WithLogger.
 func NewService(opts ...ServiceOption) *Service {
 	s := &Service{
 		logger: slog.Default(),
@@ -109,6 +113,11 @@ func NewService(opts ...ServiceOption) *Service {
 		s.retireDuration, err = s.meter.Int64Histogram("crosscodex.catalog.retire.duration_ms")
 		if err != nil {
 			s.logger.Warn("failed to create retireDuration histogram", "error", err)
+		}
+
+		s.structuredTotal, err = s.meter.Int64Counter("crosscodex.catalog.structured.total")
+		if err != nil {
+			s.logger.Warn("failed to create structuredTotal counter", "error", err)
 		}
 	}
 
@@ -320,7 +329,8 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 	}
 
 	var tree *oscal.Tree
-	if isOSCAL {
+	switch {
+	case isOSCAL:
 		// Parse via Parser
 		if s.parser == nil {
 			return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("parser not configured"))
@@ -334,7 +344,14 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 			}
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("parse OSCAL: %v", err))
 		}
-	} else {
+	case req.Msg.GetFormat() != crosscodexv1.CatalogFormat_CATALOG_FORMAT_GEMARA && IsIngestionOutput(data):
+		// Auto-detected crosscodex-ingestion output: a converted document.
+		var cerr *connect.Error
+		tree, cerr = s.structureIngestion(ctx, prov, req.Msg.GetDocumentId(), data)
+		if cerr != nil {
+			return nil, cerr
+		}
+	default:
 		return nil, connect.NewError(connect.CodeInvalidArgument, UnsupportedFormatError(req.Msg.GetFormat(), data))
 	}
 

@@ -134,6 +134,9 @@ func isSection(text string, children []oscalTypes.Part) bool {
 //   - minWords check: if text has fewer than minWords words, return single item (no decomposition)
 //   - Decomposition is recursive: matched sub-clauses are passed through the cascade again
 //   - Containers (items with sub-matches) get ClassSection; leaves get ClassRequirement
+//   - A sub-item's ID is baseID + "." + its label; when a label repeats among
+//     siblings (a restarted list), its nth use gets a "-n" suffix ("x.a-2")
+//     so IDs stay unique, while Props["label"] keeps the published label
 func DecomposeText(baseID, text string, minWords int) []ControlItem {
 	// Check minimum word count
 	if wordCount(text) < minWords {
@@ -166,9 +169,17 @@ func DecomposeText(baseID, text string, minWords int) []ControlItem {
 
 		// This tier produced valid results — process items
 		var result []ControlItem
+		// A list can restart within one text, repeating a label; the nth use
+		// of a label gets "-n" so sibling IDs stay unique. Labels never hold
+		// "-", so a numbered ID cannot equal a plain one.
+		uses := make(map[string]int, len(items))
 
 		for _, item := range items {
+			uses[item.label]++
 			childID := fmt.Sprintf("%s.%s", baseID, item.label)
+			if n := uses[item.label]; n > 1 {
+				childID = fmt.Sprintf("%s-%d", childID, n)
+			}
 
 			// Recursively decompose the matched text
 			children := DecomposeText(childID, item.text, minWords)

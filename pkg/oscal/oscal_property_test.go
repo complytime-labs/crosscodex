@@ -412,4 +412,79 @@ var _ = Describe("Property Specifications", Ordered, func() {
 			})
 		})
 	})
+
+	Context("BuildTree — structure from links only", func() {
+		It("keeps every non-group item once, in order, and gives each a known container key", func() {
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				// Draw a forest: each item links only to an earlier item, so
+				// the links are acyclic by construction. IDs are opaque.
+				n := rapid.IntRange(1, 30).Draw(t, "n")
+				items := make([]oscal.ControlItem, n)
+				groups := map[int]bool{}
+				for i := range items {
+					items[i].ID = fmt.Sprintf("%s-%d", rapid.StringMatching(`[A-Za-z0-9.()]{1,6}`).Draw(t, "id"), i)
+					if i == 0 {
+						continue
+					}
+					switch rapid.IntRange(0, 2).Draw(t, "link") {
+					case 1: // in a group: the target becomes (or stays) a group
+						var eligible []int // a group has no ParentID
+						for j := range i {
+							if items[j].ParentID == "" {
+								eligible = append(eligible, j)
+							}
+						}
+						g := rapid.SampledFrom(eligible).Draw(t, "group")
+						items[i].GroupID = items[g].ID
+						groups[g] = true
+					case 2: // a child of an earlier non-group item
+						p := rapid.IntRange(0, i-1).Draw(t, "parent")
+						if !groups[p] {
+							items[i].ParentID = items[p].ID
+						}
+					}
+				}
+				// A drawn parent may have become a group later; drop those links.
+				for i := range items {
+					for g := range groups {
+						if items[i].ParentID == items[g].ID {
+							items[i].ParentID = ""
+						}
+					}
+				}
+
+				tree, err := oscal.BuildTree(items)
+				if err != nil {
+					t.Fatalf("BuildTree rejected an acyclic forest: %v", err)
+				}
+				if len(tree.Containers) != len(groups) || len(tree.Items) != n-len(groups) {
+					t.Fatalf("got %d containers and %d items from %d items with %d groups", len(tree.Containers), len(tree.Items), n, len(groups))
+				}
+				keys := map[string]bool{}
+				for _, c := range tree.Containers {
+					if c.ParentKey != "" && !keys[c.ParentKey] {
+						t.Fatalf("container %q precedes or lacks its parent %q", c.Key, c.ParentKey)
+					}
+					keys[c.Key] = true
+				}
+				next := 0
+				for i, item := range items {
+					if groups[i] {
+						continue
+					}
+					got := tree.Items[next]
+					next++
+					if got.ID != item.ID || got.ParentID != item.ParentID || got.GroupID != item.GroupID {
+						t.Fatalf("item %d changed: %+v -> %+v", i, item, got)
+					}
+					if item.GroupID != "" && got.ContainerKey == "" {
+						t.Fatalf("item %q has GroupID %q but container key %q", got.ID, item.GroupID, got.ContainerKey)
+					}
+					if got.ContainerKey != "" && !keys[got.ContainerKey] {
+						t.Fatalf("item %q names unknown container key %q", got.ID, got.ContainerKey)
+					}
+				}
+			})
+		})
+	})
 })

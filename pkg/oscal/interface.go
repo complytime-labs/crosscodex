@@ -14,7 +14,24 @@ type Parser interface {
 // Structurer converts unstructured/semi-structured text into ControlItems.
 type Structurer interface {
 	Structure(ctx context.Context, doc StructuredDoc, opts StructureOptions) ([]ControlItem, error)
+	// StructureWithTier is Structure that also names the cascade tier whose
+	// items it returned, so a caller can refuse a low-confidence tier.
+	StructureWithTier(ctx context.Context, doc StructuredDoc, opts StructureOptions) ([]ControlItem, StructureTier, error)
 }
+
+// StructureTier names a tier of the Structurer cascade.
+type StructureTier string
+
+// The Structurer cascade tiers, in the order they are tried.
+const (
+	StructureTierRegex      StructureTier = "regex"
+	StructureTierHeading    StructureTier = "heading"
+	StructureTierTable      StructureTier = "table"
+	StructureTierPattern    StructureTier = "pattern"
+	StructureTierLLMDetect  StructureTier = "llm-detect"
+	StructureTierLLMExtract StructureTier = "llm-extract"
+	StructureTierFallback   StructureTier = "fallback"
+)
 
 type StructuredDoc struct {
 	Sections []DocSection

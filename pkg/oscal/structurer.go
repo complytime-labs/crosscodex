@@ -60,6 +60,13 @@ func NewStructurer(completer Completer, registry prompt.Registry, opts ...Struct
 // An unusable print-artefact pattern returns ErrInvalidPrintArtifactPattern
 // before any tier runs.
 func (s *defaultStructurer) Structure(ctx context.Context, doc StructuredDoc, opts StructureOptions) ([]ControlItem, error) {
+	items, _, err := s.StructureWithTier(ctx, doc, opts)
+	return items, err
+}
+
+// StructureWithTier runs the cascade Structure describes and also returns the
+// tier whose items won ("" with an error).
+func (s *defaultStructurer) StructureWithTier(ctx context.Context, doc StructuredDoc, opts StructureOptions) ([]ControlItem, StructureTier, error) {
 	if s.tracer != nil {
 		var span trace.Span
 		_, span = s.tracer.Start(ctx, "oscal.Structure")
@@ -69,56 +76,31 @@ func (s *defaultStructurer) Structure(ctx context.Context, doc StructuredDoc, op
 	// Compiled before any tier runs, so a bad pattern costs no LLM call.
 	artifacts, err := compilePrintArtifactPatterns(opts.PrintArtifactPatterns)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
-	var items []ControlItem
-	var found bool
-
-	// Tier 1: Regex
-	items, found = TierRegex(doc, opts)
-	if found {
-		return s.postProcess(items, opts, artifacts), nil
+	tiers := []struct {
+		tier StructureTier
+		run  func() ([]ControlItem, bool)
+	}{
+		{StructureTierRegex, func() ([]ControlItem, bool) { return TierRegex(doc, opts) }},
+		{StructureTierHeading, func() ([]ControlItem, bool) { return TierHeading(doc, opts) }},
+		{StructureTierTable, func() ([]ControlItem, bool) { return TierTable(doc, opts) }},
+		{StructureTierPattern, func() ([]ControlItem, bool) { return TierPattern(doc, opts) }},
+		{StructureTierLLMDetect, func() ([]ControlItem, bool) { return TierLLMDetect(doc, opts, s.completer, s.registry) }},
+		{StructureTierLLMExtract, func() ([]ControlItem, bool) { return TierLLMExtract(doc, opts, s.completer, s.registry) }},
+		{StructureTierFallback, func() ([]ControlItem, bool) { return TierFallback(doc, opts) }},
 	}
-
-	// Tier 2: Heading
-	items, found = TierHeading(doc, opts)
-	if found {
-		return s.postProcess(items, opts, artifacts), nil
-	}
-
-	// Tier 2b: Table
-	items, found = TierTable(doc, opts)
-	if found {
-		return s.postProcess(items, opts, artifacts), nil
-	}
-
-	// Tier 3: Pattern
-	items, found = TierPattern(doc, opts)
-	if found {
-		return s.postProcess(items, opts, artifacts), nil
-	}
-
-	// Tier 4: LLM Detect
-	items, found = TierLLMDetect(doc, opts, s.completer, s.registry)
-	if found {
-		return s.postProcess(items, opts, artifacts), nil
-	}
-
-	// Tier 5: LLM Extract
-	items, found = TierLLMExtract(doc, opts, s.completer, s.registry)
-	if found {
-		return s.postProcess(items, opts, artifacts), nil
-	}
-
-	// Tier 6: Fallback
-	items, found = TierFallback(doc, opts)
-	if found && len(items) > 0 {
-		return s.postProcess(items, opts, artifacts), nil
+	for _, t := range tiers {
+		items, found := t.run()
+		// The fallback tier always reports found; it wins only with items.
+		if found && (t.tier != StructureTierFallback || len(items) > 0) {
+			return s.postProcess(items, opts, artifacts), t.tier, nil
+		}
 	}
 
 	// All tiers failed (should be rare)
-	return nil, ErrStructureFailed
+	return nil, "", ErrStructureFailed
 }
 
 // postProcess strips print artefacts, then applies keyword filtering and
@@ -187,8 +169,12 @@ func (s *defaultStructurer) containsKeyword(item ControlItem, lowerKeywords []st
 	return false
 }
 
-// applyDecomposition applies DecomposeText to each item's text.
-// Replaces each item with its decomposed sub-items.
+// applyDecomposition applies DecomposeText to each item's text. An item the
+// text does not split stays as it is, with its text trimmed. A split item is
+// replaced by its sub-items: each keeps the item's Title (the heading or
+// title it was written under, so no sub-item is left untitled) and GroupID,
+// and the top-level ones take its ParentID; deeper ones keep the parent
+// DecomposeText gave them.
 func (s *defaultStructurer) applyDecomposition(items []ControlItem, opts StructureOptions) []ControlItem {
 	minWords := opts.MinDecomposeWords
 	if minWords <= 0 {
@@ -198,7 +184,20 @@ func (s *defaultStructurer) applyDecomposition(items []ControlItem, opts Structu
 	var result []ControlItem
 	for _, item := range items {
 		decomposed := DecomposeText(item.ID, item.Text, minWords)
-		result = append(result, decomposed...)
+		if len(decomposed) == 1 && decomposed[0].ID == item.ID {
+			item.Text = decomposed[0].Text
+			result = append(result, item)
+			continue
+		}
+		for _, sub := range decomposed {
+			sub.Title = item.Title
+			sub.GroupID = item.GroupID
+			if sub.ParentID == "" && item.ParentID != "" {
+				sub.ParentID = item.ParentID
+				sub.Props["parent-id"] = item.ParentID
+			}
+			result = append(result, sub)
+		}
 	}
 
 	return result
