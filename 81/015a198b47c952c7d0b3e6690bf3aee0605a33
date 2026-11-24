@@ -1,0 +1,28 @@
+internal/gateway/backend/ingestion_router_bdd_test.go
+  s_0b1becf5bbea3d::t_d8d97400ffd4af 38-39,84,90,136,153-154,203,211-219
+  s_0b1becf5bbea3d::t_1877553c6c1e1b 1-37,40-83,85-89,91-135,137-152,155-202,204-210,220-356
+cmd/crosscodexd/bootstrap.go
+  s_0b1becf5bbea3d::t_46520edf82b91b 343-345
+  s_0b1becf5bbea3d::t_064f2695e281ae 418-423
+internal/gateway/backend/ingestion_router.go
+  s_0b1becf5bbea3d::t_e793a391b7e195 1-23,25-32,40-43,46-47,49-60,62-121,123-176
+  s_0b1becf5bbea3d::t_d8d97400ffd4af 24,33-39,44-45,48,61,122
+cmd/crosscodex/embedded.go
+  s_0b1becf5bbea3d::t_ca130ea90217c4 613-625
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "81015a198b47c952c7d0b3e6690bf3aee0605a33",
+  "prompts": {},
+  "sessions": {
+    "s_0b1becf5bbea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "413f3a44-446c-458a-8dd6-69acadf88cd5",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
