@@ -1,0 +1,58 @@
+internal/analysis/export_test.go
+  s_51f263053339cb::t_9ef15311413759 30-41
+  s_51f263053339cb::t_685520db4a4bcf 3-10
+internal/pipeline/store.go
+  s_51f263053339cb::t_b12921a9a30aa3 1164-1238,1246-1315,1323-1325
+  s_51f263053339cb::t_1bf04a804d4617 6,15,1239-1245,1316-1322
+internal/analysis/types.go
+  s_51f263053339cb::t_1642a9ee70b36c 118-122
+  s_51f263053339cb::t_4af8a8d08cbde8 167-169
+internal/analysis/options.go
+  s_51f263053339cb::t_f60c5de85f93bf 96-109
+internal/analysis/progress.go
+  s_51f263053339cb::t_b3a0592d0ad32d 1-137,144-173,176,178-184,186,188-191,193-240
+  s_51f263053339cb::t_21b59dd5616b47 138-143,192
+  s_51f263053339cb::t_4b541aaced77d3 174-175,177,185,187
+internal/analysis/progress_bdd_test.go
+  s_51f263053339cb::t_97eaa55f231831 1-413
+internal/analysis/engine.go
+  s_51f263053339cb::t_4b541aaced77d3 416,427,439-469,501,541-543,654
+  s_51f263053339cb::t_f60c5de85f93bf 64-68
+internal/analysis/progress_property_test.go
+  s_51f263053339cb::t_974b663ddb0feb 1-66,69-100
+  s_51f263053339cb::t_c82119e42f8ff0 67-68
+internal/analysis/collector.go
+  s_51f263053339cb::t_52a65ee2772a55 276-278,285-287,318-320,342-344,370-371
+  s_51f263053339cb::t_fbdc527c32151a 372
+cmd/crosscodexd/bootstrap.go
+  s_51f263053339cb::t_ffb44fad8ff03d 963-964
+internal/pipeline/types.go
+  s_51f263053339cb::t_b12921a9a30aa3 92-102
+internal/pipeline/store_integration_test.go
+  s_51f263053339cb::t_78d780fca3a5d9 19,662-735
+  s_51f263053339cb::t_2397e68e37bf11 736
+internal/pipeline/store_bdd_test.go
+  s_51f263053339cb::t_a444428992869f 5,10,15,18
+  s_51f263053339cb::t_a801acf79e5c6d 871-994
+internal/analysis/collector_bdd_test.go
+  s_51f263053339cb::t_b8ca9c56886a91 819-862,865-882
+  s_51f263053339cb::t_ff6acba9cfe9f9 883
+docs/dev/telemetry.md
+  s_51f263053339cb::t_5bc5f172fa0542 208-209
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "186af8d6f3f665a552a425d7adfab8fe884c44b1",
+  "prompts": {},
+  "sessions": {
+    "s_51f263053339cb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1ed4a700-2209-4f05-a54a-7a3c4228c5f4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
