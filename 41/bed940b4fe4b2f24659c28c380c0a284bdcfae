@@ -1,0 +1,45 @@
+docs/dev/test-sources.md
+  s_0b1becf5bbea3d::t_8528f5b24fad37 60-67
+docs/dev/podman-dev-container.md
+  s_0b1becf5bbea3d::t_709ae3ccb32a34 20-23
+test/ingestion/ingestion_integration_bdd_test.go
+  s_0b1becf5bbea3d::t_af94c08788ac55 1-85,89-107,110-111,113-114,118,120-122,126-128,130,132-138,140-187,189-190,196-197,199-210,212,217-233,235-250,252-293,297-338,341-364,369-384,416-423,426-430,434-441
+  s_0b1becf5bbea3d::t_fead433b6938ed 294-296,365-368,385-409,411-415,424,431-432
+  s_0b1becf5bbea3d::t_9dcbd1d5cf1f78 410
+  s_0b1becf5bbea3d::t_31faf8b9284892 108,112,115-117,119,123-125,129,131,139,198,234,251
+  s_0b1becf5bbea3d::t_ed0f29f1df38fd 109,195,339-340,425,433
+  s_0b1becf5bbea3d::t_16c10ab5865950 191-194
+  s_0b1becf5bbea3d::t_26e4dbfe88a6cb 86-88,188,211,213-216
+test/ingestion/ingestion_suite_test.go
+  s_0b1becf5bbea3d::t_57e19182cb5894 1-15
+.taskfiles/test/integration.yml
+  s_0b1becf5bbea3d::t_a1f32daceb1c78 26-34,104-107,418-435
+  s_0b1becf5bbea3d::t_d02462d83d2c7a 436
+test/ingestion/compose.yaml
+  s_0b1becf5bbea3d::t_718ad1ecca1f2a 1-9
+test/ingestion/testdata/README.md
+  s_0b1becf5bbea3d::t_0afa6626bce05a 1-14
+deploy/compose.rustfs.yaml
+  s_0b1becf5bbea3d::t_26e4dbfe88a6cb 65-67
+deploy/README.md
+  s_0b1becf5bbea3d::t_09cede31c73c0b 362-363
+  s_0b1becf5bbea3d::t_c95865f8096bd0 356
+.taskfiles/dev.yml
+  s_0b1becf5bbea3d::t_67bec5ee979670 104-105,113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "41bed940b4fe4b2f24659c28c380c0a284bdcfae",
+  "prompts": {},
+  "sessions": {
+    "s_0b1becf5bbea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "413f3a44-446c-458a-8dd6-69acadf88cd5",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
