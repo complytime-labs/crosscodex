@@ -1,0 +1,35 @@
+test/eval/crosswalk/README.md
+  s_51f263053339cb::t_523a63f0a4955e 97-116,118-125,128-162
+  s_51f263053339cb::t_48e3443a0b8eeb 117,126-127
+docs/dev/prompt-render.md
+  s_51f263053339cb::t_1e661163a467d1 1-6,8-12,14-19,21-29
+  s_51f263053339cb::t_51bd76d59f5492 7,30
+  s_51f263053339cb::t_3b956533e0e4e6 13,20
+docs/dev/stage-progress.md
+  s_51f263053339cb::t_3e8803e3fc7890 1-21,23-42,44
+  s_51f263053339cb::t_6b64f7c6b78bd1 22,43
+README.md
+  s_51f263053339cb::t_d02a11554db453 433-435,438
+  s_51f263053339cb::t_3ff79c3fe84c18 497-510,513-524,526-527,529
+  s_51f263053339cb::t_3af4353f2d7b89 511-512,528
+  s_51f263053339cb::t_d4c51f55a6aad7 19-28
+  s_51f263053339cb::t_28167b9776f407 1175
+  s_51f263053339cb::t_9130ff6a3044e0 525
+  s_51f263053339cb::t_5ec295f9018d31 439
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "48fc079c97d4561257cdabc771fdb1ce8204e00d",
+  "prompts": {},
+  "sessions": {
+    "s_51f263053339cb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1ed4a700-2209-4f05-a54a-7a3c4228c5f4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
