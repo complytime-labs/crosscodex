@@ -1,0 +1,70 @@
+test/tooling/lib/deploy-ingestion.sh
+  s_0b1becf5bbea3d::t_25ffe96730bf06 1-31
+.taskfiles/deploy.yml
+  s_0b1becf5bbea3d::t_3a05c9e278a383 605,608,613-614
+  s_0b1becf5bbea3d::t_0acd440d32d4e4 411
+  s_0b1becf5bbea3d::t_dc2ee1d4a27ed2 687
+  s_0b1becf5bbea3d::t_ffec6c13af9c96 635-637
+  s_0b1becf5bbea3d::t_2fc1849da9c85c 158-160
+  s_0b1becf5bbea3d::t_788b3f7d045a4f 451
+  s_0b1becf5bbea3d::t_dd6254f7aeff65 89
+  s_0b1becf5bbea3d::t_be2cb1d2bf8ea5 134-143
+  s_0b1becf5bbea3d::t_1b58207640e076 670-676,678-679
+test/tooling/lib/deploy-down-volumes.sh
+  s_0b1becf5bbea3d::t_353c1ebde44ada 23
+test/tooling/lib/smoke-up-hardening.sh
+  s_0b1becf5bbea3d::t_353c1ebde44ada 43,54
+deploy/compose.ingestion.yaml
+  s_0b1becf5bbea3d::t_db56aa76712498 1-64,66-97
+  s_0b1becf5bbea3d::t_5d824c83ec0282 65
+deploy/compose.yaml
+  s_0b1becf5bbea3d::t_cab0725a0be6c8 24
+  s_0b1becf5bbea3d::t_d298bc8c8c5a0f 23
+test/deploy/smoke_up.sh
+  s_0b1becf5bbea3d::t_353c1ebde44ada 190-193,276,438
+test/tooling/deploy-ingestion.venom.yml
+  s_0b1becf5bbea3d::t_8f6acd7d0c7984 1-67
+deploy/compose.rustfs.yaml
+  s_0b1becf5bbea3d::t_e5f7e49b9ba4a8 44-45,67-68,96-97,109-110
+  s_0b1becf5bbea3d::t_33b33d38480d7d 1-23,26-43,46-66,72,76-77,82-95,98-108,111-116
+  s_0b1becf5bbea3d::t_c1c9ad803cc097 24-25
+  s_0b1becf5bbea3d::t_3df329fc1359a1 69-71,73-75,78-81
+test/tooling/lib/certs-load-upgrade.sh
+  s_0b1becf5bbea3d::t_140e3ed3cc428d 130
+deploy/README.md
+  s_0b1becf5bbea3d::t_932c71b7386819 87,98,102
+  s_0b1becf5bbea3d::t_45b4694d138410 356,359
+  s_0b1becf5bbea3d::t_11b9b7c261db93 210,228-230
+  s_0b1becf5bbea3d::t_639d590430841d 338-355,357-358,360-362
+  s_0b1becf5bbea3d::t_d298bc8c8c5a0f 676
+test/tooling/certs-load-upgrade.venom.yml
+  s_0b1becf5bbea3d::t_140e3ed3cc428d 16,22
+deploy/certgen/gen.go
+  s_0b1becf5bbea3d::t_e727e450563a70 5-7
+  s_0b1becf5bbea3d::t_dd6254f7aeff65 54
+README.md
+  s_0b1becf5bbea3d::t_2b778bc3c95e06 19-24
+deploy/.env.example
+  s_0b1becf5bbea3d::t_009b890259e7ee 73-81
+deploy/local_up.sh
+  s_0b1becf5bbea3d::t_8e7e962e7eff28 24-25
+  s_0b1becf5bbea3d::t_65d881ecbf6965 197-200
+test/tooling/cert-generators.venom.yml
+  s_0b1becf5bbea3d::t_848ca9ce49ed15 108,112-113,120,123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "7ae2725af5a625b0e759b177009c5107e7cbb796",
+  "prompts": {},
+  "sessions": {
+    "s_0b1becf5bbea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "413f3a44-446c-458a-8dd6-69acadf88cd5",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
