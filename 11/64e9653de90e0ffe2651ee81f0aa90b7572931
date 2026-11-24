@@ -1,0 +1,30 @@
+.taskfiles/eval.yml
+  s_51f263053339cb::t_674530ed2d4cd7 19,39
+test/eval/crosswalk/run.sh
+  s_51f263053339cb::t_c423c03b116b51 152
+  s_51f263053339cb::t_63a0715be1202a 4-5,13-15,21-22,38,60-62,122-131,133-139,141-151,153-167,177-178,180-182
+  s_51f263053339cb::t_4ebc32c75c851b 172,179
+test/tooling/lib/fake-crosscodex.sh
+  s_51f263053339cb::t_1548a66218190d 5-6,21
+test/eval/crosswalk/testdata/run/status.json
+  s_51f263053339cb::t_1548a66218190d 5-9
+test/tooling/eval-crosswalk.venom.yml
+  s_51f263053339cb::t_674530ed2d4cd7 406-417
+  s_51f263053339cb::t_9e1c17e3f49203 295-405
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "1164e9653de90e0ffe2651ee81f0aa90b7572931",
+  "prompts": {},
+  "sessions": {
+    "s_51f263053339cb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1ed4a700-2209-4f05-a54a-7a3c4228c5f4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
