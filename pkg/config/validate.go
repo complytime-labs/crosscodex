@@ -57,6 +57,7 @@ func validate(cfg *Config, tracker *sourceTracker) error {
 		validateAnalysis(&cfg.Analysis, tracker),
 		cfg.Worker.validate(tracker),
 		cfg.Pipeline.validate(tracker),
+		cfg.Ingestion.validate(tracker),
 		validateSuccessWindow(&cfg.Analysis.Engine, &cfg.Pipeline, tracker),
 		validateSynthesis(&cfg.Synthesis, tracker),
 		validateCleaning(&cfg.Cleaning, tracker),
