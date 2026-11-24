@@ -1,0 +1,35 @@
+docs/dev/test-sources.md
+  s_0b1becf5bbea3d::t_ad6cb913adf876 51-59
+internal/catalog/ingestion_adapter_bdd_test.go
+  s_0b1becf5bbea3d::t_58f2d84e15b7bb 1-281
+internal/catalog/testdata/ingestion/nist-sp800-171r3-excerpt.json
+  s_0b1becf5bbea3d::t_c4ef440c8dc505 1-580
+internal/catalog/ingestion_adapter_property_test.go
+  s_0b1becf5bbea3d::t_f2821253b15ff3 1-101
+internal/catalog/format_constants.go
+  s_0b1becf5bbea3d::t_fe17406bc1b928 15-18
+internal/catalog/testdata/ingestion/eurlex-nis2-32022L2555.json
+  s_0b1becf5bbea3d::t_c4ef440c8dc505 1-512
+internal/catalog/testdata/ingestion/README.md
+  s_0b1becf5bbea3d::t_f213bf67711121 1-23
+internal/catalog/catalog_fuzz_test.go
+  s_0b1becf5bbea3d::t_a61a4b20170816 54-87
+internal/catalog/ingestion_adapter.go
+  s_0b1becf5bbea3d::t_6a04682eeab368 1-291
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "bf4bd805dcc8d556a4f0eca4087f61c2b512d274",
+  "prompts": {},
+  "sessions": {
+    "s_0b1becf5bbea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "413f3a44-446c-458a-8dd6-69acadf88cd5",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
