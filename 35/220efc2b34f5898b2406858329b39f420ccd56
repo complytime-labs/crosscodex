@@ -1,0 +1,35 @@
+pkg/oscal/buildtree.go
+  s_0b1becf5bbea3d::t_74b151cb4f1bd4 57,74,134-135,137,141
+  s_0b1becf5bbea3d::t_47f3f3fd86f9ad 1-56,58-73,75-133,136,138-140,142-146
+pkg/oscal/structurer.go
+  s_0b1becf5bbea3d::t_c11e0e5c6c22e6 63-69,79,82-92,94-99,103
+pkg/oscal/interface.go
+  s_0b1becf5bbea3d::t_c11e0e5c6c22e6 17-19,22-34
+  s_0b1becf5bbea3d::t_7f208241e51ec3 35
+pkg/oscal/oscal_buildtree_bdd_test.go
+  s_0b1becf5bbea3d::t_8609918ce0d62b 47-49,194-195
+  s_0b1becf5bbea3d::t_ae611191d1d8dc 1-46,50-128,130-131,133-134,136-173,175-179,193,196-202
+  s_0b1becf5bbea3d::t_74b151cb4f1bd4 129,132,135
+  s_0b1becf5bbea3d::t_e72334200cba0b 174,180-192
+pkg/oscal/oscal_property_test.go
+  s_0b1becf5bbea3d::t_eb1854dfe505e1 415-473,475-483
+  s_0b1becf5bbea3d::t_39ad13267482b5 474
+pkg/oscal/errors.go
+  s_0b1becf5bbea3d::t_c11e0e5c6c22e6 13-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "35220efc2b34f5898b2406858329b39f420ccd56",
+  "prompts": {},
+  "sessions": {
+    "s_0b1becf5bbea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "413f3a44-446c-458a-8dd6-69acadf88cd5",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
