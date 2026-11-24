@@ -1,0 +1,28 @@
+pkg/oscal/oscal_property_test.go
+  s_0b1becf5bbea3d::t_5cf4c00f0d00c7 431-437
+pkg/oscal/export_test.go
+  s_0b1becf5bbea3d::t_f0def45b1afa73 24-29
+pkg/oscal/structurer.go
+  s_0b1becf5bbea3d::t_e1947fa8cded27 172-177,187-200
+pkg/oscal/decompose.go
+  s_0b1becf5bbea3d::t_e1947fa8cded27 172-175,178,180-182
+  s_0b1becf5bbea3d::t_d6272bc9fab6e3 137-139
+pkg/oscal/oscal_decompose_links_bdd_test.go
+  s_0b1becf5bbea3d::t_f0def45b1afa73 1-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "fe3cffca34b2d78a2e9903accf60af5f7ea9c935",
+  "prompts": {},
+  "sessions": {
+    "s_0b1becf5bbea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "413f3a44-446c-458a-8dd6-69acadf88cd5",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
