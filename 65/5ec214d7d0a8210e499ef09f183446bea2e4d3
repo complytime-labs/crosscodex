@@ -1,0 +1,50 @@
+cmd/crosscodex/embedded_bdd_test.go
+  s_51f263053339cb::t_f1c6da288b8715 742-743
+test/eval/crosswalk/run.sh
+  s_51f263053339cb::t_85393bb92c23f8 192,197-204,223-225
+pkg/db/migrations/004_stage_progress.up.sql
+  s_51f263053339cb::t_43574b477f709c 14,25-30
+test/eval/crosswalk/labelsmerge_fuzz_test.go
+  s_51f263053339cb::t_47fa099d428471 22-23
+test/tooling/lib/fake-crosscodex.sh
+  s_51f263053339cb::t_955e7bcc1a8cc6 8-9,41-45
+docs/dev/stage-progress.md
+  s_51f263053339cb::t_43574b477f709c 37
+test/eval/crosswalk/labelsmerge.go
+  s_51f263053339cb::t_a922e7b040a960 222-262
+  s_51f263053339cb::t_8f69d1abc9302c 193-195
+internal/analysis/progress_bdd_test.go
+  s_51f263053339cb::t_2d7a0a2ebfda3b 355-363
+test/tooling/eval-crosswalk.venom.yml
+  s_51f263053339cb::t_955e7bcc1a8cc6 505-524
+internal/analysis/engine.go
+  s_51f263053339cb::t_88dd528897489a 443-444,446
+test/eval/crosswalk/labelsmerge_bdd_test.go
+  s_51f263053339cb::t_acd55026f91974 170-184
+pkg/db/db_integration_bdd_test.go
+  s_9771fb66d2daf7::t_c2d3eb38a8311b 1390-1415
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "655ec214d7d0a8210e499ef09f183446bea2e4d3",
+  "prompts": {},
+  "sessions": {
+    "s_51f263053339cb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1ed4a700-2209-4f05-a54a-7a3c4228c5f4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_9771fb66d2daf7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a581cc5b9f403494b",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
