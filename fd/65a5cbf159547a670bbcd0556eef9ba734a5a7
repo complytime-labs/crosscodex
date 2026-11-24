@@ -1,0 +1,46 @@
+pkg/db/role_check_integration_bdd_test.go
+  s_51f263053339cb::t_a7f0a569e04371 38
+docs/dev/migrations.md
+  s_51f263053339cb::t_4905cc66baec66 20-21,24
+pkg/retention/engine_integration_bdd_test.go
+  s_51f263053339cb::t_5a969236adf998 626,628
+  s_51f263053339cb::t_17d14ae0f14322 172,198-202,250,255,287,655,665
+pkg/retention/archive.go
+  s_51f263053339cb::t_1a339b09af824f 39
+pkg/retention/purge.go
+  s_51f263053339cb::t_3d836e623c9e5a 59
+pkg/db/db_integration_bdd_test.go
+  s_6424c958efab63::t_ffb4023a9eab62 1289-1378
+pkg/db/migrations/004_stage_progress.down.sql
+  s_6424c958efab63::t_21773e992f1dc0 1-4
+pkg/db/migrations/004_stage_progress.up.sql
+  s_6424c958efab63::t_83a26acc2f9d62 1-37
+pkg/retention/archive_bdd_test.go
+  s_6424c958efab63::t_a864c23ca1fa69 81-95
+pkg/retention/purge_bdd_test.go
+  s_6424c958efab63::t_310508e2190172 79-81,83-88,91-94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "fd65a5cbf159547a670bbcd0556eef9ba734a5a7",
+  "prompts": {},
+  "sessions": {
+    "s_51f263053339cb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1ed4a700-2209-4f05-a54a-7a3c4228c5f4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_6424c958efab63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aec4eedf71749f035",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
