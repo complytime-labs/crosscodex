@@ -1,0 +1,21 @@
+internal/gateway/backend/ingestion_key_bdd_test.go
+  s_0b1becf5bbea3d::t_d935eceee6dcf2 43-46,89-91,94-105
+internal/gateway/backend/ingestion_key.go
+  s_0b1becf5bbea3d::t_f287e22656cfb6 60,81-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "a5ce8e6d184b4ec791f79c7ce3bb9ea9a2532b2c",
+  "prompts": {},
+  "sessions": {
+    "s_0b1becf5bbea3d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "413f3a44-446c-458a-8dd6-69acadf88cd5",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
