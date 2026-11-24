@@ -1,0 +1,19 @@
+.github/workflows/ingestion-integration.yml
+  s_5936ef4306c6b6::t_4f0cee1f9555b0 47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "6ba9e907a8a3a58bd7cf5d7ca48cd45c92db88c3",
+  "prompts": {},
+  "sessions": {
+    "s_5936ef4306c6b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3eb8660b-9a2c-452f-bc53-54a59975187b",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
