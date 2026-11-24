@@ -112,8 +112,8 @@ testcases:
         assertions:
           - result.systemout ShouldNotContainSubstring config_exit=0
           - or:
-            - result.systemout ShouldContainSubstring "RUSTFS_ACCESS_KEY required for compose.rustfs.yaml"
-            - result.systemout ShouldContainSubstring "RUSTFS_SECRET_KEY required for compose.rustfs.yaml"
+              - result.systemout ShouldContainSubstring "RUSTFS_ACCESS_KEY required for compose.rustfs.yaml"
+              - result.systemout ShouldContainSubstring "RUSTFS_SECRET_KEY required for compose.rustfs.yaml"
           - result.systemout ShouldNotContainSubstring parsed=
           - result.systemout ShouldContainSubstring "state=containers:0 volumes:0 networks:0"
 
