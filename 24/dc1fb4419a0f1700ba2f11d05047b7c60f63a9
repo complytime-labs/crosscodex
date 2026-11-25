@@ -1,0 +1,58 @@
+docs/dev/service-runtime.md
+  s_716be8e6f6d133::t_883cad4eef17fe 216,218
+api/proto/crosscodex/v1/gateway.proto
+  s_716be8e6f6d133::t_8e8cd279fb3f25 488-489
+  s_716be8e6f6d133::t_7d1857c2bece32 624-626
+  s_716be8e6f6d133::t_0bf1bf5ab2183f 487,490-495
+cmd/crosscodex/catalog.go
+  s_716be8e6f6d133::t_a8fa59d4e247c1 20,56-59,62-63,77,85-87,111-112,115,134,200,206
+api/proto/crosscodex/v1/ingestion.proto
+  s_716be8e6f6d133::t_6a3b2a506b2c3a 31-35
+README.md
+  s_716be8e6f6d133::t_613b8bed16164c 433-439
+internal/gateway/backend/ingestion_router.go
+  s_716be8e6f6d133::t_1759b201b1221c 51-62
+  s_716be8e6f6d133::t_bf359fd7d02927 33-34
+internal/gateway/mapping_fuzz_test.go
+  s_716be8e6f6d133::t_fca84b7af9099f 18-26
+  s_716be8e6f6d133::t_79b3b9c47b03cf 1-17,27-49
+internal/gateway/backend/ingestion_client.go
+  s_716be8e6f6d133::t_6a4db598d0c6df 7,19,29,43-45,52,72-79,99,173,176-187
+internal/gateway/backend/ingestion_client_bdd_test.go
+  s_716be8e6f6d133::t_d1b744956ab7ba 358-424
+  s_716be8e6f6d133::t_705283e01da791 4,9,11
+cmd/crosscodex/catalog_import_bdd_test.go
+  s_716be8e6f6d133::t_b50cea8e83eb3e 233-280
+internal/gateway/gateway_bdd_test.go
+  s_716be8e6f6d133::t_5ed18431acdfcb 1681-1730,1732-1739,1742-1760
+  s_716be8e6f6d133::t_8e8cd279fb3f25 1731,1740-1741
+  s_716be8e6f6d133::t_3a73b4c0d7964d 10
+internal/gateway/backend/ingestion_router_bdd_test.go
+  s_716be8e6f6d133::t_f8d1c3b13a2af1 153-184
+cmd/crosscodexd/bootstrap.go
+  s_716be8e6f6d133::t_a3e0ce7bc4c51d 429-430
+internal/gateway/stream.go
+  s_716be8e6f6d133::t_c54f833df5b863 74
+internal/gateway/document.go
+  s_716be8e6f6d133::t_0f18dece61dc30 7,34,55-79
+  s_716be8e6f6d133::t_2a8a5d17071a35 105-108
+  s_716be8e6f6d133::t_4404c568b95196 80-81
+cmd/crosscodex/embedded.go
+  s_716be8e6f6d133::t_a3e0ce7bc4c51d 685-686
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "24dc1fb4419a0f1700ba2f11d05047b7c60f63a9",
+  "prompts": {},
+  "sessions": {
+    "s_716be8e6f6d133": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "422310a8-cbba-4c80-ad5a-6a1823316b83",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
