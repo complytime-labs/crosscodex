@@ -169,7 +169,7 @@ func integSeedJob(tenantID, jobID string) {
 }
 
 // integSeedJobChildren provisions the tenant, inserts a completed job, and adds
-// one row to each of the four tables that FK-reference jobs(job_id): job_stages,
+// one row to each of the five tables that FK-reference jobs(job_id): job_stages, job_stage_progress,
 // vote_summaries, analysis_results, relationship_candidates. All inserts run as
 // app_user in a single tenant-scoped tx (RLS WITH CHECK requires tenant_id to
 // match app.current_tenant). The child immutability triggers fire only on
@@ -195,6 +195,11 @@ func integSeedJobChildren(tenantID, jobID string) {
 		 VALUES ($1, 'collect', 'completed', $2)`,
 		jobID, tenantID,
 	)).To(Succeed(), "insert job_stage")
+	Expect(tx.Exec(ctx,
+		`INSERT INTO job_stage_progress (tenant_id, job_id, stage_name, tasks_total, tasks_done, tasks_succeeded)
+		 VALUES ($1, $2, 'collect', 1, 1, 1)`,
+		tenantID, jobID,
+	)).To(Succeed(), "insert job_stage_progress")
 	Expect(tx.Exec(ctx,
 		`INSERT INTO vote_summaries (job_id, source_id, target_id, analyzer_name, consensus, confidence, viability, tenant_id)
 		 VALUES ($1, 'src-1', 'tgt-1', 'relationship', 'accept', 0.9, 0.8, $2)`,
@@ -242,11 +247,12 @@ func integCountRequiresCandidates(tenantID, jobID string) int {
 	return queryIntAsTenant(tenantID, `SELECT count(*) FROM requires_candidates WHERE job_id = $1`, jobID)
 }
 
-// integCountJobChildren returns the total number of rows across the four FK-child
+// integCountJobChildren returns the total number of rows across the five FK-child
 // tables for jobID, visible to tenantID as app_user.
 func integCountJobChildren(tenantID, jobID string) int {
 	return queryIntAsTenant(tenantID, `SELECT
 		   (SELECT count(*) FROM job_stages              WHERE job_id = $1)
+		 + (SELECT count(*) FROM job_stage_progress      WHERE job_id = $1)
 		 + (SELECT count(*) FROM vote_summaries          WHERE job_id = $1)
 		 + (SELECT count(*) FROM analysis_results        WHERE job_id = $1)
 		 + (SELECT count(*) FROM relationship_candidates WHERE job_id = $1)`, jobID)
@@ -278,7 +284,7 @@ func integPurgeJobChildren(tenantID, jobID string) {
 		return
 	}
 	for _, table := range []string{
-		"job_stages", "vote_summaries", "analysis_results", "relationship_candidates",
+		"job_stage_progress", "job_stages", "vote_summaries", "analysis_results", "relationship_candidates",
 		"requires_candidates", "llm_result_cache", "job_cache_entries", "job_cache_stats",
 	} {
 		_ = tx.Exec(ctx, "DELETE FROM "+table+" WHERE job_id = $1", jobID)
@@ -617,9 +623,9 @@ var _ = Describe("Retention engine end-to-end", Ordered, func() {
 		integSeedJobChildren(tid, jobID)
 		DeferCleanup(func() { integPurgeJobChildren(tid, jobID) })
 
-		// Precondition: all four FK child sets and the job-scoped
+		// Precondition: all five FK child sets and the job-scoped
 		// requires_candidates row are present before the scan.
-		Expect(integCountJobChildren(tid, jobID)).To(Equal(4), "seed must create one row per child table")
+		Expect(integCountJobChildren(tid, jobID)).To(Equal(5), "seed must create one row per child table")
 		Expect(integCountRequiresCandidates(tid, jobID)).To(Equal(1), "seed must create one requires_candidates row")
 
 		rep, err := kit.engine.Scan(ctx, retention.ScanOptions{Now: integScanTime()})
@@ -646,6 +652,7 @@ var _ = Describe("Retention engine end-to-end", Ordered, func() {
 		var doc struct {
 			Job                    map[string]any   `json:"job"`
 			JobStages              []map[string]any `json:"job_stages"`
+			JobStageProgress       []map[string]any `json:"job_stage_progress"`
 			VoteSummaries          []map[string]any `json:"vote_summaries"`
 			AnalysisResults        []map[string]any `json:"analysis_results"`
 			RelationshipCandidates []map[string]any `json:"relationship_candidates"`
@@ -655,6 +662,7 @@ var _ = Describe("Retention engine end-to-end", Ordered, func() {
 		Expect(doc.Job).NotTo(BeEmpty(), "archived doc must contain the parent job")
 		Expect(doc.Job["job_id"]).To(Equal(jobID))
 		Expect(doc.JobStages).To(HaveLen(1), "archived doc must contain the job_stages child")
+		Expect(doc.JobStageProgress).To(HaveLen(1), "archived doc must contain the job_stage_progress child")
 		Expect(doc.VoteSummaries).To(HaveLen(1), "archived doc must contain the vote_summaries child")
 		Expect(doc.AnalysisResults).To(HaveLen(1), "archived doc must contain the analysis_results child")
 		Expect(doc.RelationshipCandidates).To(HaveLen(1), "archived doc must contain the relationship_candidates child")

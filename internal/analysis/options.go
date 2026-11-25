@@ -54,6 +54,7 @@ func WithTelemetry(tp trace.TracerProvider, mp metric.MeterProvider) Option {
 			e.cacheInFlight, _ = meter.Int64Gauge("analysis.result_cache.entries_in_flight",
 				metric.WithDescription("Result cache keys being looked up or stored"))
 		}
+		e.progressMetrics = newProgressMetrics(mp)
 	}
 }
 
@@ -90,6 +91,20 @@ func WithStageTimeout(d time.Duration) Option {
 func WithResultCache(store resultcache.Store) Option {
 	return func(e *Engine) {
 		e.cacheStore = store
+	}
+}
+
+// WithProgressStore makes each analyzer stage write its task progress
+// (total, succeeded, failed, retried, cache hits, last success) to store,
+// every interval while it runs and once when it ends. Wiring contract:
+// crosscodexd passes the pipeline PGStore and
+// analysis.engine.progress_flush_interval (config.EngineConfig); a
+// non-positive interval falls back to that setting's default. Without this
+// option the engine records no progress.
+func WithProgressStore(store ProgressStore, interval time.Duration) Option {
+	return func(e *Engine) {
+		e.progressStore = store
+		e.progressInterval = interval
 	}
 }
 

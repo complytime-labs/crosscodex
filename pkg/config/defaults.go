@@ -119,6 +119,7 @@ analysis:
   engine:
     task_timeout: 5m
     success_timeout: 10m
+    progress_flush_interval: 10s
     max_retries: 3
     retry_backoff: 1s
     retry_on_timeout: false

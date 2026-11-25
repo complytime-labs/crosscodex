@@ -73,6 +73,41 @@ func (s *Service) GetCatalog(ctx context.Context, req *connect.Request[pb.GetCat
 	return resp, nil
 }
 
+// ListCatalogControls is readable by any user of the tenant, like
+// GetCatalog: a catalog is the tenant's, not its importer's. The pipeline
+// backend composes the controls and decides NotFound.
+func (s *Service) ListCatalogControls(ctx context.Context, req *connect.Request[pb.ListCatalogControlsRequest]) (*connect.Response[pb.ListCatalogControlsResponse], error) {
+	start := time.Now()
+	identity := identityFromContext(ctx)
+	if identity == nil {
+		return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("not authenticated"))
+	}
+
+	ctx, endSpan := s.startHandlerSpan(ctx, "ListCatalogControls", identity,
+		attribute.String("catalog.id", req.Msg.GetCatalogId()))
+	defer endSpan()
+
+	if req.Msg.GetCatalogId() == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New(`catalog_id is required: name the catalog whose controls to list. Run "crosscodex catalog list" to find its ID`))
+	}
+
+	if s.pipeline == nil {
+		return nil, connect.NewError(connect.CodeUnavailable, errors.New("pipeline backend not configured"))
+	}
+
+	req.Msg.TenantContext = buildTenantContext(identity)
+
+	resp, err := s.pipeline.ListCatalogControls(ctx, req)
+	if err != nil {
+		err = s.publicError(ctx, "ListCatalogControls", err)
+		s.recordMetrics(ctx, "ListCatalogControls", start, connect.CodeOf(err))
+		return nil, err
+	}
+
+	s.recordMetrics(ctx, "ListCatalogControls", start, connect.Code(0))
+	return resp, nil
+}
+
 // RetireCatalogVersion deletes catalog versions, so it is admin only, like
 // the other gateway operations that change or expose data beyond the
 // caller's own imports (QueryGraph, feedback). The backend decides what may be

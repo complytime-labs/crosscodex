@@ -17,6 +17,7 @@ import (
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
+	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 )
 
 // fakeStartAnalysisClient records StartAnalysis requests; other
@@ -393,6 +394,86 @@ var _ = Describe("run status", func() {
 			{"name": "relationship", "status": "JOB_STATUS_RUNNING", "started_at": "2026-11-08T10:00:05Z", "completed_at": ""},
 			{"name": "synthesis", "status": "JOB_STATUS_PENDING", "started_at": "", "completed_at": ""},
 		}))
+	})
+
+	Describe("task progress", func() {
+		lastSuccess := time.Date(2026, 11, 24, 9, 30, 0, 0, time.UTC)
+		jobWithProgress := func() *pb.PipelineJob {
+			job := jobWithStages("classify", "synthesis")
+			job.Stages[0].Progress = &pb.StageProgress{TasksTotal: 10, TasksDone: 9, TasksSucceeded: 8, TasksFailed: 1,
+				TasksRetried: 3, TasksCacheHits: 2}
+			return job
+		}
+
+		It("prints a row only for each stage with progress", func() {
+			Expect(runStatus(jobWithProgress())).To(ContainSubstring("Task progress:\n" +
+				"  classify  COMPLETED  9/10  ok 8  cached 2  failed 1  retried 3  last success never\n"))
+		})
+
+		It("prints no task progress section when no stage has progress", func() {
+			Expect(runStatus(jobWithStages("classify", "synthesis"))).NotTo(ContainSubstring("Task progress"))
+		})
+
+		It("adds a progress object only to the JSON stages with progress", func() {
+			job := jobWithProgress()
+			job.Stages[0].Progress.LastSuccessAt = timestamppb.New(lastSuccess)
+			var got struct {
+				Stages []map[string]any `json:"stages"`
+			}
+			Expect(json.Unmarshal([]byte(runStatus(job, "--json")), &got)).To(Succeed())
+			Expect(got.Stages).To(HaveLen(2))
+			Expect(got.Stages[0]).To(HaveKeyWithValue("progress", map[string]any{
+				"tasks_total": 10.0, "tasks_done": 9.0, "tasks_succeeded": 8.0, "tasks_failed": 1.0,
+				"tasks_retried": 3.0, "tasks_cache_hits": 2.0, "last_success_at": "2026-11-24T09:30:00Z"}))
+			Expect(got.Stages[1]).NotTo(HaveKey("progress"))
+		})
+
+		It("gives an unset last success as an empty JSON string", func() {
+			var got struct {
+				Stages []map[string]any `json:"stages"`
+			}
+			Expect(json.Unmarshal([]byte(runStatus(jobWithProgress(), "--json")), &got)).To(Succeed())
+			Expect(got.Stages[0]).To(HaveKeyWithValue("progress", HaveKeyWithValue("last_success_at", "")))
+		})
+
+		It("states in its help what each count means", func() {
+			out, _, err := execute(newRunCmd(&cliState{}), "status", "--help")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(ContainSubstring("done is ok plus failed"))
+			Expect(out).To(ContainSubstring("ok includes the cached tasks"))
+			Expect(out).To(ContainSubstring("retried counts retry attempts, not tasks"))
+		})
+
+		DescribeTable("writes the rows aligned, with the time since the last success at now",
+			func(stages []*pb.JobStage, want string) {
+				var buf strings.Builder
+				writeProgressLines(&buf, stages, lastSuccess.Add(42*time.Second))
+				Expect(buf.String()).To(Equal(want))
+			},
+			Entry("a stage with a last success and one without",
+				[]*pb.JobStage{
+					{StageName: "classify", Status: pb.JobStatus_JOB_STATUS_COMPLETED, Progress: &pb.StageProgress{
+						TasksTotal: 10, TasksDone: 9, TasksSucceeded: 8, TasksFailed: 1, TasksRetried: 3, TasksCacheHits: 2,
+						LastSuccessAt: timestamppb.New(lastSuccess)}},
+					{StageName: "synthesis", Status: pb.JobStatus_JOB_STATUS_PENDING},
+					{StageName: "relationship", Status: pb.JobStatus_JOB_STATUS_RUNNING, Progress: &pb.StageProgress{TasksTotal: 4}},
+				},
+				"Task progress:\n"+
+					"  classify      COMPLETED  9/10  ok 8  cached 2  failed 1  retried 3  last success 42s ago\n"+
+					"  relationship  RUNNING    0/4   ok 0  cached 0  failed 0  retried 0  last success never\n"),
+			Entry("a resumed stage whose done exceeds its total, as stored",
+				[]*pb.JobStage{{StageName: "requires", Status: pb.JobStatus_JOB_STATUS_RUNNING, Progress: &pb.StageProgress{
+					TasksTotal: 4, TasksDone: 6, TasksSucceeded: 6, LastSuccessAt: timestamppb.New(lastSuccess.Add(-90 * time.Second))}}},
+				"Task progress:\n  requires  RUNNING  6/4  ok 6  cached 0  failed 0  retried 0  last success 2m12s ago\n"),
+			Entry("a last success after now, as from a skewed daemon clock",
+				[]*pb.JobStage{{StageName: "requires", Status: pb.JobStatus_JOB_STATUS_RUNNING, Progress: &pb.StageProgress{
+					TasksTotal: 1, TasksDone: 1, TasksSucceeded: 1, LastSuccessAt: timestamppb.New(lastSuccess.Add(time.Hour))}}},
+				"Task progress:\n  requires  RUNNING  1/1  ok 1  cached 0  failed 0  retried 0  last success 0s ago\n"),
+			Entry("a stage name holding a terminal escape and a line break, cleaned",
+				[]*pb.JobStage{{StageName: "evil\x1b[2J\nfake", Status: pb.JobStatus_JOB_STATUS_RUNNING, Progress: &pb.StageProgress{}}},
+				"Task progress:\n  "+intanalyzer.CleanDisplay("evil\x1b[2J\nfake", maxUntrustedDisplayBytes)+
+					"  RUNNING  0/0  ok 0  cached 0  failed 0  retried 0  last success never\n"),
+		)
 	})
 
 	It("gives an empty stages list for a job without stages", func() {

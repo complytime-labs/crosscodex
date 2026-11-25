@@ -92,6 +92,27 @@ service GatewayService {
     };
   }
 
+  // List a catalog's controls as analysis receives them (composed Title and
+  // Statement). Not paginated; see ListCatalogControlsResponse. Like
+  // GetCatalog, any user of the tenant may read it.
+  // INTERNAL: pipeline.ListCatalogControls
+  rpc ListCatalogControls(ListCatalogControlsRequest) returns (ListCatalogControlsResponse) {
+    option (google.api.http) = {
+      get: "/v1/catalogs/{catalog_id}/controls"
+    };
+  }
+
+  // Render the exact prompt an analyzer sends for one control pair, without
+  // calling an LLM. Any user of the tenant may render from catalogs; with
+  // job_id the caller must own the job or be an admin, as for GetJob.
+  // INTERNAL: pipeline.RenderPrompt
+  rpc RenderPrompt(RenderPromptRequest) returns (RenderPromptResponse) {
+    option (google.api.http) = {
+      post: "/v1/prompts:render"
+      body: "*"
+    };
+  }
+
   // Retire versions of a catalog document (admin only). See
   // CatalogService.RetireCatalogVersion for what is deleted and what blocks it.
   // INTERNAL: catalog.RetireCatalogVersion

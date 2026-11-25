@@ -698,6 +698,13 @@ type EngineConfig struct {
 	SuccessTimeout time.Duration `yaml:"success_timeout" json:"success_timeout"`
 	MaxRetries     int           `yaml:"max_retries" json:"max_retries"`
 	RetryBackoff   time.Duration `yaml:"retry_backoff" json:"retry_backoff"`
+	// ProgressFlushInterval is how often the engine writes a running stage's
+	// per-task progress counters (tasks done, failed, total) to the job's
+	// stage progress record, so an operator can watch a long stage advance.
+	// Lower values show progress sooner at the cost of more database writes.
+	// Global only: tenant_overrides covers only retry_on_timeout. Range
+	// (0, 1h].
+	ProgressFlushInterval time.Duration `yaml:"progress_flush_interval" json:"progress_flush_interval"`
 	// RetryOnTimeout makes the engine re-send an LLM call that timed out.
 	// Off by default: a timed-out call may already have been billed, so a
 	// re-send can bill it twice. Tenant-overridable.
@@ -743,6 +750,11 @@ func (c *EngineConfig) successTimeoutInRange() bool {
 	return c.SuccessTimeout > 0 && c.SuccessTimeout <= 24*time.Hour
 }
 
+// progressFlushIntervalInRange reports whether ProgressFlushInterval is in (0, 1h].
+func (c *EngineConfig) progressFlushIntervalInRange() bool {
+	return c.ProgressFlushInterval > 0 && c.ProgressFlushInterval <= time.Hour
+}
+
 func (c *EngineConfig) validate(tracker *sourceTracker) error {
 	var p problems
 	if !c.taskTimeoutInRange() {
@@ -764,6 +776,11 @@ func (c *EngineConfig) validate(tracker *sourceTracker) error {
 			"set success_timeout at or above task_timeout (success_timeout defaults to 10m, task_timeout to 5m), or lower task_timeout: %w",
 			c.SuccessTimeout, formatSource(tracker, "analysis.engine.success_timeout"),
 			c.TaskTimeout, formatSource(tracker, "analysis.engine.task_timeout"), ErrInvalidConfig)
+	}
+	if !c.progressFlushIntervalInRange() {
+		p.add("analysis.engine.progress_flush_interval", "analysis.engine.progress_flush_interval %s%s must be in range (0, 1h]: "+
+			"it is how often a running stage's task progress is saved, so set a duration such as 10s: %w",
+			c.ProgressFlushInterval, formatSource(tracker, "analysis.engine.progress_flush_interval"), ErrInvalidConfig)
 	}
 	if c.MaxRetries < 0 || c.MaxRetries > 10 {
 		p.add("analysis.engine.max_retries", "analysis.engine.max_retries %d%s must be in range [0, 10]: %w",

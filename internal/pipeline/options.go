@@ -97,9 +97,22 @@ func WithPanelProbe(c PanelProbeClient) Option {
 // gives NewProductionRegistry, so the version read here is the one the
 // analyzers record. Without it CurrentStageRecord returns an error for a stage
 // that renders a prompt; a missing registry never reads as "unknown".
+// RenderPrompt renders from it too, and refuses every request without it.
 func WithPromptRegistry(r prompt.Registry) Option {
 	return func(s *Service) {
 		s.prompts = r
+	}
+}
+
+// WithAnalysisConfig sets the analysis settings RenderPrompt builds the
+// relationship, requires and critique analyzers from (statement bounds and
+// the rest of analysis.<analyzer>). Wiring contract: cmd/crosscodexd passes
+// the cfg.Analysis it gives NewProductionRegistry, so a rendered prompt is
+// the one the job's analyzers send. Without it RenderPrompt refuses every
+// request.
+func WithAnalysisConfig(cfg config.AnalysisConfig) Option {
+	return func(s *Service) {
+		s.analysisCfg = &cfg
 	}
 }
 

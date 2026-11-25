@@ -147,7 +147,21 @@ and the output says so.
 Shows, per analyzer, how many LLM results were reused from earlier jobs and
 how many calls were sent to the model, and which model answered each alias.
 Only figures a signed cache record vouches for are shown; an analyzer
-without one shows as not attested, or in progress while the job runs.`,
+without one shows as not attested, or in progress while the job runs.
+
+Shows, per stage that has dispatched tasks, its task progress as last
+recorded by the daemon:
+
+  stage  status  done/total  ok N  cached N  failed N  retried N  last success 42s ago
+
+total is the tasks the stage dispatched. done is ok plus failed: the tasks
+that finished. ok includes the cached tasks, answered from the result cache
+instead of the model. retried counts retry attempts, not tasks: a task
+retried twice counts 2. last success is the time since a worker last
+completed a task (cache hits do not move it), or never. A resumed stage
+adds to its earlier counts, so done can exceed total. A stage without
+recorded progress (not started, or a job from before progress was recorded)
+has no row, and no "progress" object in --json.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			jobID := args[0]
 			tenant, _ := cmd.Flags().GetString("tenant")
@@ -187,13 +201,16 @@ without one shows as not attested, or in progress while the job runs.`,
 				}
 			}
 
-			stages := make([]map[string]string, len(job.GetStages()))
+			stages := make([]map[string]any, len(job.GetStages()))
 			for i, stage := range job.GetStages() {
-				stages[i] = map[string]string{
+				stages[i] = map[string]any{
 					"name":         stage.GetStageName(),
 					"status":       stage.GetStatus().String(),
 					"started_at":   formatStageTime(stage.GetStartedAt()),
 					"completed_at": formatStageTime(stage.GetCompletedAt()),
+				}
+				if p := stage.GetProgress(); p != nil {
+					stages[i]["progress"] = stageProgressToJSON(p)
 				}
 			}
 
@@ -228,6 +245,7 @@ without one shows as not attested, or in progress while the job runs.`,
 							"(with analysis.relationship.models and an enabled analysis.candidates.generators entry), "+
 							"then start a new job.\n")
 					}
+					writeProgressLines(w, job.GetStages(), time.Now())
 					writePanelLines(w, panels)
 					writeCacheLines(w, job.GetCacheSummaries(), state.daemon != nil, len(analyzers))
 				},

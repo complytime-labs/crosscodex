@@ -16,6 +16,16 @@ CrossCodex is in early development. All foundational, domain, and service packag
 
 ## Upgrading
 
+Operations progress, prompt rendering and eval tooling (#278). Additive; no breaking changes:
+
+- **Database.** Run `crosscodexd migrate` to apply migration `004_stage_progress` (the daemon never migrates). It adds the table `job_stage_progress`, which retention archives and purges with its job. Its down migration drops the table and loses the recorded progress only.
+- **`JobStage.progress`** is a new optional field of `GetJob` and of `run status --json` (`stages[].progress`), unset for a stage with no recorded progress and for every job that ran before the upgrade. `run status` prints a "Task progress" section. See [Seeing progress](#8-start-an-analysis).
+- **New config field `analysis.engine.progress_flush_interval`** (default 10s) sets how often a running stage writes its progress. Nothing needs changing.
+- **New RPCs `ListCatalogControls` and `RenderPrompt`**, behind `crosscodex catalog controls` and `crosscodex prompt render`. The gateway, `pipeline.proto` and the embedded daemon serve them.
+- **`content_hash` is a new key** in `catalog list --json` and `catalog inspect --json`: the SHA-256 of the bytes the catalog was imported from, `""` when none was recorded. `catalog inspect` also prints it as `Content SHA-256`.
+- **Embedders of `internal/pipeline`:** `pipeline.WithAnalysisConfig` is a new option. Without it `RenderPrompt` refuses every request; existing wiring is unaffected. The embedded CLI builds its prompt registry on first use rather than at startup.
+- **Eval:** `task eval:crosswalk` accepts `JOB=<id>` to score an existing job. See [test/eval/crosswalk/README.md](test/eval/crosswalk/README.md#scoring-an-existing-job).
+
 Local document ingestion overlays (#214). `task deploy:up` applies the PKI change to an existing deployment:
 
 - **The deploy PKI gains an `ingestion` server certificate**, loaded into a new volume `crosscodex-certs-ingestion` whether or not ingestion runs. A set without it fails verification, so the first `task deploy:up`, `deploy:certs` or `deploy:local` after upgrading replaces the PKI: a new CA, client certificate and attestation keypair. Back up `deploy/certs/attestation-pub.pem` first, let running analysis jobs finish, and re-point clients at the new `ca.pem`, `client.pem` and `client-key.pem`, as for #298 below.
@@ -420,7 +430,12 @@ crosscodex catalog list
 
 # Inspect a specific catalog (use the ID from the list output)
 crosscodex catalog inspect <catalog-id>
+
+# List a catalog's controls with the title and statement analysis gives each analyzer
+crosscodex catalog controls <catalog-id>
 ```
+
+`catalog controls` shows each control as the analyzers see it: a statement part carries its parents' lead-ins, a title that only repeats the control's label is dropped, and a title-only control's title becomes its statement. Use it to find the control IDs that `prompt render` takes. The whole catalog arrives in one response, so a large catalog is one large reply. The text is the catalog's own and untrusted: text output strips control and invisible format characters, `--json` returns it unchanged and JSON-escaped; render neither as markup (HTML, Markdown). `catalog list --json` and `catalog inspect --json` carry `content_hash`, the SHA-256 of the bytes the catalog was imported from (`""` when none was recorded).
 
 ### 8. Start an analysis
 
@@ -478,6 +493,40 @@ crosscodex run status <job-id>
 - **Seeing what ran.** `crosscodex run status <job-id>` shows the source and target catalogs (name, version, ID and control count) and the direction. `crosscodex results export` carries the catalogs (ID, name, version) and direction: JSON under `analysis`, CSV in the `job_*` columns, which describe the job, not the row (in a bidirectional job a row's source control can come from the job's target catalog). Names and versions are the ones recorded when the job was created; for a job created before #210 they are the catalog's current ones, which `run status` marks "(current name; not recorded when the job was created)" and export marks with `snapshot: false` / `job_*_catalog_snapshot` `false`. A version shows as "not recorded" when import stored none. For a catalog imported under `--document`, `run status` adds `document version slug @ label (date · hash)` to the catalog's line and `--json` adds `version_display` and `supersedes_catalog_id`; `results export` and crosswalk export JSON carry `versionDisplay` and `supersedesCatalogId` in each catalog summary (empty outside a document). The CSV columns are unchanged. A CSV cell taken from a catalog that would start with `=`, `+`, `-` or `@` gets a leading `'` so a spreadsheet does not run it as a formula. JSON key names differ between the two commands: `run status --json` uses snake_case (`source_catalog`), while `results export` renders `analysis` and each mapping as proto JSON, in camelCase (`sourceCatalog`, `mappingId`), as mappings were before #210; only its top-level `job_id` is snake_case.
 
 `run start` prints the job ID. Analysis runs in the `crosscodexd` daemon; embedded mode refuses it (see [Deployment Modes](#deployment-modes)).
+
+**Seeing progress.** While a job runs, `run status` shows each stage that dispatched tasks as one row:
+
+```text
+stage  status  done/total  ok N  cached N  failed N  retried N  last success 42s ago
+```
+
+- `total` is the tasks the stage dispatched. `done` is `ok` plus `failed`: the tasks that finished.
+- `ok` includes the `cached` tasks, which the result cache answered instead of the model.
+- `retried` counts retry attempts, not tasks: a task retried twice adds 2.
+- `last success` is the time since a worker last completed a task, or `never`. A cache hit does not move it, so a stage served from the cache can show `never` while `done` rises.
+- A resumed stage adds to its earlier counts, so `done` can exceed `total`.
+- A stage with no recorded progress (not started, or run before this was recorded) has no row, and no `progress` object in `--json`. `--json` lists `tasks_total`, `tasks_done`, `tasks_succeeded`, `tasks_failed`, `tasks_retried`, `tasks_cache_hits` and `last_success_at` under `stages[].progress`.
+- Counts reach the database every `analysis.engine.progress_flush_interval` (default 10s), so they lag the stage by up to that long, and again when the stage ends. If the database refuses a write the figures can stay behind until the next one; the daemon logs it.
+
+How the counts are written and what they cannot show: [docs/dev/stage-progress.md](docs/dev/stage-progress.md).
+
+**Seeing a prompt.** `crosscodex prompt render` prints the messages the `relationship`, `requires` or `critique` analyzer sends its models for one control pair, built by the analyzer's own prompt code from the stored controls. It calls no model:
+
+```sh
+crosscodex prompt render --analyzer relationship --source r3/SR-03.01.01 --target ssdf/PO.1.1 \
+  --source-catalog r3 --target-catalog ssdf
+crosscodex prompt render --analyzer requires --job <job-id> --source r3/SR-03.01.01 --target ssdf/PO.1.1
+crosscodex prompt render --analyzer critique --job <job-id> --source r3/SR-03.01.01 --target ssdf/PO.1.1
+```
+
+- **The messages are untrusted text.** They carry catalog text. The text output prints them verbatim between `--- <role> ---` fences and `--json` JSON-escapes them. Never render either as markup.
+- **It shows the current configuration, not the job's.** The prompt templates and analysis settings (statement length bounds) are those of the daemon, or of embedded mode, running now. If they changed since the job ran, the prompt differs from the one the job sent.
+- **Without `--job`** the controls' types and levels are absent, and each framework is the catalog's current name. With `--job` the job's catalogs, the catalog names it recorded and its stored classify result are used, and `--source-catalog` and `--target-catalog` default to the job's.
+- **`critique` reviews one verdict.** Give exactly one of `--job` and `--verdict`. `--job` uses the verdict that job accepted for the pair, and is refused when the job accepted none, or accepted both a relationship and a REQUIRES for it (its critique stage reviewed each with its own prompt, and a render shows one): then use `--verdict` instead of `--job`, naming a relationship type such as `EQUIVALENT` or `REQUIRES`, with the job's justifications as repeatable `--justification`. `--verdict` and `--justification` apply to `critique` only. `--justification` needs `--verdict` and cannot be combined with `--job`.
+- **Access.** Rendering from catalogs alone is open to any user of the tenant, as reading the catalogs is. With `--job` it shows the job's classifications and verdicts, so only the job's owner or an admin may use it; anyone else gets `PermissionDenied`. An unknown job, another tenant's job and an unknown control all answer `NotFound`.
+- **`--tenant`** names the tenant to act on. It must be the tenant your client certificate authenticates; by default that tenant is used.
+- **Limits.** IDs are limited to 256 bytes and `--justification` to 64 entries.
+- It works in embedded mode, which renders from the local database. How it works: [docs/dev/prompt-render.md](docs/dev/prompt-render.md).
 
 `crosscodex run cancel <job-id>` asks for confirmation. When stdin is not a terminal (a script, pipe or CI job) it refuses and cancels nothing, even if `y` is piped in; pass `--yes` to cancel without the prompt. Embedded mode refuses it: only the daemon running the job can stop it.
 
@@ -778,6 +827,7 @@ analysis:
   engine:
     task_timeout: 5m                     # (0, 30m]; fail a stage when neither its own results nor any worker progress arrive for this long
     success_timeout: 10m                 # (0, 24h], >= task_timeout, <= pipeline.stage_timeout; fail a stage (llm_unavailable) that receives only failed results for this long
+    progress_flush_interval: 10s         # (0, 1h]; how often a running stage's task progress is saved (global only)
     max_retries: 3                       # Redispatches of a failed task
     retry_backoff: 1s                    # Base delay before a redispatch
     retry_on_timeout: false              # Re-send a timed-out LLM call (it may already be billed); tenant-overridable via tenant_overrides
@@ -1123,7 +1173,7 @@ task eval:crosswalk PROFILE=ssdf-to-sp800-53r5 LABEL=new \
 task deploy:smoke:down
 ```
 
-Requires `jq` on the host (the runner reads job status with it). Variables: `PROFILE` (required), `LABEL` (default: UTC timestamp), `BASELINE` (an earlier `report.json`), `MODE=llm` (print only the summary line and errors), `NO_CACHE=1`, `EVAL_TIMEOUT` and `EVAL_POLL` (seconds, defaults 86400 and 10; a mapping run on a local model takes hours). `EVAL_ENDPOINT`, `EVAL_CA`, `EVAL_CERT` and `EVAL_KEY` default to the `deploy:smoke:up` stack; set them to evaluate another gateway. The model, panel and retrieval come from the daemon's configuration; the eval has no model settings.
+Requires `jq` on the host (the runner reads job status with it). Variables: `PROFILE` (required), `LABEL` (default: UTC timestamp), `BASELINE` (an earlier `report.json`), `MODE=llm` (print only the summary line and errors), `NO_CACHE=1`, `JOB=<id>` (score an existing job instead of starting one; refused unless its catalogs are byte-identical to the profile's subset and target, see the [package README](test/eval/crosswalk/README.md#scoring-an-existing-job)), `EVAL_TIMEOUT` and `EVAL_POLL` (seconds, defaults 86400 and 10; a mapping run on a local model takes hours). `EVAL_ENDPOINT`, `EVAL_CA`, `EVAL_CERT` and `EVAL_KEY` default to the `deploy:smoke:up` stack; set them to evaluate another gateway. The model, panel and retrieval come from the daemon's configuration; the eval has no model settings.
 
 Shipped profiles (references are the resolved pairs the score uses):
 

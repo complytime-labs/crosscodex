@@ -816,7 +816,70 @@ var _ = Describe("NATSCollector", func() {
 			Expect(results[0].TaskID).To(Equal("t-1"))
 		})
 	})
+
+	DescribeTable("reports each task outcome and retry to the collection's progress observer",
+		func(redispatchErr error, deliveries []string, want observedProgress) {
+			if redispatchErr != nil {
+				fakeDisp.redispatchFn = func(context.Context, analyzer.Task, natsbus.TaskType, string, int) error {
+					return redispatchErr
+				}
+			}
+			observer := &recordingObserver{}
+			req := analysis.CollectRequest{
+				TaskType:       natsbus.TaskClassify,
+				JobID:          "job-1",
+				ExpectedIDs:    []string{"t-1"},
+				Tasks:          []analyzer.Task{{TaskID: "t-1", TaskType: "classify", Payload: &structpb.Struct{}}},
+				Timeout:        time.Second,
+				StageTimeout:   time.Hour,
+				SuccessTimeout: time.Hour,
+				MaxRetries:     1,
+				Backoff:        time.Millisecond,
+				Dispatcher:     fakeDisp,
+				Progress:       observer,
+			}
+			handle, err := collector.PrepareCollect(ctx, req)
+			Expect(err).NotTo(HaveOccurred())
+			payload, err := structpb.NewStruct(map[string]any{"result": "ok"})
+			Expect(err).NotTo(HaveOccurred())
+			for _, errorMsg := range deliveries {
+				if errorMsg == "" {
+					deliverResult(fakeNATS, "t-1", payload, "")
+					continue
+				}
+				deliverResult(fakeNATS, "t-1", nil, errorMsg)
+			}
+			_, err = collector.AwaitResults(ctx, handle)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(observer.snapshot()).To(Equal(want))
+		},
+		Entry("a success", nil, []string{""}, observedProgress{succeeded: 1}),
+		Entry("a retry, then a success", nil, []string{"worker error", ""}, observedProgress{succeeded: 1, retried: 1}),
+		Entry("a retry, then a failure with retries exhausted", nil, []string{"worker error", "worker error"},
+			observedProgress{failed: 1, retried: 1}),
+		Entry("a retry whose redispatch fails", errors.New("bus down"), []string{"worker error"},
+			observedProgress{failed: 1, retried: 1}),
+	)
 })
+
+// observedProgress counts the calls a recordingObserver received.
+type observedProgress struct{ succeeded, failed, retried int }
+
+// recordingObserver is an analysis.ProgressObserver that counts its calls.
+type recordingObserver struct {
+	mu  sync.Mutex
+	got observedProgress
+}
+
+func (o *recordingObserver) TaskSucceeded() { o.mu.Lock(); o.got.succeeded++; o.mu.Unlock() }
+func (o *recordingObserver) TaskFailed()    { o.mu.Lock(); o.got.failed++; o.mu.Unlock() }
+func (o *recordingObserver) TaskRetried()   { o.mu.Lock(); o.got.retried++; o.mu.Unlock() }
+
+func (o *recordingObserver) snapshot() observedProgress {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.got
+}
 
 var _ = DescribeTable("a stage event names its error with the collector's fixed category",
 	func(err error, expected string) {

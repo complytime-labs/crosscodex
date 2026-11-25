@@ -16,6 +16,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	"github.com/complytime-labs/crosscodex/internal/analysis"
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -656,5 +657,80 @@ var _ = Describe("Service cancellation against PGStore", func() {
 		resumable, err := store.GetResumableJobs(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resumable).To(ContainElement(HaveField("JobID", jobID)))
+	})
+})
+
+var _ = Describe("PGStore stage progress integration", func() {
+	It("accumulates deltas onto a stage's row, takes the latest total and keeps the latest success, as the restricted role", func() {
+		store, _, tenantID, ctx := setupPGStore()
+		job := newITJob(tenantID)
+		Expect(store.CreateJob(ctx, job)).To(Succeed())
+
+		first := time.Now().UTC().Truncate(time.Microsecond)
+		earlier := first.Add(-time.Minute)
+		Expect(store.AddStageProgress(ctx, job.JobID, "classify", analysis.ProgressDelta{
+			Total: 10, Succeeded: 3, Failed: 1, Retried: 2, CacheHits: 1, LastSuccessAt: &first,
+		})).To(Succeed())
+		// A resumed stage: a new total, and a success older than the stored one.
+		Expect(store.AddStageProgress(ctx, job.JobID, "classify", analysis.ProgressDelta{
+			Total: 8, Succeeded: 2, Failed: 2, Retried: 1, LastSuccessAt: &earlier,
+		})).To(Succeed())
+		Expect(store.AddStageProgress(ctx, job.JobID, "classify", analysis.ProgressDelta{Total: 8, Failed: 1})).To(Succeed())
+		Expect(store.AddStageProgress(ctx, job.JobID, "requires", analysis.ProgressDelta{Total: 4})).To(Succeed())
+
+		got, err := store.GetStageProgress(ctx, job.JobID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(HaveLen(2))
+		classify := got["classify"]
+		Expect(classify.LastSuccessAt).NotTo(BeNil())
+		Expect(*classify.LastSuccessAt).To(BeTemporally("==", first))
+		classify.LastSuccessAt = nil
+		Expect(classify).To(Equal(pipeline.StageProgress{
+			Total: 8, Done: 9, Succeeded: 5, Failed: 4, Retried: 3, CacheHits: 1,
+		}))
+		Expect(got["requires"]).To(Equal(pipeline.StageProgress{Total: 4}))
+	})
+
+	It("shows another tenant nothing and refuses its writes to the job, leaving the rows unchanged", func() {
+		store, suPool, tenantID, ctx := setupPGStore()
+		job := newITJob(tenantID)
+		Expect(store.CreateJob(ctx, job)).To(Succeed())
+		Expect(store.AddStageProgress(ctx, job.JobID, "classify", analysis.ProgressDelta{Total: 2, Succeeded: 1})).To(Succeed())
+
+		otherTenant := fmt.Sprintf("pipeline-it-%s", uuid.New().String())
+		Expect(db.EnsureTenant(ctx, suPool, otherTenant, "pipeline-it-other")).To(Succeed())
+		otherCtx, err := tenant.WithTenant(context.Background(), otherTenant)
+		Expect(err).NotTo(HaveOccurred())
+
+		got, err := store.GetStageProgress(otherCtx, job.JobID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(BeEmpty())
+
+		err = store.AddStageProgress(otherCtx, job.JobID, "classify", analysis.ProgressDelta{Total: 99, Failed: 5})
+		Expect(err).To(MatchError(pipeline.ErrNotFound))
+
+		var rows, failed int
+		Expect(suPool.QueryRow(ctx,
+			`SELECT count(*), COALESCE(sum(tasks_failed), 0) FROM job_stage_progress WHERE job_id = $1`, job.JobID).
+			Scan(&rows, &failed)).To(Succeed())
+		Expect(rows).To(Equal(1), "no row was written under the other tenant")
+		Expect(failed).To(BeZero())
+		own, err := store.GetStageProgress(ctx, job.JobID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(own["classify"]).To(Equal(pipeline.StageProgress{Total: 2, Done: 1, Succeeded: 1}))
+	})
+
+	It("fails closed without a tenant", func() {
+		store, _, tenantID, ctx := setupPGStore()
+		job := newITJob(tenantID)
+		Expect(store.CreateJob(ctx, job)).To(Succeed())
+
+		Expect(store.AddStageProgress(context.Background(), job.JobID, "classify", analysis.ProgressDelta{Total: 1})).
+			To(MatchError(tenant.ErrNoTenant))
+		_, err := store.GetStageProgress(context.Background(), job.JobID)
+		Expect(err).To(MatchError(tenant.ErrNoTenant))
+		got, err := store.GetStageProgress(ctx, job.JobID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(BeEmpty())
 	})
 })

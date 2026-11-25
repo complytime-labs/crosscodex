@@ -56,6 +56,7 @@ var dbAggregates = map[DataClass]dbAggregate{
 	ClassJobResults: {
 		parentTable: "jobs", parentPK: "job_id",
 		children: []struct{ table, fkCol string }{
+			{"job_stage_progress", "job_id"},
 			{"job_stages", "job_id"},
 			{"vote_summaries", "job_id"},
 			{"analysis_results", "job_id"},

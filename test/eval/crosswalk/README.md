@@ -94,6 +94,20 @@ are accepted.
   produced rows: read the labelled precision of a run only as far as coverage
   supports. Labels for pairs a run did not produce are ignored.
 
+### Scoring an existing job
+
+`task eval:crosswalk PROFILE=<p> JOB=<job id>` waits for the job to finish
+and scores it instead of importing and starting one; `NO_CACHE` is ignored
+because the job ran with its own cache setting. Catalog IDs differ per
+tenant, so the runner compares content: the SHA-256 of the bytes each of the
+job's catalogs was imported from (`catalog inspect --json`, `content_hash`)
+must equal the SHA-256 of the profile's `subset.json` and target catalog
+file. A mismatch, or a catalog with no recorded hash (imported before the hash
+existed), stops the run before scoring, naming both hashes. Limitation: the
+comparison is of exact bytes. A job whose catalogs were imported from another
+serialization of the same controls is refused even though it would score the
+same. `JOB` is validated as a plain identifier before use.
+
 ## Results
 
 `results/` holds dated records of measurements worth comparing against

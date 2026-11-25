@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	connectrpc "connectrpc.com/connect"
@@ -32,6 +33,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	dbpkg "github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
+	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"github.com/complytime-labs/crosscodex/pkg/retention"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
@@ -242,9 +244,49 @@ func embeddedAuthRegistry(clientCertPath string) (*authn.Registry, error) {
 // localPipelineBackend serves job reads from the pipeline store but refuses
 // to create, retry or cancel jobs. Embedded mode has no executor, NATS or
 // workers, so a stored job would stay PENDING forever (#212). Analysis runs
-// only under crosscodexd.
+// only under crosscodexd. It lists a catalog's controls through the readers
+// the daemon's pipeline uses, and renders prompts from them, the prompt
+// layers and the analysis settings of the CLI's configuration.
 type localPipelineBackend struct {
-	store pipeline.Store
+	store           pipeline.Store
+	catalogNames    pipeline.CatalogNameReader
+	catalogControls pipeline.CatalogControlsReader
+	analysis        config.AnalysisConfig
+	logger          *slog.Logger
+
+	// The prompt registry is built from promptCfg on the first
+	// RenderPrompt, not at startup: only prompt render reads the layers,
+	// so a layer that does not load must not stop every embedded command.
+	// A registry set beforehand (specs) is used as is.
+	promptCfg   config.PromptConfig
+	promptsOnce sync.Once
+	prompts     prompt.Registry
+	promptsErr  error
+}
+
+// RenderPrompt answers as the daemon's pipeline does, through the same
+// pipeline.ServeRenderPrompt. Rendering calls no LLM, so it needs no daemon.
+func (b *localPipelineBackend) RenderPrompt(ctx context.Context, req *connectrpc.Request[pb.RenderPromptRequest]) (*connectrpc.Response[pb.RenderPromptResponse], error) {
+	b.promptsOnce.Do(func() {
+		if b.prompts == nil {
+			b.prompts, b.promptsErr = prompt.NewRegistry(b.promptCfg)
+		}
+	})
+	if b.promptsErr != nil {
+		return nil, connectrpc.NewError(connectrpc.CodeFailedPrecondition, fmt.Errorf(
+			"cannot render the prompt: the configured prompt layers do not load: %w. "+
+				`Fix prompt.layer_paths or prompt.layers in your configuration, check them with "crosscodex prompt layer", and rerun`, b.promptsErr))
+	}
+	return pipeline.ServeRenderPrompt(ctx, pipeline.RenderPromptSources{
+		Prompts: b.prompts, Analysis: &b.analysis, CatalogNames: b.catalogNames,
+		CatalogControls: b.catalogControls, Jobs: b.store, Logger: b.logger,
+	}, req)
+}
+
+// ListCatalogControls answers as the daemon's pipeline does, through the
+// same pipeline.ServeCatalogControls.
+func (b *localPipelineBackend) ListCatalogControls(ctx context.Context, req *connectrpc.Request[pb.ListCatalogControlsRequest]) (*connectrpc.Response[pb.ListCatalogControlsResponse], error) {
+	return pipeline.ServeCatalogControls(ctx, b.catalogNames, b.catalogControls, b.logger, req)
 }
 
 // needsDaemon is why embedded mode refuses to create or retry a job.
@@ -283,7 +325,19 @@ func (b *localPipelineBackend) GetJob(ctx context.Context, req *connectrpc.Reque
 		return nil, connectrpc.NewError(connectrpc.CodeInternal, fmt.Errorf("get stages: %w", err))
 	}
 
+	progress, err := b.store.GetStageProgress(ctx, req.Msg.GetJobId())
+	if err != nil {
+		return nil, connectrpc.NewError(connectrpc.CodeInternal, fmt.Errorf("get stage progress: %w", err))
+	}
+
 	pbJob := localJobToProto(job, stages)
+	// Embedded mode runs no analysis, so progress rows exist only for jobs a
+	// daemon ran against this database; they are shown as the daemon shows them.
+	for i, stage := range stages {
+		if p, ok := progress[stage.StageName]; ok {
+			pbJob.Stages[i].Progress = pipeline.StageProgressToProto(p)
+		}
+	}
 	// The panel names the models behind a stage. As the daemon does, an
 	// unreadable record is logged and shown as not recorded, with no models,
 	// so run status still works; an OSCAL export then refuses the job. Unlike
@@ -637,7 +691,16 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, clientCertPat
 	// Create local pipeline backend (records jobs, no execution)
 	pipelineStore := pipeline.NewPGStore(tenantConn, pool,
 		pipeline.WithStoreTelemetry(otel.GetTracerProvider(), otel.GetMeterProvider()))
-	localPipeline := &localPipelineBackend{store: pipelineStore}
+	localPipeline := &localPipelineBackend{
+		store: pipelineStore,
+		catalogNames: pipeline.NewPGCatalogNameReader(tenantConn,
+			pipeline.WithPGCatalogNameReaderTelemetry(otel.GetTracerProvider(), otel.GetMeterProvider())),
+		catalogControls: pipeline.NewPGCatalogControlsReader(tenantConn),
+		analysis:        cfg.Analysis,
+		logger:          logger,
+		// Built on first render; see localPipelineBackend.
+		promptCfg: cfg.Prompt,
+	}
 
 	resultsTracer, resultsMeter := telemetry.Instrumentation("internal/results")
 	mappings := results.NewService(

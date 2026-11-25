@@ -233,7 +233,14 @@ func (s *Service) GetJob(ctx context.Context, req *connect.Request[pb.GetJobRequ
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("get stages: %v", err))
 	}
 
-	pbJob := jobToProto(job, stages, s.panelProvenance(stages))
+	progress, err := s.store.GetStageProgress(ctx, req.Msg.JobId)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
+		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("get stage progress: %v", err))
+	}
+
+	pbJob := jobToProto(job, stages, s.panelProvenance(stages), progress)
 	// Summaries are read only when asked for: the gateway asks only after
 	// checking that the caller owns the job or is an admin. The text
 	// reaches only the gateway, whose publicError withholds it.
@@ -303,7 +310,9 @@ func (s *Service) ListJobs(ctx context.Context, req *connect.Request[pb.ListJobs
 			s.logger.WarnContext(ctx, "failed to get stages for job", "job_id", job.JobID, "error", err)
 			stages = nil
 		}
-		pbJobs[i] = jobToProto(job, stages, s.panelProvenance(stages))
+		// Task progress is read only by GetJob: a list stays one stages
+		// query per job.
+		pbJobs[i] = jobToProto(job, stages, s.panelProvenance(stages), nil)
 	}
 
 	nextPageToken := ""
@@ -735,12 +744,17 @@ func (s *Service) publishJobState(ctx context.Context, tenantID, jobID string, j
 	return s.bus.Publish(ctx, subject, payload)
 }
 
-func jobToProto(job *Job, stages []*Stage, panels map[string]*pb.PanelProvenance) *pb.PipelineJob {
+// jobToProto converts job and its stages; a stage gets the panel and the
+// task progress stored under its name, and none when there is none.
+func jobToProto(job *Job, stages []*Stage, panels map[string]*pb.PanelProvenance, progress map[string]StageProgress) *pb.PipelineJob {
 	pbStages := make([]*pb.JobStage, len(stages))
 	var completedSteps, failedSteps, cancelledSteps int32
 	for i, stage := range stages {
 		pbStages[i] = stageToProto(stage)
 		pbStages[i].Panel = panels[stage.StageName]
+		if p, ok := progress[stage.StageName]; ok {
+			pbStages[i].Progress = StageProgressToProto(p)
+		}
 		switch stage.Status {
 		case StageStatusCompleted:
 			completedSteps++
@@ -809,6 +823,25 @@ func stageToProto(stage *Stage) *pb.JobStage {
 	}
 
 	return pbStage
+}
+
+// StageProgressToProto converts a stage's stored task progress. Exported so
+// the CLI's embedded mode returns progress exactly as the daemon does.
+// The counts are read from non-negative INTEGER columns, so each fits an
+// int32.
+func StageProgressToProto(p StageProgress) *pb.StageProgress {
+	out := &pb.StageProgress{
+		TasksTotal:     int32(p.Total),
+		TasksDone:      int32(p.Done),
+		TasksSucceeded: int32(p.Succeeded),
+		TasksFailed:    int32(p.Failed),
+		TasksRetried:   int32(p.Retried),
+		TasksCacheHits: int32(p.CacheHits),
+	}
+	if p.LastSuccessAt != nil {
+		out.LastSuccessAt = timestamppb.New(*p.LastSuccessAt)
+	}
+	return out
 }
 
 func jobStatusToProto(js JobStatus) pb.JobStatus {

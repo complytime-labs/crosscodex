@@ -1756,7 +1756,15 @@ var _ = Describe("Executor", func() {
 
 				Expect(serviceWith(attestedBy(attestor), router).Start(context.Background())).To(Succeed())
 
-				Eventually(jobStatusOf(jobID)).Should(Equal(pipeline.JobStatusCompleted))
+				otherCtx, err := tenant.WithTenant(context.Background(), otherTenant)
+				Expect(err).NotTo(HaveOccurred())
+				Eventually(func() pipeline.JobStatus {
+					j, err := store.GetJob(otherCtx, jobID)
+					if err != nil {
+						return ""
+					}
+					return j.Status
+				}).Should(Equal(pipeline.JobStatusCompleted))
 				Expect(byTenant[otherTenant].Objects()).To(HaveKey(bundleKey()))
 				Expect(byTenant[otherTenant].Objects()).To(HaveKey(linkKey("analyzer-a")))
 				Expect(storage.Objects()).To(BeEmpty())

@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/complytime-labs/crosscodex/internal/analysis"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
@@ -35,6 +37,10 @@ type Store interface {
 	// diversity check (Stage.PanelRecord), so a resumed job still shows it.
 	SetStagePanelRecord(ctx context.Context, jobID, stageName, record string) error
 	GetStages(ctx context.Context, jobID string) ([]*Stage, error)
+	// GetStageProgress returns the ctx tenant's stored task progress of the
+	// job's stages, keyed by stage name. A stage without a row is absent; a
+	// job with none, or another tenant's job, yields an empty map.
+	GetStageProgress(ctx context.Context, jobID string) (map[string]StageProgress, error)
 	ResetStagesFrom(ctx context.Context, jobID, fromStage string, allStages []string) error
 	GetResumableJobs(ctx context.Context) ([]*Job, error)
 
@@ -1158,4 +1164,166 @@ func (s *PGStore) GetResumableJobs(ctx context.Context) ([]*Job, error) {
 
 	span.SetStatus(codes.Ok, "")
 	return jobs, nil
+}
+
+var _ analysis.ProgressStore = (*PGStore)(nil)
+
+// AddStageProgress adds d to the ctx tenant's progress row for the job's
+// stage, creating it on the first write: Total replaces the stored total,
+// every count is added (tasks_done by Succeeded+Failed), and last_success_at
+// keeps the later of the stored and the delta's time. A job the ctx tenant
+// does not have is ErrNotFound and writes nothing, so no row ever names
+// another tenant's job.
+func (s *PGStore) AddStageProgress(ctx context.Context, jobID, stageName string, d analysis.ProgressDelta) error {
+	if jobID == "" {
+		return fmt.Errorf("PGStore.AddStageProgress: %w", ErrInvalidJobID)
+	}
+	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.store.add_stage_progress")
+	defer span.End()
+	span.SetAttributes(attribute.String("job.id", jobID), attribute.String("stage.name", stageName))
+	start := time.Now()
+
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("PGStore.AddStageProgress: %w", err)
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("PGStore.AddStageProgress: beginning transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := tx.Exec(ctx, "SELECT public.enter_tenant($1)", tenantID); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("PGStore.AddStageProgress: setting tenant: %w", err)
+	}
+
+	// The SELECT ... WHERE EXISTS inserts only for a job of this tenant (RLS
+	// on jobs hides the others): the foreign key alone would accept another
+	// tenant's job ID.
+	query := `
+		INSERT INTO job_stage_progress (tenant_id, job_id, stage_name, tasks_total, tasks_done,
+			tasks_succeeded, tasks_failed, tasks_retried, tasks_cache_hits, last_success_at, updated_at)
+		SELECT $1::text, $2::text, $3::text, $4::integer, $5::integer, $6::integer, $7::integer,
+			$8::integer, $9::integer, $10::timestamptz, now()
+		WHERE EXISTS (SELECT 1 FROM jobs WHERE job_id = $2 AND tenant_id = $1)
+		ON CONFLICT (tenant_id, job_id, stage_name) DO UPDATE SET
+			tasks_total = EXCLUDED.tasks_total,
+			tasks_done = job_stage_progress.tasks_done + EXCLUDED.tasks_done,
+			tasks_succeeded = job_stage_progress.tasks_succeeded + EXCLUDED.tasks_succeeded,
+			tasks_failed = job_stage_progress.tasks_failed + EXCLUDED.tasks_failed,
+			tasks_retried = job_stage_progress.tasks_retried + EXCLUDED.tasks_retried,
+			tasks_cache_hits = job_stage_progress.tasks_cache_hits + EXCLUDED.tasks_cache_hits,
+			last_success_at = GREATEST(job_stage_progress.last_success_at, EXCLUDED.last_success_at),
+			updated_at = now()
+		RETURNING tenant_id
+	`
+	var written string
+	err = tx.QueryRow(ctx, query, tenantID, jobID, stageName, d.Total, d.Succeeded+d.Failed,
+		d.Succeeded, d.Failed, d.Retried, d.CacheHits, d.LastSuccessAt).Scan(&written)
+	if errors.Is(err, sql.ErrNoRows) {
+		span.SetStatus(codes.Error, "job not found")
+		return fmt.Errorf("PGStore.AddStageProgress: job %q: %w", jobID, ErrNotFound)
+	}
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("PGStore.AddStageProgress: upsert failed: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("PGStore.AddStageProgress: commit failed: %w", err)
+	}
+
+	elapsed := time.Since(start).Seconds() * 1000
+	if s.queryCounter != nil {
+		s.queryCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("operation", "add_stage_progress")))
+	}
+	if s.queryLatency != nil {
+		s.queryLatency.Record(ctx, elapsed, metric.WithAttributes(attribute.String("operation", "add_stage_progress")))
+	}
+	span.SetStatus(codes.Ok, "")
+	return nil
+}
+
+// GetStageProgress returns the ctx tenant's stored progress of the job's
+// stages, keyed by stage name. A stage without a row is absent; a job with
+// none, or another tenant's job, yields an empty map.
+func (s *PGStore) GetStageProgress(ctx context.Context, jobID string) (map[string]StageProgress, error) {
+	if jobID == "" {
+		return nil, fmt.Errorf("PGStore.GetStageProgress: %w", ErrInvalidJobID)
+	}
+	ctx, span := telemetry.StartSpan(s.tracer, ctx, "pipeline.store.get_stage_progress")
+	defer span.End()
+	span.SetAttributes(attribute.String("job.id", jobID))
+	start := time.Now()
+
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("PGStore.GetStageProgress: %w", err)
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("PGStore.GetStageProgress: beginning transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := tx.Exec(ctx, "SELECT public.enter_tenant($1)", tenantID); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("PGStore.GetStageProgress: setting tenant: %w", err)
+	}
+
+	rows, err := tx.Query(ctx, `
+		SELECT stage_name, tasks_total, tasks_done, tasks_succeeded, tasks_failed, tasks_retried,
+			tasks_cache_hits, last_success_at
+		FROM job_stage_progress
+		WHERE job_id = $1 AND tenant_id = $2
+	`, jobID, tenantID)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("PGStore.GetStageProgress: query failed: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]StageProgress)
+	for rows.Next() {
+		var name string
+		var p StageProgress
+		if err := rows.Scan(&name, &p.Total, &p.Done, &p.Succeeded, &p.Failed, &p.Retried, &p.CacheHits, &p.LastSuccessAt); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, fmt.Errorf("PGStore.GetStageProgress: scan failed: %w", err)
+		}
+		out[name] = p
+	}
+	if err := rows.Err(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("PGStore.GetStageProgress: rows error: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("PGStore.GetStageProgress: commit failed: %w", err)
+	}
+
+	elapsed := time.Since(start).Seconds() * 1000
+	if s.queryCounter != nil {
+		s.queryCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("operation", "get_stage_progress")))
+	}
+	if s.queryLatency != nil {
+		s.queryLatency.Record(ctx, elapsed, metric.WithAttributes(attribute.String("operation", "get_stage_progress")))
+	}
+	span.SetStatus(codes.Ok, "")
+	return out, nil
 }

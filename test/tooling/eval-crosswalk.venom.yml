@@ -292,3 +292,190 @@ testcases:
         assertions:
           - result.systemout ShouldContainSubstring absolute=yes
           - result.systemout ShouldContainSubstring target=imported
+
+  - name: JOB scores an existing job without importing or starting one
+    steps:
+      - type: exec
+        script: rm -rf "{{.root}}/.test-output/eval/tooling-run/job" && mkdir -p "{{.root}}/.test-output/eval/tooling-run/job"
+      - type: run-eval-crosswalk
+        root: "{{.root}}"
+        work: "{{.root}}/.test-output/eval/tooling-run/job"
+        env: "PROFILE=synth-run LABEL=t1 JOB=job-synth NO_CACHE=1"
+        assertions:
+          - result.systemout ShouldContainSubstring exit=0
+          - result.systemout ShouldContainSubstring "NO_CACHE is ignored"
+      - type: exec
+        script: |
+          w="{{.root}}/.test-output/eval/tooling-run/job"
+          echo "import_count=$(grep -c 'catalog import' "$w/argv.log")"
+          echo "start_count=$(grep -c 'run start' "$w/argv.log")"
+          grep -q -- 'run status job-synth --json' "$w/argv.log" && echo "status=polled"
+          grep -q -- 'catalog inspect -- cat-src' "$w/argv.log" && grep -q -- 'catalog inspect -- cat-tgt' "$w/argv.log" && echo "hashes=checked"
+          grep -q -- 'results export job-synth --stage analyzer --format json' "$w/argv.log" && echo "export=yes"
+          echo "json_job=$(jq -r '.provenance.job_id' "$w/out/synth-run/t1/report.json")"
+          grep -qF -- '- Job: job-synth' "$w/out/synth-run/t1/report.md" && echo "md_job=yes"
+        assertions:
+          - result.systemout ShouldContainSubstring import_count=0
+          - result.systemout ShouldContainSubstring start_count=0
+          - result.systemout ShouldContainSubstring status=polled
+          - result.systemout ShouldContainSubstring hashes=checked
+          - result.systemout ShouldContainSubstring export=yes
+          - result.systemout ShouldContainSubstring json_job=job-synth
+          - result.systemout ShouldContainSubstring md_job=yes
+
+  - name: JOB on a failed job exits before any export
+    steps:
+      - type: exec
+        script: rm -rf "{{.root}}/.test-output/eval/tooling-run/jobfailed" && mkdir -p "{{.root}}/.test-output/eval/tooling-run/jobfailed"
+      - type: run-eval-crosswalk
+        root: "{{.root}}"
+        work: "{{.root}}/.test-output/eval/tooling-run/jobfailed"
+        env: "PROFILE=synth-run LABEL=t1 JOB=job-synth FAKE_JOB_STATUS=JOB_STATUS_FAILED FAKE_JOB_ERROR=embedding_coverage_too_low"
+        assertions:
+          - result.systemout ShouldNotContainSubstring exit=0
+          - result.systemout ShouldContainSubstring JOB_STATUS_FAILED
+          - result.systemout ShouldContainSubstring embedding_coverage_too_low
+      - type: exec
+        script: |
+          w="{{.root}}/.test-output/eval/tooling-run/jobfailed"
+          echo "import_count=$(grep -c 'catalog import' "$w/argv.log")"
+          echo "export_count=$(grep -c 'results ' "$w/argv.log")"
+          test -e "$w/out/synth-run/t1/report.json" && echo "report=yes" || echo "report=no"
+        assertions:
+          - result.systemout ShouldContainSubstring import_count=0
+          - result.systemout ShouldContainSubstring export_count=0
+          - result.systemout ShouldContainSubstring report=no
+
+  - name: JOB whose target has the profile's name but other content is refused before export
+    steps:
+      - type: exec
+        script: rm -rf "{{.root}}/.test-output/eval/tooling-run/jobmismatch" && mkdir -p "{{.root}}/.test-output/eval/tooling-run/jobmismatch"
+      - type: run-eval-crosswalk
+        root: "{{.root}}"
+        work: "{{.root}}/.test-output/eval/tooling-run/jobmismatch"
+        # The status still names "Synthetic"; only the imported bytes differ.
+        env: "PROFILE=synth-run LABEL=t1 JOB=job-synth FAKE_TARGET_FILE={{.root}}/test/eval/crosswalk/testdata/source_a.json"
+        assertions:
+          - result.systemout ShouldNotContainSubstring exit=0
+          - result.systemout ShouldContainSubstring "do not match profile synth-run"
+          - result.systemout ShouldContainSubstring "job catalog Synthetic (ID cat-tgt) has content SHA-256"
+          - result.systemout ShouldContainSubstring "synthetic_catalog.json has"
+          - result.systemout ShouldNotContainSubstring "(ID cat-src)"
+          - result.systemout ShouldContainSubstring "start a new run without JOB"
+      - type: exec
+        script: |
+          w="{{.root}}/.test-output/eval/tooling-run/jobmismatch"
+          echo "export_count=$(grep -c 'results ' "$w/argv.log")"
+          test -e "$w/out/synth-run/t1/report.json" && echo "report=yes" || echo "report=no"
+        assertions:
+          - result.systemout ShouldContainSubstring export_count=0
+          - result.systemout ShouldContainSubstring report=no
+
+  - name: JOB whose status names no catalogs is refused before export
+    steps:
+      - type: exec
+        script: rm -rf "{{.root}}/.test-output/eval/tooling-run/jobnoanalysis" && mkdir -p "{{.root}}/.test-output/eval/tooling-run/jobnoanalysis"
+      - type: run-eval-crosswalk
+        root: "{{.root}}"
+        work: "{{.root}}/.test-output/eval/tooling-run/jobnoanalysis"
+        env: "PROFILE=synth-run LABEL=t1 JOB=job-synth FAKE_STATUS_JQ='.analysis = null'"
+        assertions:
+          - result.systemout ShouldNotContainSubstring exit=0
+          - result.systemout ShouldContainSubstring "names no source and target catalogs"
+      - type: exec
+        script: |
+          echo "export_count=$(grep -c 'results ' "{{.root}}/.test-output/eval/tooling-run/jobnoanalysis/argv.log")"
+        assertions:
+          - result.systemout ShouldContainSubstring export_count=0
+
+  - name: a JOB that is not a plain job ID is rejected before any CLI call
+    steps:
+      - type: exec
+        script: rm -rf "{{.root}}/.test-output/eval/tooling-run/badjob" && mkdir -p "{{.root}}/.test-output/eval/tooling-run/badjob"
+      - type: run-eval-crosswalk
+        root: "{{.root}}"
+        work: "{{.root}}/.test-output/eval/tooling-run/badjob"
+        env: "PROFILE=synth-run LABEL=t1 JOB=--tls-ca=/etc/passwd"
+        assertions:
+          - result.systemout ShouldNotContainSubstring exit=0
+          - result.systemout ShouldContainSubstring invalid JOB
+      - type: exec
+        script: |
+          w="{{.root}}/.test-output/eval/tooling-run/badjob"
+          echo "calls=$(grep -c . "$w/argv.log")"
+          test -e "$w/out/synth-run/t1" && echo "rundir=yes" || echo "rundir=no"
+        assertions:
+          - result.systemout ShouldContainSubstring calls=0
+          - result.systemout ShouldContainSubstring rundir=no
+
+  - name: a mismatched JOB catalog name is shown with control characters replaced
+    steps:
+      - type: exec
+        script: rm -rf "{{.root}}/.test-output/eval/tooling-run/jobcntrl" && mkdir -p "{{.root}}/.test-output/eval/tooling-run/jobcntrl"
+      - type: run-eval-crosswalk
+        root: "{{.root}}"
+        work: "{{.root}}/.test-output/eval/tooling-run/jobcntrl"
+        env: "PROFILE=synth-run LABEL=t1 JOB=job-synth FAKE_TARGET_FILE={{.root}}/test/eval/crosswalk/testdata/source_a.json FAKE_STATUS_JQ='.analysis.target_catalog.name = \"Evil\\u001b[2J\\nline\"'"
+        assertions:
+          - result.systemout ShouldNotContainSubstring exit=0
+          - result.systemout ShouldContainSubstring "job catalog Evil?[2J?line (ID cat-tgt)"
+
+  - name: JOB whose catalog has no recorded content hash is refused before export
+    steps:
+      - type: exec
+        script: rm -rf "{{.root}}/.test-output/eval/tooling-run/jobnohash" && mkdir -p "{{.root}}/.test-output/eval/tooling-run/jobnohash"
+      - type: run-eval-crosswalk
+        root: "{{.root}}"
+        work: "{{.root}}/.test-output/eval/tooling-run/jobnohash"
+        env: "PROFILE=synth-run LABEL=t1 JOB=job-synth FAKE_SOURCE_FILE=/nonexistent"
+        assertions:
+          - result.systemout ShouldNotContainSubstring exit=0
+          - result.systemout ShouldContainSubstring "job catalog Source A (eval subset) (ID cat-src) has content SHA-256 none recorded"
+      - type: exec
+        script: |
+          w="{{.root}}/.test-output/eval/tooling-run/jobnohash"
+          echo "export_count=$(grep -c 'results ' "$w/argv.log")"
+          test -e "$w/out/synth-run/t1/report.json" && echo "report=yes" || echo "report=no"
+        assertions:
+          - result.systemout ShouldContainSubstring export_count=0
+          - result.systemout ShouldContainSubstring report=no
+
+  - name: a mismatched JOB is refused on the first status read that carries analysis, before it completes
+    steps:
+      - type: exec
+        script: rm -rf "{{.root}}/.test-output/eval/tooling-run/jobearly" && mkdir -p "{{.root}}/.test-output/eval/tooling-run/jobearly"
+      - type: run-eval-crosswalk
+        root: "{{.root}}"
+        work: "{{.root}}/.test-output/eval/tooling-run/jobearly"
+        env: "PROFILE=synth-run LABEL=t1 JOB=job-synth FAKE_RUNNING_POLLS=5 FAKE_RUNNING_KEEPS_ANALYSIS=1 FAKE_TARGET_FILE={{.root}}/test/eval/crosswalk/testdata/source_a.json"
+        assertions:
+          - result.systemout ShouldNotContainSubstring exit=0
+          - result.systemout ShouldContainSubstring "do not match profile"
+      - type: exec
+        script: |
+          w="{{.root}}/.test-output/eval/tooling-run/jobearly"
+          echo "status_calls=$(grep -c 'run status' "$w/argv.log")"
+          echo "export_count=$(grep -c 'results ' "$w/argv.log")"
+        assertions:
+          - result.systemout ShouldContainSubstring status_calls=1
+          - result.systemout ShouldContainSubstring export_count=0
+
+  - name: JOB checks the catalogs only once the job has completed
+    steps:
+      - type: exec
+        script: rm -rf "{{.root}}/.test-output/eval/tooling-run/jobrunning" && mkdir -p "{{.root}}/.test-output/eval/tooling-run/jobrunning"
+      - type: run-eval-crosswalk
+        root: "{{.root}}"
+        work: "{{.root}}/.test-output/eval/tooling-run/jobrunning"
+        env: "PROFILE=synth-run LABEL=t1 JOB=job-synth FAKE_RUNNING_POLLS=2"
+        assertions:
+          - result.systemout ShouldContainSubstring exit=0
+          - result.systemout ShouldContainSubstring JOB_STATUS_RUNNING
+      - type: exec
+        script: |
+          w="{{.root}}/.test-output/eval/tooling-run/jobrunning"
+          echo "status_calls=$(grep -c 'run status' "$w/argv.log")"
+          test -s "$w/out/synth-run/t1/report.json" && echo "report=yes" || echo "report=no"
+        assertions:
+          - result.systemout ShouldContainSubstring status_calls=3
+          - result.systemout ShouldContainSubstring report=yes

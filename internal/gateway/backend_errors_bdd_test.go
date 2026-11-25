@@ -215,6 +215,22 @@ var _ = Describe("Backend errors at the gateway boundary", func() {
 			})).GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{JobId: "job-1"}))
 			return e
 		})),
+		Entry("ListCatalogControls", "ListCatalogControls", func() context.Context { return userCtx("user-a") }, call(func(ctx context.Context, err error) error {
+			_, e := newService(gateway.WithPipelineBackend(&mockPipeline{
+				listCatalogControlsFn: func(context.Context, *connect.Request[pb.ListCatalogControlsRequest]) (*connect.Response[pb.ListCatalogControlsResponse], error) {
+					return nil, err
+				},
+			})).ListCatalogControls(ctx, connect.NewRequest(&pb.ListCatalogControlsRequest{CatalogId: "cat-1"}))
+			return e
+		})),
+		Entry("RenderPrompt", "RenderPrompt", func() context.Context { return userCtx("user-a") }, call(func(ctx context.Context, err error) error {
+			_, e := newService(gateway.WithPipelineBackend(&mockPipeline{
+				renderPromptFn: func(context.Context, *connect.Request[pb.RenderPromptRequest]) (*connect.Response[pb.RenderPromptResponse], error) {
+					return nil, err
+				},
+			})).RenderPrompt(ctx, connect.NewRequest(&pb.RenderPromptRequest{Analyzer: "relationship"}))
+			return e
+		})),
 		Entry("ListJobs", "ListJobs", func() context.Context { return userCtx("user-a") }, call(func(ctx context.Context, err error) error {
 			_, e := newService(gateway.WithPipelineBackend(&mockPipeline{
 				listJobsFn: func(context.Context, *connect.Request[pb.ListJobsRequest]) (*connect.Response[pb.ListJobsResponse], error) {

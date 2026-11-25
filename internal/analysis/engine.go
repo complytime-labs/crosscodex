@@ -61,6 +61,11 @@ type Engine struct {
 	cacheLookupDuration    metric.Float64Histogram
 	cacheInFlight          metric.Int64Gauge
 	inFlight               atomic.Int64
+
+	// Stage progress (#278); see WithProgressStore and progress.go.
+	progressStore    ProgressStore
+	progressInterval time.Duration
+	progressMetrics  progressMetrics
 }
 
 // New creates an Engine with explicit Dispatcher and Collector.
@@ -408,6 +413,7 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 	// task's pre-built result, so the task never goes to a worker. A failed
 	// lookup, or any cached result that fails verification, stops the stage
 	// before anything is dispatched or written.
+	var cacheHits int
 	if sc.lookups() {
 		cached, err := e.lookupCached(ctx, sc)
 		if err != nil {
@@ -418,6 +424,7 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 		for _, t := range dispatchTasks {
 			if r, ok := cached[t.TaskID]; ok {
 				preBuiltResults = append(preBuiltResults, analyzer.TaskResult{TaskID: t.TaskID, TaskType: t.TaskType, Result: r})
+				cacheHits++
 				continue
 			}
 			remaining = append(remaining, t)
@@ -428,6 +435,38 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 		sc.stats.Tasks = len(tasks)
 		sc.stats.Hits = len(sc.hits)
 		sc.stats.Dispatched = len(dispatchTasks)
+	}
+
+	// Stage progress (#278): the task list is final here. A completed stage
+	// finishes it before its output is persisted, so a failed final write
+	// can mark the output progress_stale; every other exit finishes it on
+	// return, and a failed final write there is only logged. A stage that
+	// dispatched nothing has no progress, not a 0/0 row.
+	var progress *stageProgress
+	if e.progressStore != nil && len(dispatchTasks)+len(preBuiltResults) > 0 {
+		progress = newStageProgress(e.progressStore, req.JobID, name, e.progressInterval, e.logger, e.tracer, e.progressMetrics)
+		progress.Start(ctx, len(dispatchTasks)+len(preBuiltResults), len(preBuiltResults), cacheHits)
+		defer func() {
+			if err := progress.Finish(ctx); err != nil {
+				e.logger.WarnContext(ctx, "could not write the final stage progress of a stage that did not complete",
+					"analyzer", name, "job_id", req.JobID, "error", err)
+			}
+		}()
+	}
+	// finishProgress writes a completing stage's final progress, marking
+	// output progress_stale when that write fails.
+	finishProgress := func(output *analyzer.Output) {
+		if progress == nil {
+			return
+		}
+		if err := progress.Finish(ctx); err != nil {
+			e.logger.WarnContext(ctx, "could not write the final stage progress; the stage completes with its output marked progress_stale",
+				"analyzer", name, "job_id", req.JobID, "error", err)
+			if output.Metadata == nil {
+				output.Metadata = make(map[string]string)
+			}
+			output.Metadata[MetadataProgressStale] = "true"
+		}
 	}
 	// complete records the stage's cache use and seals it, all before the
 	// stage's result is persisted: a reuse or write that cannot be attested
@@ -460,6 +499,7 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 			AnalyzerName: name,
 			Metadata:     map[string]string{"tasks": "0"},
 		}
+		finishProgress(output)
 		if !complete(output) {
 			return
 		}
@@ -498,6 +538,9 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 			Backoff:        e.cfg.RetryBackoff,
 			RetryOnTimeout: e.cfg.ForTenant(tenantID).RetryOnTimeout,
 			Dispatcher:     e.dispatcher,
+		}
+		if progress != nil {
+			collectReq.Progress = progress
 		}
 
 		// PrepareCollect: subscribe to result subject BEFORE dispatching tasks.
@@ -609,6 +652,7 @@ func (e *Engine) executeAnalyzer(ctx context.Context, name string, req Execution
 		output.Metadata["failed_tasks"] = fmt.Sprintf("%d", failures)
 	}
 
+	finishProgress(output)
 	if !complete(output) {
 		return
 	}

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,6 +21,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/analysis"
@@ -28,10 +31,13 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/db"
+	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/jobconfig"
 	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus"
 	"github.com/complytime-labs/crosscodex/pkg/natsbus/natsbustest"
+	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/complytime-labs/crosscodex/pkg/resultcache"
 	"github.com/complytime-labs/crosscodex/pkg/storage/storagetest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
@@ -659,6 +665,67 @@ var _ = Describe("Service", func() {
 
 			_, err := svc.GetJob(ctx, connect.NewRequest(req))
 			Expect(err).To(HaveOccurred())
+		})
+
+		Describe("stage progress", func() {
+			lastSuccess := time.Date(2026, 11, 24, 9, 30, 0, 0, time.UTC)
+			BeforeEach(func() {
+				now := time.Now()
+				Expect(store.CreateJob(ctx, &pipeline.Job{
+					JobID: "job-progress", TenantID: "test-tenant", Status: pipeline.JobStatusRunning,
+					Config: []byte(`{}`), CreatedBy: "test-tenant", CreatedAt: now, UpdatedAt: now,
+				})).To(Succeed())
+				Expect(store.CreateStages(ctx, "job-progress", []string{"classify", "relationship", "synthesis"})).To(Succeed())
+				store.setStageProgress("job-progress", "classify", pipeline.StageProgress{
+					Total: 10, Done: 9, Succeeded: 8, Failed: 1, Retried: 3, CacheHits: 2, LastSuccessAt: &lastSuccess})
+				store.setStageProgress("job-progress", "relationship", pipeline.StageProgress{Total: 4})
+			})
+
+			It("returns each stage's stored counts, and none for a stage without a row", func() {
+				resp, err := svc.GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{JobId: "job-progress"}))
+				Expect(err).NotTo(HaveOccurred())
+				stages := resp.Msg.GetJob().GetStages()
+				Expect(stages).To(HaveLen(3))
+				Expect(proto.Equal(stages[0].GetProgress(), &pb.StageProgress{
+					TasksTotal: 10, TasksDone: 9, TasksSucceeded: 8, TasksFailed: 1, TasksRetried: 3, TasksCacheHits: 2,
+					LastSuccessAt: timestamppb.New(lastSuccess)})).To(BeTrue(), "classify: %v", stages[0].GetProgress())
+				Expect(proto.Equal(stages[1].GetProgress(), &pb.StageProgress{TasksTotal: 4})).To(BeTrue(),
+					"relationship: %v", stages[1].GetProgress())
+				Expect(stages[1].GetProgress().GetLastSuccessAt()).To(BeNil())
+				Expect(stages[2].GetProgress()).To(BeNil())
+			})
+
+			It("answers another tenant's job, which has progress rows, as it answers an unknown job", func() {
+				otherCtx, err := tenant.WithTenant(context.Background(), "other-tenant")
+				Expect(err).NotTo(HaveOccurred())
+				_, othersErr := svc.GetJob(otherCtx, connect.NewRequest(&pb.GetJobRequest{JobId: "job-progress"}))
+				_, unknownErr := svc.GetJob(otherCtx, connect.NewRequest(&pb.GetJobRequest{JobId: "job-unknown"}))
+				Expect(connect.CodeOf(othersErr)).To(Equal(connect.CodeNotFound))
+				Expect(othersErr.Error()).To(Equal(unknownErr.Error()))
+			})
+
+			It("fails the request when the progress cannot be read, and the stored progress is unchanged", func() {
+				store.getProgressErr = errors.New("SECRET pq: connection refused")
+				_, err := svc.GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{JobId: "job-progress"}))
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
+				Expect(err.Error()).To(ContainSubstring("get stage progress"))
+
+				store.getProgressErr = nil
+				got, err := store.GetStageProgress(ctx, "job-progress")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got).To(HaveLen(2))
+				Expect(got["classify"].Done).To(Equal(9))
+			})
+
+			It("lists jobs without reading progress", func() {
+				store.getProgressErr = errors.New("progress must not be read by ListJobs")
+				list, err := svc.ListJobs(ctx, connect.NewRequest(&pb.ListJobsRequest{}))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(list.Msg.GetJobs()).To(HaveLen(1))
+				for _, st := range list.Msg.GetJobs()[0].GetStages() {
+					Expect(st.GetProgress()).To(BeNil())
+				}
+			})
 		})
 
 		DescribeTable("returns the job's recorded error message, or no error when there is none",
@@ -2189,5 +2256,217 @@ var _ = Describe("Service", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(connect.CodeOf(err)).To(Equal(connect.CodeResourceExhausted))
 		})
+	})
+})
+
+// treeFixtureConn serves a pkg/oscal tree fixture to readCatalog's queries as
+// catalog import stores it (internal/catalog's ControlRecord): control_id is
+// "<catalogID>/<item ID>" and the remaining columns are the parsed item's.
+func treeFixtureConn(catalogID, fixture string) *dbtest.Conn {
+	GinkgoHelper()
+	f, err := os.Open(filepath.Join("..", "..", "pkg", "oscal", "testdata", "tree", fixture))
+	Expect(err).NotTo(HaveOccurred())
+	defer func() { Expect(f.Close()).To(Succeed()) }()
+	tree, err := oscal.NewParser("").Parse(context.Background(), f)
+	Expect(err).NotTo(HaveOccurred())
+
+	var controls, containers [][]any
+	for _, it := range tree.Items {
+		props, err := json.Marshal(it.Props)
+		Expect(err).NotTo(HaveOccurred())
+		controls = append(controls, []any{catalogID + "/" + it.ID, it.ID, it.Title, it.Text, it.Class, it.ParentID, it.ContainerKey, props})
+	}
+	for _, c := range tree.Containers {
+		containers = append(containers, []any{c.Key, c.ParentKey, c.Title, c.Identifier, c.Label})
+	}
+	return &dbtest.Conn{Tx: &dbtest.Tx{
+		QueryFunc: func(_ context.Context, query string, _ ...any) (db.Rows, error) {
+			if strings.Contains(query, "catalog_containers") {
+				return dbtest.Rows(nil, containers...), nil
+			}
+			return dbtest.Rows(nil, controls...), nil
+		},
+	}}
+}
+
+// catalogControlsByID serves each catalog's controls from its own reader and
+// an empty slice for any other catalog, as the Postgres reader does for a
+// catalog it cannot see.
+type catalogControlsByID map[string]pipeline.CatalogControlsReader
+
+func (c catalogControlsByID) Controls(ctx context.Context, tenantID, catalogID string) ([]*pb.Control, error) {
+	r, ok := c[catalogID]
+	if !ok {
+		return []*pb.Control{}, nil
+	}
+	return r.Controls(ctx, tenantID, catalogID)
+}
+
+// catalogNamesByTenant serves each tenant only its own catalogs: another
+// tenant's catalog is pipeline.ErrCatalogNotFound, as RLS makes it.
+type catalogNamesByTenant map[string]fakeCatalogNameReader
+
+func (c catalogNamesByTenant) CatalogSnapshot(ctx context.Context, tenantID, catalogID string) (*pb.CatalogSnapshot, error) {
+	names, ok := c[tenantID]
+	if !ok {
+		return nil, fmt.Errorf("catalog %s: %w", catalogID, pipeline.ErrCatalogNotFound)
+	}
+	return names.CatalogSnapshot(ctx, tenantID, catalogID)
+}
+
+// failingCatalogControls fails every read with err.
+type failingCatalogControls struct{ err error }
+
+func (f failingCatalogControls) Controls(context.Context, string, string) ([]*pb.Control, error) {
+	return nil, f.err
+}
+
+var _ = Describe("Service.ListCatalogControls", func() {
+	const ownTenant, otherTenant = "test-tenant", "other-tenant"
+
+	var ctx context.Context
+
+	BeforeEach(func() {
+		var err error
+		ctx, err = tenant.WithTenant(context.Background(), ownTenant)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	names := catalogNamesByTenant{
+		ownTenant:   {"ssdf-cat": {name: "SSDF"}, "r3-cat": {name: "SP 800-171r3"}, "empty-cat": {name: "Empty"}},
+		otherTenant: {"theirs-cat": {name: "Theirs"}},
+	}
+	controls := func() pipeline.CatalogControlsReader {
+		return catalogControlsByID{
+			"ssdf-cat":   pipeline.NewPGCatalogControlsReader(treeFixtureConn("ssdf-cat", "ssdf.json")),
+			"r3-cat":     pipeline.NewPGCatalogControlsReader(treeFixtureConn("r3-cat", "sp800-171r3.json")),
+			"theirs-cat": pipeline.NewPGCatalogControlsReader(treeFixtureConn("theirs-cat", "ssdf.json")),
+		}
+	}
+	service := func(opts ...pipeline.Option) *pipeline.Service {
+		return pipeline.New(newFakeStore(), nil, analyzer.NewRegistry(), &fakeSynthesis{}, pipeline.Attestors{},
+			pipelineattestation.NewConverter(), &natsbustest.Fake{}, &storagetest.Fake{},
+			config.PipelineConfig{MaxConcurrentJobs: 10, StageTimeout: time.Hour}, nil, opts...)
+	}
+	wired := func() *pipeline.Service {
+		return service(pipeline.WithCatalogNameReader(names), pipeline.WithCatalogControlsReader(controls()))
+	}
+	request := func(tenantID, catalogID string) *connect.Request[pb.ListCatalogControlsRequest] {
+		req := &pb.ListCatalogControlsRequest{CatalogId: catalogID}
+		if tenantID != "" {
+			req.TenantContext = &pb.TenantContext{TenantId: tenantID}
+		}
+		return connect.NewRequest(req)
+	}
+	byControlID := func(cs []*pb.Control) map[string]*pb.Control {
+		out := make(map[string]*pb.Control, len(cs))
+		for _, c := range cs {
+			out[c.GetControlId()] = c
+		}
+		return out
+	}
+
+	It("returns an SSDF catalog's controls as composeControls composes them", func() {
+		resp, err := wired().ListCatalogControls(ctx, request(ownTenant, "ssdf-cat"))
+		Expect(err).NotTo(HaveOccurred())
+
+		got := byControlID(resp.Msg.GetControls())
+		Expect(got).To(HaveKey("ssdf-cat/PO.1"))
+		Expect(got["ssdf-cat/PO.1"].GetCatalogId()).To(Equal("ssdf-cat"))
+		Expect(got["ssdf-cat/PO.1"].GetTitle()).To(Equal("Define Security Requirements for Software Development"))
+		Expect(got["ssdf-cat/PO.1"].GetStatement()).To(HavePrefix("Ensure that security requirements for software development are known at all times"))
+		// The task's title only repeats its label, so composition drops it.
+		Expect(got).To(HaveKey("ssdf-cat/PO.1.1"))
+		Expect(got["ssdf-cat/PO.1.1"].GetTitle()).To(BeEmpty())
+		Expect(got["ssdf-cat/PO.1.1"].GetStatement()).To(Equal("Identify and document all security requirements for the organization’s " +
+			"software development infrastructures and processes, and maintain the requirements over time."))
+	})
+
+	It("returns an SP 800-171r3 statement item with its lead-in, as composeControls composes it", func() {
+		resp, err := wired().ListCatalogControls(ctx, request(ownTenant, "r3-cat"))
+		Expect(err).NotTo(HaveOccurred())
+
+		got := byControlID(resp.Msg.GetControls())
+		Expect(got).To(HaveKey("r3-cat/SR-03.01.01.c.01"))
+		Expect(got["r3-cat/SR-03.01.01.c.01"].GetTitle()).To(BeEmpty())
+		Expect(got["r3-cat/SR-03.01.01.c.01"].GetStatement()).To(Equal("Specify: Authorized users of the system,"))
+		Expect(got["r3-cat/SR-03.01.01.c.01"].GetParts()).To(HaveKeyWithValue("context", ContainSubstring("Account Management")))
+	})
+
+	It("answers another tenant's catalog and an unknown catalog with the same NotFound", func() {
+		svc := wired()
+		_, theirs := svc.ListCatalogControls(ctx, request(ownTenant, "theirs-cat"))
+		_, unknown := svc.ListCatalogControls(ctx, request(ownTenant, "theirs-cat-x"))
+
+		Expect(connect.CodeOf(theirs)).To(Equal(connect.CodeNotFound))
+		Expect(connect.CodeOf(unknown)).To(Equal(connect.CodeNotFound))
+		Expect(strings.ReplaceAll(theirs.Error(), "theirs-cat", "<id>")).
+			To(Equal(strings.ReplaceAll(unknown.Error(), "theirs-cat-x", "<id>")))
+		Expect(theirs.Error()).To(ContainSubstring("crosscodex catalog list"))
+		Expect(theirs.Error()).NotTo(ContainSubstring(otherTenant))
+		Expect(theirs.Error()).NotTo(ContainSubstring("Theirs"))
+	})
+
+	It("returns no controls, not NotFound, for a catalog of the caller's that has none", func() {
+		resp, err := wired().ListCatalogControls(ctx, request(ownTenant, "empty-cat"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Msg.GetControls()).To(BeEmpty())
+	})
+
+	It("rejects a request without tenant_context as InvalidArgument", func() {
+		resp, err := wired().ListCatalogControls(ctx, request("", "ssdf-cat"))
+		Expect(resp).To(BeNil())
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+		Expect(err.Error()).To(ContainSubstring("missing tenant context"))
+	})
+
+	It("rejects a ctx without a tenant as InvalidArgument", func() {
+		resp, err := wired().ListCatalogControls(context.Background(), request(ownTenant, "ssdf-cat"))
+		Expect(resp).To(BeNil())
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+		Expect(err.Error()).To(ContainSubstring("missing tenant context"))
+	})
+
+	It("denies a tenant_context that differs from the ctx tenant without naming either tenant", func() {
+		resp, err := wired().ListCatalogControls(ctx, request(otherTenant, "theirs-cat"))
+		Expect(resp).To(BeNil())
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodePermissionDenied))
+		Expect(err.Error()).NotTo(ContainSubstring(otherTenant))
+		Expect(err.Error()).NotTo(ContainSubstring(ownTenant))
+	})
+
+	It("rejects an empty catalog_id with the command that lists catalog IDs", func() {
+		_, err := wired().ListCatalogControls(ctx, request(ownTenant, ""))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+		Expect(err.Error()).To(ContainSubstring("catalog_id is required"))
+		Expect(err.Error()).To(ContainSubstring("crosscodex catalog list"))
+	})
+
+	DescribeTable("refuses as Unavailable when a reader is not wired",
+		func(opts ...pipeline.Option) {
+			_, err := service(opts...).ListCatalogControls(ctx, request(ownTenant, "ssdf-cat"))
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnavailable))
+			Expect(err.Error()).To(ContainSubstring("An operator must wire"))
+		},
+		Entry("without the catalog name reader", pipeline.WithCatalogControlsReader(controls())),
+		Entry("without the catalog controls reader", pipeline.WithCatalogNameReader(names)),
+	)
+
+	It("withholds a catalog store error from the caller", func() {
+		svc := service(pipeline.WithCatalogNameReader(names),
+			pipeline.WithCatalogControlsReader(failingCatalogControls{err: errors.New("dial tcp 10.0.3.7:5432: secret_admin")}))
+		_, err := svc.ListCatalogControls(ctx, request(ownTenant, "ssdf-cat"))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnavailable))
+		Expect(err.Error()).NotTo(ContainSubstring("secret_admin"))
+		Expect(err.Error()).To(ContainSubstring("Retry the request"))
+	})
+
+	It("withholds a catalog lookup error from the caller", func() {
+		svc := service(pipeline.WithCatalogNameReader(leakyCatalogNameReader{notFound: errors.New("dial tcp 10.0.3.7:5432: secret_admin")}),
+			pipeline.WithCatalogControlsReader(controls()))
+		_, err := svc.ListCatalogControls(ctx, request(ownTenant, "ssdf-cat"))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnavailable))
+		Expect(err.Error()).NotTo(ContainSubstring("secret_admin"))
+		Expect(err.Error()).To(ContainSubstring("Retry the request"))
 	})
 })

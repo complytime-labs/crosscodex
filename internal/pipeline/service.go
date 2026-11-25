@@ -67,6 +67,10 @@ type Service struct {
 	prompts    prompt.Registry
 	probe      llmclient.Client
 
+	// analysisCfg, wired by WithAnalysisConfig, is what RenderPrompt builds
+	// the pair analyzers and critique from; nil refuses every render.
+	analysisCfg *config.AnalysisConfig
+
 	// Panel diversity (#260), wired by WithPanelProbe: the client that probes
 	// each panel alias, and the counter of checks by outcome.
 	panelProbe  PanelProbeClient

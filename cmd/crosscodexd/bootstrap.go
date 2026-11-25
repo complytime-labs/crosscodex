@@ -960,7 +960,8 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 		store, pipeline.WithReporterTracer(tp))
 	engine := analysis.NewWithNATS(registry, shared.natsClient, cfg.Analysis.Engine, taskTypesByAnalyzer,
 		analysis.WithStageReporter(dbReporter), analysis.WithTelemetry(tp, mp),
-		analysis.WithStageTimeout(cfg.Pipeline.StageTimeout), analysis.WithResultCache(cacheStore))
+		analysis.WithStageTimeout(cfg.Pipeline.StageTimeout), analysis.WithResultCache(cacheStore),
+		analysis.WithProgressStore(store, cfg.Analysis.Engine.ProgressFlushInterval))
 
 	candRegistry, err := pipeline.BuildCandidateRegistry(cfg.Analysis.Candidates, tp, mp)
 	if err != nil {
@@ -990,6 +991,8 @@ func buildPipelineService(cfg *config.Config, shared *sharedResources) (*pipelin
 		pipeline.WithEmbeddingConfig(cfg.Analysis.Embedding),
 		pipeline.WithTelemetry(tp, mp),
 		pipeline.WithPromptRegistry(prompts),
+		// RenderPrompt builds its analyzers from the settings the registry's were built from.
+		pipeline.WithAnalysisConfig(cfg.Analysis),
 		pipeline.WithStageReporter(dbReporter),
 	}, probeOpts...)
 	return pipeline.New(
