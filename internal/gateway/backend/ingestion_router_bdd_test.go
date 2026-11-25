@@ -150,6 +150,38 @@ var _ = Describe("IngestionRouter", func() {
 			Expect(ptStore.Objects()).To(BeEmpty())
 		})
 
+		DescribeTable("sends a request with a mapping to the ingestion service, OSCAL JSON included, since only it reads mappings",
+			func(content []byte) {
+				Expect(clStore.Put(routerTenantCtx(), routerOutputKey, strings.NewReader("{}"))).To(Succeed())
+				fake.document = completedAt("file://" + root + "/" + routerTenant + "/" + routerOutputKey)
+				req := routerContentReq(content)
+				req.Msg.Mapping = "owasp-asvs-5.0.0-json"
+
+				resp, err := configured().ConvertDocument(routerTenantCtx(), req)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(resp.Msg.GetDocumentId()).To(Equal(routerOutputKey))
+				converts, _ := fake.recorded()
+				Expect(converts).To(HaveLen(1))
+				Expect(converts[0].GetMapping()).To(Equal("owasp-asvs-5.0.0-json"))
+				Expect(ptStore.Objects()).To(BeEmpty())
+			},
+			Entry("structured JSON", []byte(`{"chapters":[]}`)),
+			Entry("OSCAL catalog JSON", oscalCatalogJSON),
+		)
+
+		It("refuses a mapping when no ingestion service is configured, storing nothing", func() {
+			req := routerContentReq([]byte(`{"chapters":[]}`))
+			req.Msg.Mapping = "owasp-asvs-5.0.0-json"
+
+			_, err := unconfigured().ConvertDocument(routerTenantCtx(), req)
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+			Expect(err).To(MatchError(ContainSubstring(`mapping "owasp-asvs-5.0.0-json"`)))
+			Expect(err).To(MatchError(ContainSubstring("ingestion.address")))
+			Expect(err).To(MatchError(ContainSubstring("or import the file without a mapping")))
+			Expect(ptStore.Objects()).To(BeEmpty())
+		})
+
 		DescribeTable("without an ingestion client, stores any inline content through the passthrough as before",
 			func(content []byte) {
 				resp, err := unconfigured().ConvertDocument(routerTenantCtx(), routerContentReq(content))

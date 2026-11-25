@@ -287,6 +287,25 @@ var _ = Describe("ParseCatalog with ingestion output", func() {
 			}),
 		)
 
+		DescribeTable("labels a document version from a real release's catalog_version",
+			func(fixture, wantLabel string) {
+				data, _ := readIngestionFixture(fixture)
+				Expect(stg.Put(context.Background(), docID, bytes.NewReader(data))).To(Succeed())
+
+				resp, err := newService(catalog.WithStructurer(oscal.NewStructurer(nil, nil))).ParseCatalog(context.Background(),
+					connect.NewRequest(&crosscodexv1.ParseCatalogRequest{
+						TenantContext: &crosscodexv1.TenantContext{TenantId: tenantID},
+						DocumentId:    docID,
+						DocumentSlug:  "release-fixture",
+					}))
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(resp.Msg.VersionLabel).To(Equal(wantLabel))
+			},
+			Entry("ASVS 5.0.0 release", "owasp-asvs-5.0.0-excerpt.json", "5.0.0"),
+			Entry("SP 800-53 Rev. 5 release: a label with a space is valid", "nist-sp800-53r5-excerpt.json", "Revision 5"),
+		)
+
 		It("stores every control unchanged under filtering and decomposition", func() {
 			cfg := defaultStructuring()
 			cfg.FilterByKeywords, cfg.Decompose = true, true

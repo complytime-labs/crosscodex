@@ -682,7 +682,8 @@ func buildEmbeddedService(ctx context.Context, cfg *config.Config, clientCertPat
 	ingestionTracer, ingestionMeter := telemetry.Instrumentation("internal/gateway/backend")
 	localIngestion, err := backend.NewIngestion(ctx, cfg.Ingestion, cfg.TLS,
 		config.ObjectStorageConfig{Backend: string(storage.ProviderTypeLocal), BasePath: dataDir}, localStorage,
-		backend.WithIngestionClientTelemetry(ingestionTracer, ingestionMeter))
+		backend.WithIngestionClientTelemetry(ingestionTracer, ingestionMeter),
+		backend.WithIngestionClientLogger(logger))
 	if err != nil {
 		resources.close()
 		return nil, nil, nil, fmt.Errorf("embedded daemon: %w", err)

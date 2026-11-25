@@ -71,6 +71,7 @@ func (s *Service) handleStreamedDocument(ctx context.Context, start time.Time, m
 		convertReq: &pb.ConvertDocumentRequest{
 			Source:   &pb.ConvertDocumentRequest_Content{Content: content},
 			Metadata: meta.GetContentMetadata(),
+			Mapping:  meta.GetIngestionMapping(),
 		},
 		catalogFormat: meta.GetCatalogFormat(),
 		catalogName:   meta.GetCatalogName(),

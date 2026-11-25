@@ -28,6 +28,11 @@ message ConvertDocumentRequest {
     string source_uri = 3;    // URL to fetch
   }
   ContentMetadata metadata = 4;
+  // ID of a mapping registered on the ingestion server (crosscodex-ingestion
+  // README "Structured sources"). Required for JSON, CSV and XLSX input, which
+  // is read through the mapping; leave empty for documents. Same field number
+  // and meaning as crosscodex-ingestion's ConvertDocumentRequest.mapping.
+  string mapping = 5;
 }
 
 message ConvertDocumentResponse {

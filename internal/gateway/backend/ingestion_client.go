@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	connect "connectrpc.com/connect"
@@ -15,6 +16,7 @@ import (
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
+	"github.com/complytime-labs/crosscodex/internal/rpcserver"
 	"github.com/complytime-labs/crosscodex/pkg/config"
 	"github.com/complytime-labs/crosscodex/pkg/storage"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry"
@@ -24,7 +26,7 @@ import (
 // Conversion outcomes, the "outcome" attribute of the conversions counter.
 const (
 	outcomeCompleted = "completed" // output stored and verified
-	outcomeRejected  = "rejected"  // refused before any RPC (size, source kind, tenant)
+	outcomeRejected  = "rejected"  // refused before any RPC (size, source kind, tenant), or ingestion refused a mapped request
 	outcomeFailed    = "failed"    // ingestion reported a terminal non-success status
 	outcomeTimeout   = "timeout"   // ingestion.convert_timeout elapsed
 	outcomeCanceled  = "canceled"  // the caller's context ended first
@@ -38,13 +40,16 @@ const (
 // publicError can log it; every such error has a code publicError withholds
 // (Internal, Unavailable or DeadlineExceeded), so that text never reaches the
 // caller (CWE-209). Only refusals this client makes itself, with its own
-// message, use caller-actionable codes.
+// message, use caller-actionable codes. One of them reports ingestion refusing
+// a mapped request as InvalidArgument: the client then logs ingestion's text
+// once, under an error reference the message gives.
 type IngestionClient struct {
 	rpc   crosscodexv1connect.IngestionServiceClient
 	store storage.Provider
 	sb    StorageBackend
 	cfg   config.IngestionConfig
 
+	logger      *slog.Logger
 	tracer      trace.Tracer
 	meter       metric.Meter
 	conversions metric.Int64Counter
@@ -62,6 +67,14 @@ func WithIngestionClientTelemetry(t trace.Tracer, m metric.Meter) IngestionClien
 		c.tracer = t
 		c.meter = m
 	}
+}
+
+// WithIngestionClientLogger sets the logger that records ingestion's reason
+// for refusing a mapping. Wiring contract: the composition root passes the
+// logger it gives the gateway (gateway.WithLogger). Without it the client logs
+// to slog.Default().
+func WithIngestionClientLogger(l *slog.Logger) IngestionClientOption {
+	return func(c *IngestionClient) { c.logger = l }
 }
 
 // NewIngestionClient returns an ingestion backend that sends inline content
@@ -83,7 +96,7 @@ func NewIngestionClient(rpc crosscodexv1connect.IngestionServiceClient, store st
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("ingestion client: %w", err)
 	}
-	c := &IngestionClient{rpc: rpc, store: store, sb: sb, cfg: cfg}
+	c := &IngestionClient{rpc: rpc, store: store, sb: sb, cfg: cfg, logger: slog.Default()}
 	for _, opt := range opts {
 		opt(c)
 	}
@@ -157,8 +170,21 @@ func (c *IngestionClient) convert(ctx context.Context, span trace.Span, msg *pb.
 		TenantContext: tc,
 		Source:        src,
 		Metadata:      msg.GetMetadata(),
+		Mapping:       msg.GetMapping(),
 	}))
 	if err != nil {
+		// The caller can fix this one, so it keeps a caller-actionable code;
+		// ingestion's text, which may describe the server, goes only to the log.
+		if mapping := msg.GetMapping(); mapping != "" && connect.CodeOf(err) == connect.CodeInvalidArgument {
+			ref := rpcserver.NewErrorReference()
+			c.logger.WarnContext(ctx, "ingestion refused a mapped conversion request", "error_ref", ref,
+				"trace_id", rpcserver.LocalTraceID(ctx), "tenant", tenantID, "mapping", mapping, "error", err)
+			return "", outcomeRejected, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+				"the ingestion service refused the request (mapping %q) as invalid. If the mapping ID is not registered on the "+
+					"ingestion server, ask an operator for the registered IDs (crosscodex-ingestion README \"Structured sources\"); "+
+					"its reason is in the server log under error reference %s",
+				mapping, ref))
+		}
 		outcome, err := c.rpcFailure(ctx, convCtx, "ConvertDocument", "", err)
 		return "", outcome, err
 	}

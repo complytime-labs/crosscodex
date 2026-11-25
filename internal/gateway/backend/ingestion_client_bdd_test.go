@@ -1,11 +1,14 @@
 package backend
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -351,6 +354,74 @@ var _ = Describe("IngestionClient", func() {
 		Entry("GetDocument FailedPrecondition becomes Internal", false, connect.CodeFailedPrecondition, connect.CodeInternal),
 		Entry("GetDocument Internal stays Internal", false, connect.CodeInternal, connect.CodeInternal),
 	)
+
+	Describe("mapping", func() {
+		const mapping = "owasp-asvs-5.0.0-json"
+		mappedReq := func() *connect.Request[pb.ConvertDocumentRequest] {
+			req := contentReq([]byte("{}"))
+			req.Msg.Mapping = mapping
+			return req
+		}
+
+		DescribeTable("sends the request's mapping to ingestion unchanged",
+			func(want string) {
+				Expect(store.Put(tenantCtx(), outputKey, strings.NewReader("{}"))).To(Succeed())
+				fake.document = completed("file://" + root + "/" + callerTenant + "/" + outputKey)
+				req := contentReq([]byte("{}"))
+				req.Msg.Mapping = want
+				rpc, _ := serveIngestion(fake)
+				_, err := newClient(rpc, local).ConvertDocument(tenantCtx(), req)
+				Expect(err).NotTo(HaveOccurred())
+				converts, _ := fake.recorded()
+				Expect(converts).To(HaveLen(1))
+				Expect(converts[0].GetMapping()).To(Equal(want))
+			},
+			Entry("a mapping ID", mapping),
+			Entry("no mapping for a document", ""),
+		)
+
+		It("reports ingestion refusing a mapped request as InvalidArgument with its own advice, logging ingestion's text", func() {
+			var logs bytes.Buffer
+			fake.convertErr = connect.NewError(connect.CodeInvalidArgument, errors.New(ingestionSecret))
+			rpc, _ := serveIngestion(fake)
+			c, err := NewIngestionClient(rpc, store, local, cfg,
+				WithIngestionClientTelemetry(tp.TracerProvider().Tracer("test"), tp.MeterProvider().Meter("test")),
+				WithIngestionClientLogger(slog.New(slog.NewTextHandler(&logs, nil))))
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = c.ConvertDocument(tenantCtx(), mappedReq())
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			Expect(err).To(MatchError(ContainSubstring(`the ingestion service refused the request (mapping "` + mapping + `") as invalid`)))
+			Expect(err).To(MatchError(ContainSubstring("If the mapping ID is not registered on the ingestion server, ask an operator for the registered IDs")))
+			Expect(err.Error()).NotTo(ContainSubstring("matches the mapping's format"), "a file/mapping mismatch is not this error")
+			Expect(err).To(MatchError(MatchRegexp(`error reference [0-9a-f]{32}`)))
+			Expect(err.Error()).NotTo(ContainSubstring(ingestionSecret), "ingestion's text is not returned (CWE-209)")
+
+			ref := regexp.MustCompile(`error reference ([0-9a-f]{32})`).FindStringSubmatch(err.Error())[1]
+			Expect(logs.String()).To(ContainSubstring(ingestionSecret))
+			Expect(logs.String()).To(ContainSubstring("error_ref=" + ref))
+			Expect(logs.String()).To(ContainSubstring("tenant=" + callerTenant))
+			Expect(store.Objects()).To(BeEmpty())
+			Expect(outcomes()).To(Equal(map[string]int64{"rejected": 1}))
+		})
+
+		DescribeTable("keeps withholding other ingestion refusals of a mapped request",
+			func(onConvert bool, code, want connect.Code) {
+				rpcErr := connect.NewError(code, errors.New(ingestionSecret))
+				if onConvert {
+					fake.convertErr = rpcErr
+				} else {
+					fake.getErr = rpcErr
+				}
+				rpc, _ := serveIngestion(fake)
+				_, err := newClient(rpc, local).ConvertDocument(tenantCtx(), mappedReq())
+				expectWithheldCode(err, want)
+				Expect(err.Error()).To(ContainSubstring(ingestionSecret), "the cause must reach publicError's log")
+			},
+			Entry("ConvertDocument PermissionDenied becomes Internal", true, connect.CodePermissionDenied, connect.CodeInternal),
+			Entry("GetDocument InvalidArgument becomes Internal", false, connect.CodeInvalidArgument, connect.CodeInternal),
+		)
+	})
 
 	It("rejects an output URI in another tenant, naming neither it nor the tenant, and stores nothing", func() {
 		uri := "file://" + root + "/" + otherTenant + "/" + outputKey

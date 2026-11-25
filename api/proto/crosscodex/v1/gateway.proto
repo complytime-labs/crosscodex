@@ -484,6 +484,17 @@ message SubmitDocumentRequest {
   // separators, '<', '>' or '`'. When empty, the OSCAL metadata.version is used
   // if it is a valid label, else "<UTC date> · <first 6 hex of content hash>".
   string version_label = 9;
+  // Optional. ID of a mapping registered on the ingestion server (for example
+  // "owasp-asvs-5.0.0-json"): 1-128 lowercase letters and digits, separated by
+  // single '.' or '-'. Required to import a structured JSON, CSV or XLSX
+  // source, which ingestion reads through the mapping; leave empty for OSCAL
+  // and for documents (PDF, DOCX, HTML). A malformed ID is refused with
+  // INVALID_ARGUMENT before anything is sent; one the ingestion server does
+  // not accept is refused with INVALID_ARGUMENT; a server without ingestion
+  // configured refuses any mapping with FAILED_PRECONDITION. A mapping with
+  // catalog_format OSCAL or GEMARA is refused with INVALID_ARGUMENT: a mapping
+  // converts a structured source, so leave catalog_format unspecified.
+  string ingestion_mapping = 10;
 
   reserved 6, 7;
   reserved "target_catalog_id", "synthesis_config";
@@ -612,6 +623,10 @@ message StreamDocumentMetadata {
   // separators, '<', '>' or '`'. When empty, the OSCAL metadata.version is used
   // if it is a valid label, else "<UTC date> · <first 6 hex of content hash>".
   string version_label = 7;
+  // Optional. ID of a mapping registered on the ingestion server; same rules
+  // and errors as SubmitDocumentRequest.ingestion_mapping, including the
+  // refusal of a mapping together with catalog_format OSCAL or GEMARA.
+  string ingestion_mapping = 8;
 
   reserved 3, 4;
   reserved "target_catalog_id", "synthesis_config";

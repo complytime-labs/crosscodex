@@ -512,6 +512,98 @@ var _ = Describe("AdaptIngestionOutput with element roles", func() {
 	})
 })
 
+// roleFixtureElement is the id and role of a schema-1.3 element, decoded
+// independently of the adapter.
+type roleFixtureElement struct {
+	ID   *string `json:"id"`
+	Role string  `json:"role"`
+}
+
+var _ = Describe("AdaptIngestionOutput with real schema 1.3 output", func() {
+	DescribeTable("names the source's own controls and groups",
+		func(fixture, wantTitle, wantVersion string, wantContainers, wantControls int, wantSample string, wantProps bool) {
+			data, _ := readIngestionFixture(fixture)
+			var out struct {
+				Elements []roleFixtureElement `json:"elements"`
+			}
+			Expect(json.Unmarshal(data, &out)).To(Succeed())
+			var groupIDs, controlIDs []string
+			for _, e := range out.Elements {
+				switch {
+				case e.ID == nil:
+				case e.Role == "group":
+					groupIDs = append(groupIDs, *e.ID)
+				case e.Role == "control":
+					controlIDs = append(controlIDs, *e.ID)
+				}
+			}
+			Expect(groupIDs).To(HaveLen(wantContainers))
+			Expect(controlIDs).To(HaveLen(wantControls))
+
+			doc, meta, err := catalog.AdaptIngestionOutput(data)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(doc).To(BeZero())
+			Expect(meta.SchemaVersion).To(Equal("1.3"))
+			Expect(meta.CatalogTitle).To(Equal(wantTitle))
+			Expect(meta.CatalogVersion).To(Equal(wantVersion))
+
+			tree, err := oscal.BuildTree(meta.SourceItems)
+			Expect(err).NotTo(HaveOccurred())
+			var gotContainers, gotControls []string
+			for _, c := range tree.Containers {
+				gotContainers = append(gotContainers, c.Identifier)
+			}
+			for _, it := range tree.Items {
+				gotControls = append(gotControls, it.ID)
+				Expect(it.Class).To(Equal(oscal.ClassRequirement))
+				if wantProps {
+					Expect(it.Props).To(HaveKey("level"), it.ID)
+				}
+			}
+			Expect(gotContainers).To(ConsistOf(groupIDs))
+			Expect(gotControls).To(Equal(controlIDs))
+			Expect(gotControls).To(ContainElement(wantSample))
+		},
+		Entry("ASVS 5.0.0: chapters and sections are containers, requirements carry a level",
+			"owasp-asvs-5.0.0-excerpt.json", "OWASP Application Security Verification Standard 5.0.0", "5.0.0", 11, 43, "V1.1.1", true),
+		Entry("SP 800-53 Rev. 5: no containers",
+			"nist-sp800-53r5-excerpt.json", "NIST SP 800-53 Revision 5 control catalog", "Revision 5", 0, 31, "AC-2(1)", false),
+	)
+
+	It("keeps ASVS V-prefixed requirements under their section and chapter", func() {
+		data, _ := readIngestionFixture("owasp-asvs-5.0.0-excerpt.json")
+		_, meta, err := catalog.AdaptIngestionOutput(data)
+		Expect(err).NotTo(HaveOccurred())
+		tree, err := oscal.BuildTree(meta.SourceItems)
+		Expect(err).NotTo(HaveOccurred())
+
+		identifiers := map[string]string{}
+		for _, c := range tree.Containers {
+			identifiers[c.Key] = c.Identifier
+		}
+		Expect(identifiers).To(ContainElements("V1", "V5", "V1.1", "V5.1"))
+		for _, it := range tree.Items {
+			Expect(it.ID).To(HavePrefix("V"))
+			Expect(it.ContainerKey).NotTo(BeEmpty(), it.ID)
+			Expect(it.ID).To(HavePrefix(identifiers[it.ContainerKey]+"."), it.ID)
+		}
+	})
+
+	It("links SP 800-53 enhancements to their base control", func() {
+		data, _ := readIngestionFixture("nist-sp800-53r5-excerpt.json")
+		_, meta, err := catalog.AdaptIngestionOutput(data)
+		Expect(err).NotTo(HaveOccurred())
+
+		parents := map[string]string{}
+		for _, it := range meta.SourceItems {
+			parents[it.ID] = it.ParentID
+		}
+		Expect(parents).To(HaveKeyWithValue("AC-2", ""))
+		Expect(parents).To(HaveKeyWithValue("AC-2(1)", "AC-2"))
+		Expect(parents).To(HaveKeyWithValue("AC-3(2)", "AC-3"))
+	})
+})
+
 var _ = Describe("IsIngestionOutput", func() {
 	DescribeTable("detects crosscodex-ingestion output",
 		func(data []byte, want bool) {

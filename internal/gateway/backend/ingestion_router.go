@@ -30,7 +30,8 @@ const ingestionTLSTarget = "ingestion"
 // requests, every request goes to the passthrough, so behaviour is what it
 // was before the client existed: non-OSCAL bytes are stored and ParseCatalog
 // rejects them with its unsupported-format error, and source_uri is
-// Unimplemented.
+// Unimplemented. A request with a mapping always goes to the client, OSCAL
+// content included, and is refused with FailedPrecondition when there is none.
 //
 // It implements gateway.IngestionBackend. It takes the concrete backends
 // rather than that interface because internal/gateway/... may not import
@@ -47,6 +48,18 @@ func NewIngestionRouter(passthrough *PassthroughIngestion, client *IngestionClie
 }
 
 func (r *IngestionRouter) ConvertDocument(ctx context.Context, req *connect.Request[pb.ConvertDocumentRequest]) (*connect.Response[pb.ConvertDocumentResponse], error) {
+	// Only the ingestion service reads a mapping, so a request naming one goes
+	// there whatever its content, and is refused rather than stored as-is when
+	// there is no client.
+	if mapping := req.Msg.GetMapping(); mapping != "" {
+		if r.client == nil {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+				"cannot read the file through mapping %q: mappings are applied by the ingestion service, which this server "+
+					"does not use (ingestion.address is not set). Ask an operator to configure ingestion.address, "+
+					"or import the file without a mapping if it is OSCAL JSON or a document", mapping))
+		}
+		return r.client.ConvertDocument(ctx, req)
+	}
 	src, ok := req.Msg.GetSource().(*pb.ConvertDocumentRequest_Content)
 	if !ok || r.client == nil || oscal.IsModelJSON(src.Content) {
 		return r.passthrough.ConvertDocument(ctx, req)

@@ -230,6 +230,54 @@ var _ = Describe("catalog import format hint", func() {
 	})
 })
 
+var _ = Describe("catalog import of a structured source", func() {
+	resp := &pb.SubmitDocumentResponse{DocumentId: "d", CatalogId: "c"}
+
+	DescribeTable("sends --mapping to the server and lets it detect the format",
+		func(content []byte, args ...string) {
+			gw := &importGateway{resp: resp}
+			_, err := serveCatalogCmd(gw, content)(append([]string{"import", "--plain", "--mapping", "owasp-asvs-5.0.0-json"}, args...)...)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(gw.metadata.GetIngestionMapping()).To(Equal("owasp-asvs-5.0.0-json"))
+			Expect(gw.metadata.GetCatalogFormat()).To(Equal(pb.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED))
+			Expect(gw.content).To(Equal(content))
+		},
+		Entry("structured JSON", []byte(`{"chapters":[]}`)),
+		Entry("JSON that looks like OSCAL is still read through the mapping",
+			[]byte(`{"catalog":{"uuid":"u","metadata":{"title":"T"}}}`)),
+		Entry("with --document", []byte(`{"chapters":[]}`), "--document", "asvs"),
+	)
+
+	It("sends no mapping without --mapping", func() {
+		gw := &importGateway{resp: resp}
+		_, err := serveCatalogCmd(gw, []byte(`{}`))("import", "--plain")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(gw.metadata.GetIngestionMapping()).To(BeEmpty())
+	})
+
+	DescribeTable("rejects a malformed --mapping before uploading, saying how to fix it",
+		func(mapping string) {
+			gw := &importGateway{resp: resp}
+			_, err := serveCatalogCmd(gw, []byte(`{}`))("import", "--plain", "--mapping", mapping)
+			Expect(err).To(MatchError(ContainSubstring("--mapping: invalid mapping")))
+			Expect(err).To(MatchError(ContainSubstring("lowercase letters and digits")))
+			Expect(gw.metadata).To(BeNil(), "nothing was sent")
+		},
+		Entry("uppercase", "OWASP-ASVS"),
+		Entry("a file name with a slash", "maps/asvs"),
+		Entry("too long", strings.Repeat("a", 129)),
+	)
+
+	It("explains --mapping in --help", func() {
+		out, err := serveCatalogCmd(&importGateway{resp: resp}, []byte(`{}`))("import", "--help")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(out).To(ContainSubstring("--mapping"))
+		Expect(out).To(ContainSubstring("JSON, CSV or XLSX"))
+		Expect(out).To(ContainSubstring("registered on the ingestion server"))
+		Expect(out).To(ContainSubstring("owasp-asvs-5.0.0-json"))
+	})
+})
+
 var _ = Describe("catalog import under a document", func() {
 	// serve starts a gateway fake and returns a runner for CLI args against it.
 	serve := func(gw *importGateway) func(args ...string) (string, error) {
