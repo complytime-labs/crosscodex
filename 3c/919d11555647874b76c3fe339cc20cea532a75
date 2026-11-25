@@ -1,0 +1,84 @@
+pkg/oscal/interface.go
+  s_716be8e6f6d133::t_467d8777bb73bd 34-36
+internal/catalog/ingestion_parse_bdd_test.go
+  s_716be8e6f6d133::t_f0a70ba821f497 299-300
+  s_716be8e6f6d133::t_3eedf412b0851e 212-268,290-298,301-361
+  s_716be8e6f6d133::t_ce4d35b6efe5f2 10
+  s_716be8e6f6d133::t_02d12238491718 269-289
+docs/dev/service-runtime.md
+  s_716be8e6f6d133::t_850fd28ce0b4fa 226-229,231-232
+  s_f8b6dbaa613246::t_3a6e29d875cd3b 230,235
+internal/catalog/ingestion_adapter_bdd_test.go
+  s_716be8e6f6d133::t_a2c96c399aaf70 71-93
+  s_716be8e6f6d133::t_4f896c220ced30 318-409,412-436,474-514
+  s_716be8e6f6d133::t_b147370f403f5b 410-411
+  s_f8b6dbaa613246::t_fee7535a86704e 437-449
+  s_716be8e6f6d133::t_41e5d27aaa69f3 450-473
+  s_716be8e6f6d133::t_6b8b23a8efb0d0 301-308
+  s_716be8e6f6d133::t_9c4c311fd205b7 14
+internal/catalog/catalog_fuzz_test.go
+  s_716be8e6f6d133::t_b361a2454b1a69 114-117,132,135-155
+  s_716be8e6f6d133::t_475a73b7024e04 68-71
+  s_716be8e6f6d133::t_f5c47021694926 99-112
+  s_716be8e6f6d133::t_9f2c424ca5141f 156
+  s_f8b6dbaa613246::t_f52d9c4c0cd2a6 6-7,58-60,96-98,113,118-131
+  s_716be8e6f6d133::t_3f58ab9869df4e 5
+internal/catalog/ingestion_adapter.go
+  s_716be8e6f6d133::t_9b60374bc97875 195-205,209-210
+  s_716be8e6f6d133::t_246b1a880dcf23 206-208
+  s_716be8e6f6d133::t_c4b8a5502e767c 422-434,436-440
+  s_716be8e6f6d133::t_0fdef02001648a 120-121,123-130
+  s_716be8e6f6d133::t_6e676c47807486 368-415,420-421,435,441-475
+  s_716be8e6f6d133::t_5efdd2034cb8c6 81-84,87-89,91-103
+  s_716be8e6f6d133::t_0a8933806b0181 148-152,159-161
+  s_716be8e6f6d133::t_1ad5d6eba9b972 247-262
+  s_716be8e6f6d133::t_a434b89240bb95 241
+  s_716be8e6f6d133::t_2fdc7e14e16079 8
+  s_716be8e6f6d133::t_33c2119e74475b 54
+  s_716be8e6f6d133::t_002d253b448d31 61-74
+  s_716be8e6f6d133::t_e4796ec3098f38 416-419
+  s_716be8e6f6d133::t_188228255dbd9c 53
+  s_716be8e6f6d133::t_a7207d0f19e743 119,122,131
+  s_716be8e6f6d133::t_0c6cacedda437b 242-246,263-265
+docs/dev/catalog-versions.md
+  s_716be8e6f6d133::t_b540a690be21db 97
+internal/catalog/structuring.go
+  s_716be8e6f6d133::t_467d8777bb73bd 59-62,78,80-87,94,102-110,116-124,134
+internal/catalog/ingestion_adapter_property_test.go
+  s_716be8e6f6d133::t_dc932c9d4c837b 134-143,147-156,158-213
+  s_716be8e6f6d133::t_a1945ddbada6e7 144-146,157
+  s_716be8e6f6d133::t_003da0fb936ecc 13
+internal/catalog/service.go
+  s_716be8e6f6d133::t_55526438b9ceee 355
+  s_716be8e6f6d133::t_467d8777bb73bd 331-334,378-380,382-384
+  s_716be8e6f6d133::t_b540a690be21db 455,553-556,562,574-575,577
+README.md
+  s_716be8e6f6d133::t_850fd28ce0b4fa 20-24,431-432,434-436,438,440,1023,1025
+  s_f8b6dbaa613246::t_97fbb5b73d02be 19,433,439
+  s_716be8e6f6d133::t_b540a690be21db 403
+  s_716be8e6f6d133::t_273aa37941fa67 437
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "3c919d11555647874b76c3fe339cc20cea532a75",
+  "prompts": {},
+  "sessions": {
+    "s_716be8e6f6d133": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "422310a8-cbba-4c80-ad5a-6a1823316b83",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_f8b6dbaa613246": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a1eba5c99e606b043",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
