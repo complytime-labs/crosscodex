@@ -8,7 +8,8 @@
 # status has no "analysis" yet, unless $FAKE_RUNNING_KEEPS_ANALYSIS=1 keeps it.
 # catalog inspect reports as content_hash the
 # SHA-256 of $FAKE_SOURCE_FILE for cat-src and of $FAKE_TARGET_FILE for any
-# other ID, or "" when that file does not exist.
+# other ID, or "" when that file does not exist. catalog controls prints the
+# dump of a catalog with one control, as `catalog controls --json` does.
 set -euo pipefail
 
 echo "$*" >>"${FAKE_ARGV_LOG:?}"
@@ -28,6 +29,9 @@ case "$*" in
 		hash="$(sha256sum "${file}" | cut -d' ' -f1)"
 	fi
 	jq -n --arg id "${!#}" --arg h "${hash}" '{catalog_id: $id, content_hash: $h}'
+	;;
+*"catalog controls"*)
+	jq -n --arg id "${!#}" '{catalog_id: $id, controls: [{control_id: "c-1", title: "T", statement: "S"}]}'
 	;;
 *"run start"*)
 	printf '{"job_id":"job-synth","status":"JOB_STATUS_PENDING"}\n'

@@ -60,6 +60,29 @@ type Label struct {
 
 func (l Label) byHuman() bool { return slices.Contains(l.JudgedBy, judgeHuman) }
 
+// errOverCap is readCapped's error for a file larger than its cap; callers
+// replace it with a message that says what to do about their kind of file.
+var errOverCap = errors.New("file exceeds its size cap")
+
+// readCapped reads path, returning errOverCap for a file over limit bytes. what
+// names the kind of file in a read error. It reads at most limit+1 bytes, so an
+// oversize or endless file cannot exhaust memory.
+func readCapped(path, what string, limit int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s %q: %w", what, path, err)
+	}
+	defer f.Close()
+	raw, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading %s %q: %w", what, path, err)
+	}
+	if int64(len(raw)) > limit {
+		return nil, errOverCap
+	}
+	return raw, nil
+}
+
 // LoadLabels reads a label file and returns its judgements by pair, and the
 // hex SHA-256 of the bytes it parsed, so a report names the exact labels it
 // was scored with. The file is read once: the digest and the judgements
@@ -70,18 +93,20 @@ func (l Label) byHuman() bool { return slices.Contains(l.JudgedBy, judgeHuman) }
 // order; two judgements of one pair by humans, or by models only, are
 // rejected.
 func LoadLabels(path string) (map[Pair]Label, string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, "", fmt.Errorf("reading labels %q: %w", path, err)
-	}
-	defer f.Close()
-	raw, err := io.ReadAll(io.LimitReader(f, maxLabelsBytes+1))
-	if err != nil {
-		return nil, "", fmt.Errorf("reading labels %q: %w", path, err)
-	}
-	if len(raw) > maxLabelsBytes {
+	raw, err := readCapped(path, "labels", maxLabelsBytes)
+	if errors.Is(err, errOverCap) {
 		return nil, "", fmt.Errorf("labels %q: file exceeds %d bytes: split it or remove entries for pairs no run produces", path, maxLabelsBytes)
 	}
+	if err != nil {
+		return nil, "", err
+	}
+	return decodeLabels(path, raw)
+}
+
+// decodeLabels is LoadLabels' parser, over bytes already read. name is the
+// file named in errors. The digest is of raw as given.
+func decodeLabels(name string, raw []byte) (map[Pair]Label, string, error) {
+	path := name
 	sum := sha256.Sum256(raw)
 	raw = bytes.TrimPrefix(raw, []byte("\xef\xbb\xbf"))
 

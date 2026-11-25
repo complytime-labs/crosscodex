@@ -24,7 +24,7 @@ Operations progress, prompt rendering and eval tooling (#278). Additive; no brea
 - **New RPCs `ListCatalogControls` and `RenderPrompt`**, behind `crosscodex catalog controls` and `crosscodex prompt render`. The gateway, `pipeline.proto` and the embedded daemon serve them.
 - **`content_hash` is a new key** in `catalog list --json` and `catalog inspect --json`: the SHA-256 of the bytes the catalog was imported from, `""` when none was recorded. `catalog inspect` also prints it as `Content SHA-256`.
 - **Embedders of `internal/pipeline`:** `pipeline.WithAnalysisConfig` is a new option. Without it `RenderPrompt` refuses every request; existing wiring is unaffected. The embedded CLI builds its prompt registry on first use rather than at startup.
-- **Eval:** `task eval:crosswalk` accepts `JOB=<id>` to score an existing job. See [test/eval/crosswalk/README.md](test/eval/crosswalk/README.md#scoring-an-existing-job).
+- **Eval:** `task eval:crosswalk` accepts `JOB=<id>` and `LABEL_INPUT=1`, and `crosswalk-eval` gains `label-input` and `labels merge`. See [test/eval/crosswalk/README.md](test/eval/crosswalk/README.md#labels).
 
 Local document ingestion overlays (#214). `task deploy:up` applies the PKI change to an existing deployment:
 
@@ -1173,7 +1173,7 @@ task eval:crosswalk PROFILE=ssdf-to-sp800-53r5 LABEL=new \
 task deploy:smoke:down
 ```
 
-Requires `jq` on the host (the runner reads job status with it). Variables: `PROFILE` (required), `LABEL` (default: UTC timestamp), `BASELINE` (an earlier `report.json`), `MODE=llm` (print only the summary line and errors), `NO_CACHE=1`, `JOB=<id>` (score an existing job instead of starting one; refused unless its catalogs are byte-identical to the profile's subset and target, see the [package README](test/eval/crosswalk/README.md#scoring-an-existing-job)), `EVAL_TIMEOUT` and `EVAL_POLL` (seconds, defaults 86400 and 10; a mapping run on a local model takes hours). `EVAL_ENDPOINT`, `EVAL_CA`, `EVAL_CERT` and `EVAL_KEY` default to the `deploy:smoke:up` stack; set them to evaluate another gateway. The model, panel and retrieval come from the daemon's configuration; the eval has no model settings.
+Requires `jq` on the host (the runner reads job status with it). Variables: `PROFILE` (required), `LABEL` (default: UTC timestamp), `BASELINE` (an earlier `report.json`), `MODE=llm` (print only the summary line and errors), `NO_CACHE=1`, `JOB=<id>` (score an existing job instead of starting one; refused unless its catalogs are byte-identical to the profile's subset and target, see the [package README](test/eval/crosswalk/README.md#scoring-an-existing-job)), `LABEL_INPUT=1` (also dump both catalogs' controls for labelling; see "Labels" in the same README), `EVAL_TIMEOUT` and `EVAL_POLL` (seconds, defaults 86400 and 10; a mapping run on a local model takes hours). `EVAL_ENDPOINT`, `EVAL_CA`, `EVAL_CERT` and `EVAL_KEY` default to the `deploy:smoke:up` stack; set them to evaluate another gateway. The model, panel and retrieval come from the daemon's configuration; the eval has no model settings.
 
 Shipped profiles (references are the resolved pairs the score uses):
 

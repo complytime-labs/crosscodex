@@ -14,7 +14,10 @@
 #           after checking that its catalogs' content SHA-256 equals that of
 #           the profile's subset and target files; NO_CACHE is then ignored),
 #           EVAL_TIMEOUT (seconds, default 86400: a mapping run on a local
-#           model takes hours), EVAL_POLL (seconds, default 10), PROFILES_DIR,
+#           model takes hours), LABEL_INPUT=1 (also write controls-source.json
+#           and controls-target.json, the job catalogs' `catalog controls
+#           --json`, to the run directory for `crosswalk-eval label-input`),
+#           EVAL_POLL (seconds, default 10), PROFILES_DIR,
 #           LABELS_DIR and EVAL_OUT_DIR (defaults under ROOT_DIR; the tooling
 #           suite overrides them). A score uses LABELS_DIR/PROFILE.yaml when it
 #           exists; without it no labels apply.
@@ -38,6 +41,7 @@ BASELINE="${BASELINE:-}"
 MODE="${MODE:-}"
 NO_CACHE="${NO_CACHE:-}"
 JOB="${JOB:-}"
+LABEL_INPUT="${LABEL_INPUT:-}"
 EVAL_TIMEOUT="${EVAL_TIMEOUT:-86400}"
 EVAL_POLL="${EVAL_POLL:-10}"
 PROFILES_DIR="${PROFILES_DIR:-${ROOT_DIR}/test/eval/crosswalk/profiles}"
@@ -225,6 +229,22 @@ fi
 progress "Exporting results ..."
 crosscodex results export "${job_id}" --stage analyzer --format json >"${run_dir}/mappings.json"
 crosscodex results candidates "${job_id}" --format json >"${run_dir}/candidates.json"
+
+# The composed text the pipeline sends analyzers, for crosswalk-eval label-input.
+# With JOB the catalog IDs are the job's own, from its run status.
+if [ "${LABEL_INPUT}" = "1" ]; then
+	if [ -n "${JOB}" ]; then
+		source_id="$(jq -er '.analysis.source_catalog.catalog_id' "${status_file}")" ||
+			fail "run status of job ${job_id} names no source catalog, so LABEL_INPUT cannot dump its controls."
+		target_id="$(jq -er '.analysis.target_catalog.catalog_id' "${status_file}")" ||
+			fail "run status of job ${job_id} names no target catalog, so LABEL_INPUT cannot dump its controls."
+	fi
+	progress "Dumping the catalogs' controls for label-input ..."
+	crosscodex --json catalog controls -- "${source_id}" >"${run_dir}/controls-source.json" ||
+		fail "dumping the controls of source catalog ${source_id} failed; see the CLI error above."
+	crosscodex --json catalog controls -- "${target_id}" >"${run_dir}/controls-target.json" ||
+		fail "dumping the controls of target catalog ${target_id} failed; see the CLI error above."
+fi
 
 score_args=(score --root "${ROOT_DIR}" --profile "${profile_file}"
 	--subset "${run_dir}/subset.json" --mappings "${run_dir}/mappings.json"

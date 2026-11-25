@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -123,4 +125,146 @@ references:
 			Expect(filepath.Join(out, "report.md")).NotTo(BeAnExistingFile())
 		})
 	})
+
+	Describe("label-input", func() {
+		runWith := func(controls string) string {
+			dir := GinkgoT().TempDir()
+			cand := `{"job_id":"j","candidates":[{"sourceControlId":"c-s/a","targetControlId":"c-t/b"}]}`
+			for name, content := range map[string]string{"candidates.json": cand, "controls-source.json": controls, "controls-target.json": `{"catalog_id":"c-t","controls":[{"control_id":"b","title":"B","statement":"line\nbreak"}]}`} {
+				Expect(os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600)).To(Succeed())
+			}
+			return dir
+		}
+
+		It("prints one JSON line per candidate pair", func() {
+			dir := runWith(`{"catalog_id":"c-s","controls":[{"control_id":"a","title":"A","statement":"say \"x\""}]}`)
+			Expect(run([]string{"label-input", "--run", dir}, &stdout, &stderr)).To(Equal(0), stderr.String())
+			Expect(stdout.String()).To(Equal(`{"source":"a","target":"b","source_title":"A","source_text":"say \"x\"","target_title":"B","target_text":"line\nbreak"}` + "\n"))
+		})
+
+		It("exits 1 naming the missing control and prints nothing", func() {
+			dir := runWith(`{"catalog_id":"c-s","controls":[]}`)
+			Expect(run([]string{"label-input", "--run", dir}, &stdout, &stderr)).To(Equal(1))
+			Expect(stderr.String()).To(ContainSubstring(`source control "a"`))
+			Expect(stdout.Len()).To(BeZero())
+		})
+
+		DescribeTable("usage errors",
+			func(args []string, stderrHas string) {
+				Expect(run(append([]string{"label-input"}, args...), &stdout, &stderr)).To(Equal(2))
+				Expect(stderr.String()).To(ContainSubstring(stderrHas))
+			},
+			Entry("no --run", nil, "missing required flag --run"),
+			Entry("unknown flag", []string{"--nope"}, "flag provided but not defined"),
+			Entry("stray argument", []string{"--run", "d", "extra"}, `unexpected argument "extra"`),
+		)
+	})
+})
+
+var _ = Describe("labels merge", func() {
+	var (
+		stdout, stderr bytes.Buffer
+		dir            string
+	)
+
+	BeforeEach(func() {
+		stdout.Reset()
+		stderr.Reset()
+		dir = GinkgoT().TempDir()
+		clock = func() time.Time { return time.Date(2026, 11, 24, 23, 59, 0, 0, time.UTC) }
+		DeferCleanup(func() { clock = time.Now })
+	})
+
+	write := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		Expect(os.WriteFile(path, []byte(content), 0o600)).To(Succeed())
+		return path
+	}
+	pairs := func(ids ...string) string {
+		var s string
+		for _, id := range ids {
+			s += fmt.Sprintf(`{"source":%q,"target":"t","source_title":"x"}`+"\n", id)
+		}
+		return s
+	}
+	judged := func(verdicts map[string]string) string {
+		var s string
+		for id, v := range verdicts {
+			s += fmt.Sprintf(`{"source":%q,"target":"t","verdict":%q,"rationale":"because"}`+"\n", id, v)
+		}
+		return s
+	}
+
+	It("merges, stamps today's UTC date and prints the disputed pairs as source and target", func() {
+		pairsFile := write("pairs.jsonl", pairs("a", "b"))
+		opus := write("opus.jsonl", judged(map[string]string{"a": "related", "b": "related"}))
+		sonnet := write("sonnet.jsonl", judged(map[string]string{"a": "related", "b": "unrelated"}))
+		out := filepath.Join(dir, "labels.yaml")
+		code := run([]string{"labels", "merge", "--pairs", pairsFile, "--judge", "opus=" + opus, "--judge", "sonnet=" + sonnet, "--out", out}, &stdout, &stderr)
+		Expect(code).To(Equal(0), stderr.String())
+		Expect(stdout.String()).To(Equal("b\tt\n"))
+		raw, err := os.ReadFile(out)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(raw)).To(ContainSubstring("2026-11-24"))
+	})
+
+	It("exits 1, prints nothing and leaves --out byte-identical when a judge misses a pair", func() {
+		pairsFile := write("pairs.jsonl", pairs("a", "b"))
+		opus := write("opus.jsonl", judged(map[string]string{"a": "related"}))
+		out := write("labels.yaml", "prior\n")
+		code := run([]string{"labels", "merge", "--pairs", pairsFile, "--judge", "opus=" + opus, "--out", out}, &stdout, &stderr)
+		Expect(code).To(Equal(1))
+		Expect(stderr.String()).To(ContainSubstring("b -> t"))
+		Expect(stdout.String()).To(BeEmpty())
+		raw, err := os.ReadFile(out)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(raw)).To(Equal("prior\n"))
+	})
+
+	It("exits 1 for an --input that does not exist", func() {
+		pairsFile := write("pairs.jsonl", pairs("a"))
+		opus := write("opus.jsonl", judged(map[string]string{"a": "related"}))
+		out := filepath.Join(dir, "labels.yaml")
+		code := run([]string{"labels", "merge", "--input", filepath.Join(dir, "absent.yaml"), "--pairs", pairsFile, "--judge", "opus=" + opus, "--out", out}, &stdout, &stderr)
+		Expect(code).To(Equal(1))
+		Expect(stderr.String()).To(ContainSubstring("absent.yaml"))
+		Expect(out).NotTo(BeAnExistingFile())
+	})
+
+	It("exits 1 naming a --judge file that does not exist and leaves --out byte-identical", func() {
+		pairsFile := write("pairs.jsonl", pairs("a"))
+		absent := filepath.Join(dir, "absent-judge.jsonl")
+		out := write("labels.yaml", "prior\n")
+		code := run([]string{"labels", "merge", "--pairs", pairsFile, "--judge", "opus=" + absent, "--out", out}, &stdout, &stderr)
+		Expect(code).To(Equal(1))
+		Expect(stderr.String()).To(ContainSubstring(absent))
+		Expect(stdout.String()).To(BeEmpty())
+		raw, err := os.ReadFile(out)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(raw)).To(Equal("prior\n"))
+	})
+
+	DescribeTable("usage errors",
+		func(args []string, stderrHas string) {
+			Expect(run(append([]string{"labels", "merge"}, args...), &stdout, &stderr)).To(Equal(2))
+			Expect(stderr.String()).To(ContainSubstring(stderrHas))
+		},
+		Entry("no --pairs", []string{"--judge", "opus=f", "--out", "o"}, "missing required flag --pairs"),
+		Entry("no --out", []string{"--pairs", "p", "--judge", "opus=f"}, "missing required flag --out"),
+		Entry("no --judge", []string{"--pairs", "p", "--out", "o"}, "at least one --judge"),
+		Entry("a --judge without a file", []string{"--pairs", "p", "--out", "o", "--judge", "opus"}, "NAME=FILE"),
+		Entry("a --judge named human", []string{"--pairs", "p", "--out", "o", "--judge", "human=f"}, "opus, sonnet"),
+		Entry("a --judge named twice", []string{"--pairs", "p", "--out", "o", "--judge", "opus=f", "--judge", "opus=g"}, `"opus" is given twice`),
+		Entry("an unknown flag", []string{"--nope"}, "flag provided but not defined"),
+		Entry("a stray argument", []string{"--pairs", "p", "--out", "o", "--judge", "opus=f", "extra"}, `unexpected argument "extra"`),
+	)
+
+	DescribeTable("usage errors above merge",
+		func(args []string, stderrHas string) {
+			Expect(run(args, &stdout, &stderr)).To(Equal(2))
+			Expect(stderr.String()).To(ContainSubstring(stderrHas))
+		},
+		Entry("no labels subcommand", []string{"labels"}, "Usage: crosswalk-eval labels merge"),
+		Entry("unknown labels subcommand", []string{"labels", "bogus"}, `unknown labels subcommand "bogus"`),
+	)
 })

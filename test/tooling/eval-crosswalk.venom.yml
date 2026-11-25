@@ -86,6 +86,68 @@ testcases:
         assertions:
           - result.systemout ShouldContainSubstring nocache=yes
 
+  - name: LABEL_INPUT=1 dumps both catalogs' controls into the run directory
+    steps:
+      - type: exec
+        script: rm -rf "{{.root}}/.test-output/eval/tooling-run/labelinput" && mkdir -p "{{.root}}/.test-output/eval/tooling-run/labelinput"
+      - type: run-eval-crosswalk
+        root: "{{.root}}"
+        work: "{{.root}}/.test-output/eval/tooling-run/labelinput"
+        env: "PROFILE=synth-run LABEL=t1 LABEL_INPUT=1"
+        assertions:
+          - result.systemout ShouldContainSubstring exit=0
+      - type: exec
+        script: |
+          w="{{.root}}/.test-output/eval/tooling-run/labelinput"
+          d="$w/out/synth-run/t1"
+          echo "source_dump=$(jq -r '.catalog_id' "$d/controls-source.json")"
+          echo "target_dump=$(jq -r '.catalog_id' "$d/controls-target.json")"
+          grep -q -- '--json catalog controls -- cat-' "$w/argv.log" && echo "cli=called"
+          echo "ids_differ=$([ "$(jq -r '.catalog_id' "$d/controls-source.json")" != "$(jq -r '.catalog_id' "$d/controls-target.json")" ] && echo yes || echo no)"
+        assertions:
+          - result.systemout ShouldContainSubstring source_dump=cat-
+          - result.systemout ShouldContainSubstring target_dump=cat-
+          - result.systemout ShouldContainSubstring cli=called
+          - result.systemout ShouldContainSubstring ids_differ=yes
+
+  - name: LABEL_INPUT=1 with JOB dumps the job's own catalogs from its run status
+    steps:
+      - type: exec
+        script: rm -rf "{{.root}}/.test-output/eval/tooling-run/labelinputjob" && mkdir -p "{{.root}}/.test-output/eval/tooling-run/labelinputjob"
+      - type: run-eval-crosswalk
+        root: "{{.root}}"
+        work: "{{.root}}/.test-output/eval/tooling-run/labelinputjob"
+        env: "PROFILE=synth-run LABEL=t1 JOB=job-synth LABEL_INPUT=1"
+        assertions:
+          - result.systemout ShouldContainSubstring exit=0
+      - type: exec
+        script: |
+          d="{{.root}}/.test-output/eval/tooling-run/labelinputjob/out/synth-run/t1"
+          echo "source_dump=$(jq -r '.catalog_id' "$d/controls-source.json")"
+          echo "target_dump=$(jq -r '.catalog_id' "$d/controls-target.json")"
+        assertions:
+          - result.systemout ShouldContainSubstring source_dump=cat-src
+          - result.systemout ShouldContainSubstring target_dump=cat-tgt
+
+  - name: without LABEL_INPUT no controls dump is written or requested
+    steps:
+      - type: exec
+        script: rm -rf "{{.root}}/.test-output/eval/tooling-run/nolabelinput" && mkdir -p "{{.root}}/.test-output/eval/tooling-run/nolabelinput"
+      - type: run-eval-crosswalk
+        root: "{{.root}}"
+        work: "{{.root}}/.test-output/eval/tooling-run/nolabelinput"
+        env: "PROFILE=synth-run LABEL=t1"
+        assertions:
+          - result.systemout ShouldContainSubstring exit=0
+      - type: exec
+        script: |
+          w="{{.root}}/.test-output/eval/tooling-run/nolabelinput"
+          echo "dump_files=$(find "$w/out/synth-run/t1" -name 'controls-*' | wc -l)"
+          echo "controls_calls=$(grep -c 'catalog controls' "$w/argv.log" || true)"
+        assertions:
+          - result.systemout ShouldContainSubstring dump_files=0
+          - result.systemout ShouldContainSubstring controls_calls=0
+
   - name: human mode prints the report, llm mode only the summary line
     steps:
       - type: exec

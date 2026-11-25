@@ -4,6 +4,8 @@
 //
 //	crosswalk-eval subset   --root R --profile P --out FILE   (prints the absolute path of the profile's target catalog)
 //	crosswalk-eval discover --source S --target T [--json]
+//	crosswalk-eval label-input --run DIR   (prints JSONL of each candidate pair with both controls' text)
+//	crosswalk-eval labels merge [--input L] --pairs P --judge NAME=FILE... --out L   (prints disputed pairs)
 //	crosswalk-eval score    --root R --profile P --subset FILE --mappings M
 //	                        --candidates C --status S [--baseline B] [--label L] --out DIR
 package main
@@ -16,7 +18,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/complytime-labs/crosscodex/test/eval/crosswalk"
 )
@@ -24,13 +28,16 @@ import (
 // commit is set at build time: -ldflags "-X main.commit=<sha>".
 var commit = "unknown"
 
+// clock is the time source for new label dates; tests replace it.
+var clock = time.Now
+
 const (
 	exitOK       = 0
 	exitInput    = 1
 	exitUsage    = 2
 	dirMode      = 0o755
 	fileMode     = 0o644
-	topUsage     = "Usage: crosswalk-eval <subset|discover|score> [flags]"
+	topUsage     = "Usage: crosswalk-eval <subset|discover|label-input|labels|score> [flags]"
 	notAvailable = "n/a"
 	unlabelled   = "unlabelled"
 )
@@ -50,6 +57,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = runSubset(args[1:], stdout, stderr)
 	case "discover":
 		err = runDiscover(args[1:], stdout, stderr)
+	case "label-input":
+		err = runLabelInput(args[1:], stdout, stderr)
+	case "labels":
+		err = runLabels(args[1:], stdout, stderr)
 	case "score":
 		err = runScore(args[1:], stdout, stderr)
 	case "-h", "--help", "help":
@@ -219,6 +230,82 @@ func runDiscover(args []string, stdout, stderr io.Writer) error {
 			r.Rel, r.ResourceTitle, r.ResourceUUID, r.Mode, r.Links, r.Identifiers, r.Resolved, rate)
 	}
 	return tw.Flush()
+}
+
+func runLabelInput(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("label-input", flag.ContinueOnError)
+	runDir := fs.String("run", "", "run directory holding candidates.json, controls-source.json and controls-target.json (required)")
+	if err := parse(fs, args, stderr, map[string]*string{"run": runDir}); err != nil {
+		return err
+	}
+	return crosswalk.LabelInput(*runDir, stdout)
+}
+
+const labelsUsage = "Usage: crosswalk-eval labels merge [--input L] --pairs P --judge NAME=FILE [--judge NAME=FILE] --out L"
+
+func runLabels(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 || args[0] != "merge" {
+		if len(args) > 0 && args[0] != "-h" && args[0] != "--help" {
+			fmt.Fprintf(stderr, "unknown labels subcommand %q\n", args[0])
+		}
+		fmt.Fprintln(stderr, labelsUsage)
+		if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
+			return flag.ErrHelp
+		}
+		return &usageError{}
+	}
+	return runLabelsMerge(args[1:], stdout, stderr)
+}
+
+// judgeFlags collects repeated --judge NAME=FILE flags.
+type judgeFlags map[string]string
+
+func (j judgeFlags) String() string { return fmt.Sprint(map[string]string(j)) }
+
+func (j judgeFlags) Set(v string) error {
+	name, file, ok := strings.Cut(v, "=")
+	if !ok || name == "" || file == "" {
+		return fmt.Errorf("%q must be NAME=FILE, for example opus=opus.jsonl", v)
+	}
+	if name != "opus" && name != "sonnet" {
+		return fmt.Errorf("judge %q must be one of opus, sonnet: human entries are kept from --input", name)
+	}
+	if _, dup := j[name]; dup {
+		return fmt.Errorf("judge %q is given twice", name)
+	}
+	j[name] = file
+	return nil
+}
+
+// runLabelsMerge merges judge files into a labels file and prints the pairs
+// the judges disputed, one "source<TAB>target" per line, after --out is
+// written.
+func runLabelsMerge(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("labels merge", flag.ContinueOnError)
+	input := fs.String("input", "", "existing labels YAML to merge into; omit to start from no labels")
+	pairs := fs.String("pairs", "", "label-input JSONL naming the pairs every judge must cover (required)")
+	judges := judgeFlags{}
+	fs.Var(judges, "judge", "a model judge's JSONL verdicts as NAME=FILE, NAME being opus or sonnet; repeat for each judge (required)")
+	out := fs.String("out", "", "labels YAML to write, atomically (required)")
+	if err := parse(fs, args, stderr, map[string]*string{"pairs": pairs, "out": out}); err != nil {
+		return err
+	}
+	if len(judges) == 0 {
+		fmt.Fprintln(stderr, "labels merge needs at least one --judge NAME=FILE")
+		fs.Usage()
+		return &usageError{}
+	}
+	disputed, err := crosswalk.MergeLabelFiles(crosswalk.MergeRequest{
+		Existing: *input, Pairs: *pairs, Judges: judges, Out: *out,
+		Date: clock().UTC().Format("2006-01-02"),
+	})
+	if err != nil {
+		return err
+	}
+	for _, p := range disputed {
+		fmt.Fprintf(stdout, "%s\t%s\n", p.SourceID, p.TargetID)
+	}
+	return nil
 }
 
 func runScore(args []string, stdout, stderr io.Writer) error {
