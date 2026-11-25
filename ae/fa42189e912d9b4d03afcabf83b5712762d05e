@@ -1,0 +1,27 @@
+internal/catalog/service.go
+  s_716be8e6f6d133::t_55526438b9ceee 355
+  s_716be8e6f6d133::t_467d8777bb73bd 331-334,378-380,382-384
+pkg/oscal/interface.go
+  s_716be8e6f6d133::t_467d8777bb73bd 34-36
+internal/catalog/ingestion_parse_bdd_test.go
+  s_716be8e6f6d133::t_3eedf412b0851e 211-276,279-339
+  s_716be8e6f6d133::t_f0a70ba821f497 277-278
+internal/catalog/structuring.go
+  s_716be8e6f6d133::t_467d8777bb73bd 59-62,78,80-87,94,102-110,116-124,134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "aefa42189e912d9b4d03afcabf83b5712762d05e",
+  "prompts": {},
+  "sessions": {
+    "s_716be8e6f6d133": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "422310a8-cbba-4c80-ad5a-6a1823316b83",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
