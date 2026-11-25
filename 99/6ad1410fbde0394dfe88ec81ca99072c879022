@@ -1,0 +1,21 @@
+deploy/compose.ingestion.yaml
+  s_716be8e6f6d133::t_e844ff24eafd90 33,35
+README.md
+  s_716be8e6f6d133::t_e844ff24eafd90 19,433
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "996ad1410fbde0394dfe88ec81ca99072c879022",
+  "prompts": {},
+  "sessions": {
+    "s_716be8e6f6d133": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "422310a8-cbba-4c80-ad5a-6a1823316b83",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
