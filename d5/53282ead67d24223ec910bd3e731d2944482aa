@@ -1,0 +1,75 @@
+test/eval/crosswalk/cmd/crosswalk-eval/main_bdd_test.go
+  s_e551c7f8f4d977::t_f5380f0a42fa94 6,9,128-269
+test/eval/crosswalk/labelsmerge_property_test.go
+  s_51f263053339cb::t_7af41b70dc98a3 5-6,82,110-113
+  s_51f263053339cb::t_bddc1873098ab6 1-4,7-81,83-109,114-137
+test/tooling/lib/fake-crosscodex.sh
+  s_e551c7f8f4d977::t_f5380f0a42fa94 11-12,33-34
+  s_e551c7f8f4d977::t_ea0dadf63bcd14 35
+test/eval/crosswalk/labelsmerge_bdd_test.go
+  s_51f263053339cb::t_acd55026f91974 186-195,206-210
+  s_51f263053339cb::t_4c37624d56865c 164
+  s_51f263053339cb::t_a0aca21be59f43 346-401
+  s_51f263053339cb::t_dba85a8996d491 99-114,196-205
+  s_51f263053339cb::t_bddc1873098ab6 1-98,115-163,165-185,211-345
+test/eval/crosswalk/cmd/crosswalk-eval/main.go
+  s_e551c7f8f4d977::t_f5380f0a42fa94 7-8,21,23,31-33,40,60-63,235-309
+  s_e551c7f8f4d977::t_5ac0fb4abd4f14 310
+README.md
+  s_e551c7f8f4d977::t_f5380f0a42fa94 27,1176
+test/eval/crosswalk/labelsmerge.go
+  s_51f263053339cb::t_8f69d1abc9302c 185-187
+  s_51f263053339cb::t_54f79c90c62b01 72,75,101-102
+  s_51f263053339cb::t_aade23f985262d 499-500
+  s_51f263053339cb::t_68a8beba208c73 73-74,77,475-476,484-498
+  s_51f263053339cb::t_a922e7b040a960 214-254
+  s_51f263053339cb::t_72928bec8487b0 1-71,76,78-100,103-184,188-213,255-474,477-483,501-528
+test/eval/crosswalk/README.md
+  s_e551c7f8f4d977::t_f5380f0a42fa94 97-146,159-161
+test/eval/crosswalk/labelinput.go
+  s_51f263053339cb::t_1ffb4723298fbf 42,45,75,103
+  s_51f263053339cb::t_68a8beba208c73 128,132-133,136
+  s_51f263053339cb::t_c8d398070f8c54 1-41,43-44,46-74,76-102,104-127,129-131,134-135,137-153
+test/eval/crosswalk/labelinput_bdd_test.go
+  s_51f263053339cb::t_b23a914f602a96 1-153
+.taskfiles/eval.yml
+  s_e551c7f8f4d977::t_f5380f0a42fa94 19,40
+test/eval/crosswalk/labelsmerge_fuzz_test.go
+  s_51f263053339cb::t_7af41b70dc98a3 1-21,26-28,30-57
+  s_51f263053339cb::t_dba85a8996d491 24-25
+  s_51f263053339cb::t_54f79c90c62b01 29
+  s_51f263053339cb::t_47fa099d428471 22-23
+test/tooling/eval-crosswalk.venom.yml
+  s_e551c7f8f4d977::t_f5380f0a42fa94 89-150
+test/eval/crosswalk/export_test.go
+  s_51f263053339cb::t_a0aca21be59f43 1-4
+test/eval/crosswalk/run.sh
+  s_e551c7f8f4d977::t_f5380f0a42fa94 17-20,44,233-247
+  s_e551c7f8f4d977::t_10825be260d5b3 248
+test/eval/crosswalk/labels.go
+  s_e551c7f8f4d977::t_f5380f0a42fa94 63-85,96-98,101,103-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d553282ead67d24223ec910bd3e731d2944482aa",
+  "prompts": {},
+  "sessions": {
+    "s_51f263053339cb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1ed4a700-2209-4f05-a54a-7a3c4228c5f4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_e551c7f8f4d977": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5616a339-f6e2-482b-bd49-e4597b21a7fe",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
