@@ -1,0 +1,42 @@
+api/proto/crosscodex/v1/gateway.proto
+  s_716be8e6f6d133::t_55c084b1fb2693 495,625-626
+internal/gateway/backend/ingestion_client.go
+  s_716be8e6f6d133::t_595db514d22b2b 29
+  s_716be8e6f6d133::t_1cffaf94f90712 183-185
+internal/gateway/stream.go
+  s_716be8e6f6d133::t_8e3e0a68fc5939 74
+README.md
+  s_716be8e6f6d133::t_1cffaf94f90712 433,439
+internal/gateway/document.go
+  s_716be8e6f6d133::t_8e3e0a68fc5939 34
+  s_716be8e6f6d133::t_1cffaf94f90712 165-168
+internal/gateway/gateway_bdd_test.go
+  s_716be8e6f6d133::t_8e3e0a68fc5939 1686-1687,1693
+internal/gateway/backend/ingestion_client_bdd_test.go
+  s_716be8e6f6d133::t_9250196e30ce95 383,394-396
+internal/gateway/document_attestation_bdd_test.go
+  s_716be8e6f6d133::t_746ccfc4d06636 162-178
+  s_716be8e6f6d133::t_9250196e30ce95 18
+docs/dev/service-runtime.md
+  s_716be8e6f6d133::t_1cffaf94f90712 216,218
+cmd/crosscodex/catalog.go
+  s_716be8e6f6d133::t_8e3e0a68fc5939 131-134
+cmd/crosscodex/catalog_import_bdd_test.go
+  s_716be8e6f6d133::t_8e3e0a68fc5939 241,255
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "f91cdd8aef9eaf68d290c6f4af080904047a7c86",
+  "prompts": {},
+  "sessions": {
+    "s_716be8e6f6d133": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "422310a8-cbba-4c80-ad5a-6a1823316b83",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
