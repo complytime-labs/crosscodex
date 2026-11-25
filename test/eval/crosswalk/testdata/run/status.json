@@ -2,6 +2,11 @@
   "job_id": "job-synth",
   "status": "JOB_STATUS_COMPLETED",
   "analyzers": ["relationship"],
+  "analysis": {
+    "source_catalog": {"catalog_id": "cat-src", "name": "Source A (eval subset)", "version": "1", "control_count": 2, "found": true, "lookup_error": "", "snapshot": true},
+    "target_catalog": {"catalog_id": "cat-tgt", "name": "Synthetic", "version": "1", "control_count": 6, "found": true, "lookup_error": "", "snapshot": true},
+    "direction": "source_to_target"
+  },
   "stages": [
     {"name": "embedding", "status": "JOB_STATUS_COMPLETED", "started_at": "2026-11-08T10:00:00Z", "completed_at": "2026-11-08T10:00:01.5Z"},
     {"name": "relationship", "status": "JOB_STATUS_COMPLETED", "started_at": "2026-11-08T10:00:01.5Z", "completed_at": "2026-11-08T10:00:04Z"}

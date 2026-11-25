@@ -10,10 +10,14 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
+	"io"
+	"log/slog"
 	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -21,6 +25,8 @@ import (
 
 	connectrpc "connectrpc.com/connect"
 	"go.opentelemetry.io/otel"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1/crosscodexv1connect"
@@ -33,6 +39,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/attestation"
 	"github.com/complytime-labs/crosscodex/pkg/authn"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 	pkigen "github.com/complytime-labs/crosscodex/pkg/tlsconfig/pki"
 )
@@ -514,6 +521,134 @@ func (s *capturingJobStore) CreateJob(_ context.Context, job *pipeline.Job) erro
 	return nil
 }
 
+// tenantCatalogs answers CatalogSnapshot with the catalogs of each tenant
+// ("<tenant>/<catalog>"); any other is pipeline.ErrCatalogNotFound, as RLS
+// makes another tenant's catalog.
+type tenantCatalogs map[string]bool
+
+func (t tenantCatalogs) CatalogSnapshot(_ context.Context, tenantID, catalogID string) (*pb.CatalogSnapshot, error) {
+	if !t[tenantID+"/"+catalogID] {
+		return nil, fmt.Errorf("catalog %s: %w", catalogID, pipeline.ErrCatalogNotFound)
+	}
+	return &pb.CatalogSnapshot{CatalogId: catalogID}, nil
+}
+
+// fixedCatalogControls answers every Controls call with controls.
+type fixedCatalogControls []*pb.Control
+
+func (f fixedCatalogControls) Controls(context.Context, string, string) ([]*pb.Control, error) {
+	return f, nil
+}
+
+var _ = Describe("localPipelineBackend.ListCatalogControls", func() {
+	b := &localPipelineBackend{
+		catalogNames:    tenantCatalogs{"embedded/cat-1": true, "other/cat-2": true},
+		catalogControls: fixedCatalogControls{{ControlId: "cat-1/ac-2", Title: "Account Management", Statement: "The organization:"}},
+		logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	request := func(catalogID string) *connectrpc.Request[pb.ListCatalogControlsRequest] {
+		return connectrpc.NewRequest(&pb.ListCatalogControlsRequest{
+			TenantContext: &pb.TenantContext{TenantId: "embedded"}, CatalogId: catalogID,
+		})
+	}
+	var ctx context.Context
+	BeforeEach(func() {
+		var err error
+		ctx, err = tenant.WithTenant(context.Background(), "embedded")
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("lists the controls of a catalog of the caller's tenant", func() {
+		resp, err := b.ListCatalogControls(ctx, request("cat-1"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Msg.GetControls()).To(HaveLen(1))
+		Expect(resp.Msg.GetControls()[0].GetStatement()).To(Equal("The organization:"))
+	})
+
+	It("answers another tenant's catalog and an unknown one with the same NotFound", func() {
+		_, theirs := b.ListCatalogControls(ctx, request("cat-2"))
+		_, unknown := b.ListCatalogControls(ctx, request("cat-3"))
+		Expect(connectrpc.CodeOf(theirs)).To(Equal(connectrpc.CodeNotFound))
+		Expect(strings.ReplaceAll(theirs.Error(), "cat-2", "<id>")).To(Equal(strings.ReplaceAll(unknown.Error(), "cat-3", "<id>")))
+	})
+})
+
+// brokenPromptConfig is a prompt configuration whose custom layer path is
+// a file, not a directory, so prompt.NewRegistry refuses it.
+func brokenPromptConfig() config.PromptConfig {
+	file := filepath.Join(GinkgoT().TempDir(), "not-a-dir.yaml")
+	Expect(os.WriteFile(file, []byte("name: x\n"), 0o600)).To(Succeed())
+	return config.PromptConfig{LayerPaths: []string{file}, Layers: config.PromptLayerConfig{Enabled: true}}
+}
+
+// controlsByCatalog serves each catalog's controls by catalog ID.
+type controlsByCatalog map[string][]*pb.Control
+
+func (c controlsByCatalog) Controls(_ context.Context, _, catalogID string) ([]*pb.Control, error) {
+	return c[catalogID], nil
+}
+
+// noJobsStore has no job: GetJob is pipeline.ErrNotFound; every other
+// pipeline.Store method panics through the nil embed.
+type noJobsStore struct{ pipeline.Store }
+
+func (noJobsStore) GetJob(context.Context, string) (*pipeline.Job, error) {
+	return nil, pipeline.ErrNotFound
+}
+
+var _ = Describe("localPipelineBackend.RenderPrompt", func() {
+	var ctx context.Context
+	var b *localPipelineBackend
+	BeforeEach(func() {
+		var err error
+		ctx, err = tenant.WithTenant(context.Background(), "embedded")
+		Expect(err).NotTo(HaveOccurred())
+		prompts, err := prompt.NewRegistry(config.PromptConfig{Layers: config.PromptLayerConfig{Enabled: true}})
+		Expect(err).NotTo(HaveOccurred())
+		b = &localPipelineBackend{
+			store:        noJobsStore{},
+			catalogNames: tenantCatalogs{"embedded/cat-1": true, "embedded/cat-2": true, "other/cat-3": true},
+			catalogControls: controlsByCatalog{
+				"cat-1": {{ControlId: "cat-1/ac-2", CatalogId: "cat-1", Title: "Account Management", Statement: "Manage accounts."}},
+				"cat-2": {{ControlId: "cat-2/po.1", CatalogId: "cat-2", Statement: "Define security requirements."}},
+				"cat-3": {{ControlId: "cat-3/x", CatalogId: "cat-3", Statement: "Theirs."}},
+			},
+			prompts:  prompts,
+			analysis: config.AnalysisConfig{Relationship: config.RelationshipConfig{MaxSourceChars: 1500, MaxTargetChars: 800}},
+			logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		}
+	})
+	request := func(sourceCatalog, sourceControl, jobID string) *connectrpc.Request[pb.RenderPromptRequest] {
+		return connectrpc.NewRequest(&pb.RenderPromptRequest{
+			TenantContext: &pb.TenantContext{TenantId: "embedded"}, Analyzer: "relationship", JobId: jobID,
+			SourceCatalogId: sourceCatalog, SourceControlId: sourceControl, TargetCatalogId: "cat-2", TargetControlId: "cat-2/po.1",
+		})
+	}
+
+	It("renders a pair's prompt without the daemon, as the daemon's pipeline does", func() {
+		resp, err := b.RenderPrompt(ctx, request("cat-1", "cat-1/ac-2", ""))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Msg.GetPromptName()).To(Equal("relationship"))
+		Expect(resp.Msg.GetMessages()).To(HaveLen(2))
+		Expect(resp.Msg.GetMessages()[1].GetContent()).To(And(ContainSubstring("Manage accounts."), ContainSubstring("Define security requirements.")))
+	})
+
+	It("loads the prompt layers on first render, refusing then with the layer's error when they do not load", func() {
+		b.prompts = nil
+		b.promptCfg = brokenPromptConfig()
+		_, err := b.RenderPrompt(ctx, request("cat-1", "cat-1/ac-2", ""))
+		Expect(connectrpc.CodeOf(err)).To(Equal(connectrpc.CodeFailedPrecondition))
+		Expect(err.Error()).To(And(ContainSubstring("loading layer"), ContainSubstring("crosscodex prompt layer")))
+	})
+
+	It("answers another tenant's control and an unknown job with the same NotFound", func() {
+		_, theirs := b.RenderPrompt(ctx, request("cat-3", "cat-3/x", ""))
+		_, unknownJob := b.RenderPrompt(ctx, request("", "cat-1/ac-2", "job-9"))
+		Expect(connectrpc.CodeOf(theirs)).To(Equal(connectrpc.CodeNotFound))
+		Expect(theirs.Error()).To(Equal(unknownJob.Error()))
+	})
+})
+
 var _ = Describe("localPipelineBackend.CreateJob", func() {
 	// Safety mechanism: embedded mode has no executor, so a stored job would
 	// stay PENDING forever (#212).
@@ -589,6 +724,19 @@ var _ = Describe("buildEmbeddedService", func() {
 		_, _, _, err := buildEmbeddedService(context.Background(), cfg, "", nil)
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("database not configured"))
+	})
+
+	// Only prompt render reads the prompt layers: a layer that does not
+	// load must not stop embedded mode serving run status and the rest.
+	// The DSN is never reachable, so startup gets as far as the database.
+	It("starts past a prompt layer that does not load", func() {
+		cfg := &config.Config{}
+		cfg.Database.DSN = "postgres://unused@127.0.0.1:1/unused?sslmode=disable"
+		cfg.Prompt = brokenPromptConfig()
+		_, _, _, err := buildEmbeddedService(context.Background(), cfg, "", nil)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).NotTo(ContainSubstring("prompt"))
+		Expect(err.Error()).To(ContainSubstring("migrat"))
 	})
 
 	// The DSN is never dialled: the AdminService's retention policy is
@@ -732,8 +880,19 @@ var _ = Describe("embedded attestation key guard", func() {
 // default); every other pipeline.Store method panics through the nil embed.
 type failedJobStore struct {
 	pipeline.Store
-	job    *pipeline.Job
-	stages []*pipeline.Stage
+	job      *pipeline.Job
+	stages   []*pipeline.Stage
+	progress map[string]pipeline.StageProgress
+}
+
+// GetStageProgress returns the stored progress (none by default); a fresh
+// map each call, as the PGStore scans one.
+func (s *failedJobStore) GetStageProgress(context.Context, string) (map[string]pipeline.StageProgress, error) {
+	out := make(map[string]pipeline.StageProgress, len(s.progress))
+	for name, p := range s.progress {
+		out[name] = p
+	}
+	return out, nil
 }
 
 func (s *failedJobStore) GetJob(context.Context, string) (*pipeline.Job, error) { return s.job, nil }
@@ -805,6 +964,40 @@ var _ = Describe("GetJob in embedded mode", func() {
 		Expect(job.GetStages()[0].GetPanel().GetModels()[0].GetAlias()).To(Equal("fast"))
 		Expect(job.GetStages()[0].GetPanel().GetModels()[0].GetObservedModel()).To(Equal("model-x"))
 		Expect(job.GetStages()[1].GetPanel()).To(BeNil())
+	})
+
+	It("returns each stage's stored task progress as the daemon does, and none for a stage without a row", func() {
+		lastSuccess := time.Date(2026, 11, 24, 9, 30, 0, 0, time.UTC)
+		store := &failedJobStore{
+			job:    &pipeline.Job{JobID: "job-1", TenantID: "embedded", Status: pipeline.JobStatusRunning, Config: []byte(`{}`)},
+			stages: []*pipeline.Stage{{StageName: "classify"}, {StageName: "relationship"}, {StageName: "synthesis"}},
+			progress: map[string]pipeline.StageProgress{
+				"classify":     {Total: 10, Done: 9, Succeeded: 8, Failed: 1, Retried: 3, CacheHits: 2, LastSuccessAt: &lastSuccess},
+				"relationship": {Total: 4},
+			},
+		}
+		embedded, err := (&backendJobClient{backend: &localPipelineBackend{store: store}}).
+			GetJob(context.Background(), connectrpc.NewRequest(&pb.GetJobRequest{JobId: "job-1"}))
+		Expect(err).NotTo(HaveOccurred())
+
+		daemon := pipeline.New(store, nil, nil, nil, pipeline.Attestors{}, nil, nil, nil, config.PipelineConfig{}, nil)
+		DeferCleanup(func() { Expect(daemon.Stop(context.Background())).To(Succeed()) })
+		ctx, err := tenant.WithTenant(context.Background(), "embedded")
+		Expect(err).NotTo(HaveOccurred())
+		fromDaemon, err := daemon.GetJob(ctx, connectrpc.NewRequest(&pb.GetJobRequest{JobId: "job-1"}))
+		Expect(err).NotTo(HaveOccurred())
+
+		got, want := embedded.Msg.GetJob().GetStages(), fromDaemon.Msg.GetJob().GetStages()
+		Expect(got).To(HaveLen(3))
+		Expect(want).To(HaveLen(3))
+		Expect(proto.Equal(got[0].GetProgress(), &pb.StageProgress{TasksTotal: 10, TasksDone: 9, TasksSucceeded: 8,
+			TasksFailed: 1, TasksRetried: 3, TasksCacheHits: 2, LastSuccessAt: timestamppb.New(lastSuccess)})).
+			To(BeTrue(), "classify: %v", got[0].GetProgress())
+		Expect(got[2].GetProgress()).To(BeNil())
+		for i := range got {
+			Expect(proto.Equal(got[i].GetProgress(), want[i].GetProgress())).To(BeTrue(),
+				"stage %s: embedded %v, daemon %v", got[i].GetStageName(), got[i].GetProgress(), want[i].GetProgress())
+		}
 	})
 
 	It("shows an unreadable stored record as not recorded, with no models, as the daemon does", func() {

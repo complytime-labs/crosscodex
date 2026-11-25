@@ -278,6 +278,17 @@ func pairAnalyzerParameters(jobID string, controls []*pb.Control, frameworks map
 	return params, nil
 }
 
+// promptFramework is the framework the pair prompts give a control of
+// catalogID, one of the job's catalogs cats: the catalog's name as the job
+// recorded it at creation, so a job resumed after a re-import renamed a
+// catalog prompts as it did before, else its current name from snapshot.
+func promptFramework(snapshot *pb.CatalogSnapshot, cats jobconfig.Catalogs, catalogID string) string {
+	if label := cats.LabelOf(catalogID); label.Recorded {
+		return label.Name
+	}
+	return snapshot.GetName()
+}
+
 // runAnalysis builds the DAG, checks that it runs the analyzers the job's
 // stages were created with, determines incomplete analyzers, and executes
 // them.
@@ -419,10 +430,7 @@ func (s *Service) runAnalysis(ctx context.Context, job *Job, stages []*Stage, co
 				span.SetStatus(codes.Error, err.Error())
 				return err
 			}
-			frameworks[catalogID] = current.GetName()
-			if label := cats.LabelOf(catalogID); label.Recorded {
-				frameworks[catalogID] = label.Name
-			}
+			frameworks[catalogID] = promptFramework(current, cats, catalogID)
 		}
 	}
 

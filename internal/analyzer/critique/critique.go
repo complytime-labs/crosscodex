@@ -222,7 +222,7 @@ func (a *CritiqueAnalyzer) GenerateWork(ctx context.Context, _ *pb.Control, cfg 
 		}
 		seen[v.Kind+"|"+pair] = true
 
-		messages, err := a.render(spec, v, cfg.Parameters)
+		messages, err := a.Render(spec, v, cfg.Parameters)
 		if err != nil {
 			return nil, fmt.Errorf("critique.GenerateWork: %s verdict of pair %s: %w", v.Kind, pair, err)
 		}
@@ -267,11 +267,17 @@ func (a *CritiqueAnalyzer) GenerateWork(ctx context.Context, _ *pb.Control, cfg 
 	return tasks, nil
 }
 
-// render builds the system and user messages that ask the panel to review v.
-// Every value from a catalog or a model is hardened: statements and
-// justifications with PromptText, short values with PromptValue, contexts
-// with PromptContext. Each stays inside its data tag.
-func (a *CritiqueAnalyzer) render(spec *prompt.PromptSpec, v ProposedVerdict, params map[string]string) ([]llmclient.ChatMessage, error) {
+// Render builds the system and user messages that ask the panel to review v,
+// the ones GenerateWork sends for it: spec is the prompt the registry
+// resolves for PromptName(), and params the AnalyzerConfig parameters
+// GenerateWork is given. Every value from a catalog or a model is hardened:
+// statements and justifications with PromptText, short values with
+// PromptValue, contexts with PromptContext. Each stays inside its data tag.
+// v.Kind is not checked here (GenerateWork refuses an unknown kind first): a
+// kind other than KindRequires is labelled a relationship type. A verdict
+// whose source or target text is missing or empty returns an error wrapping
+// intanalyzer.ErrMissingControlText.
+func (a *CritiqueAnalyzer) Render(spec *prompt.PromptSpec, v ProposedVerdict, params map[string]string) ([]llmclient.ChatMessage, error) {
 	sourceKey := "source_text_" + v.SourceControlID
 	targetKey := "target_text_" + v.TargetControlID
 	sourceText := intanalyzer.PromptText(params[sourceKey], a.cfg.MaxSourceChars)

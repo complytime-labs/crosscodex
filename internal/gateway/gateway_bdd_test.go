@@ -14,6 +14,8 @@ import (
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	"github.com/complytime-labs/crosscodex/internal/gateway"
@@ -112,6 +114,9 @@ type mockPipeline struct {
 	listJobsFn  func(context.Context, *connect.Request[pb.ListJobsRequest]) (*connect.Response[pb.ListJobsResponse], error)
 	cancelJobFn func(context.Context, *connect.Request[pb.CancelJobRequest]) (*connect.Response[pb.CancelJobResponse], error)
 	retryJobFn  func(context.Context, *connect.Request[pb.RetryJobRequest]) (*connect.Response[pb.RetryJobResponse], error)
+
+	listCatalogControlsFn func(context.Context, *connect.Request[pb.ListCatalogControlsRequest]) (*connect.Response[pb.ListCatalogControlsResponse], error)
+	renderPromptFn        func(context.Context, *connect.Request[pb.RenderPromptRequest]) (*connect.Response[pb.RenderPromptResponse], error)
 }
 
 func (m *mockPipeline) CreateJob(ctx context.Context, req *connect.Request[pb.CreateJobRequest]) (*connect.Response[pb.CreateJobResponse], error) {
@@ -149,6 +154,14 @@ func (m *mockPipeline) RetryJob(ctx context.Context, req *connect.Request[pb.Ret
 		return m.retryJobFn(ctx, req)
 	}
 	return connect.NewResponse(&pb.RetryJobResponse{NewJobId: req.Msg.GetJobId()}), nil
+}
+
+func (m *mockPipeline) ListCatalogControls(ctx context.Context, req *connect.Request[pb.ListCatalogControlsRequest]) (*connect.Response[pb.ListCatalogControlsResponse], error) {
+	return orDefault(m.listCatalogControlsFn, ctx, req)
+}
+
+func (m *mockPipeline) RenderPrompt(ctx context.Context, req *connect.Request[pb.RenderPromptRequest]) (*connect.Response[pb.RenderPromptResponse], error) {
+	return orDefault(m.renderPromptFn, ctx, req)
 }
 
 // mockMappings records the request it receives and returns a configured
@@ -386,6 +399,199 @@ var _ = Describe("Catalog handlers", func() {
 	})
 })
 
+var _ = Describe("ListCatalogControls handler", func() {
+	It("sends the auth-derived TenantContext and passes the backend's response through", func() {
+		var captured *pb.ListCatalogControlsRequest
+		want := connect.NewResponse(&pb.ListCatalogControlsResponse{Controls: []*pb.Control{
+			{ControlId: "cat-1/ac-2", CatalogId: "cat-1", Title: "Account Management", Statement: "The organization:"},
+		}})
+		svc := newTestService(gateway.WithPipelineBackend(&mockPipeline{
+			listCatalogControlsFn: func(_ context.Context, req *connect.Request[pb.ListCatalogControlsRequest]) (*connect.Response[pb.ListCatalogControlsResponse], error) {
+				captured = req.Msg
+				return want, nil
+			},
+		}))
+
+		got, err := svc.ListCatalogControls(ctxWithIdentity("user-1", "real-tenant", []string{"user"}),
+			connect.NewRequest(&pb.ListCatalogControlsRequest{
+				TenantContext: &pb.TenantContext{TenantId: "spoofed-tenant"},
+				CatalogId:     "cat-1",
+			}))
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(BeIdenticalTo(want))
+		Expect(captured.GetCatalogId()).To(Equal("cat-1"))
+		Expect(captured.GetTenantContext().GetTenantId()).To(Equal("real-tenant"))
+	})
+
+	It("returns Unauthenticated when no identity in context", func() {
+		_, err := newTestService().ListCatalogControls(context.Background(),
+			connect.NewRequest(&pb.ListCatalogControlsRequest{CatalogId: "cat-1"}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
+	})
+
+	It("passes the backend's NotFound through unchanged", func() {
+		notFound := connect.NewError(connect.CodeNotFound, errors.New(`catalog "cat-9" is not a catalog of your tenant`))
+		svc := newTestService(gateway.WithPipelineBackend(&mockPipeline{
+			listCatalogControlsFn: func(context.Context, *connect.Request[pb.ListCatalogControlsRequest]) (*connect.Response[pb.ListCatalogControlsResponse], error) {
+				return nil, notFound
+			},
+		}))
+		_, err := svc.ListCatalogControls(userCtx("user-1"), connect.NewRequest(&pb.ListCatalogControlsRequest{CatalogId: "cat-9"}))
+		Expect(err).To(BeIdenticalTo(notFound))
+	})
+})
+
+var _ = Describe("RenderPrompt handler", func() {
+	rendered := connect.NewResponse(&pb.RenderPromptResponse{
+		Messages:   []*pb.PromptMessage{{Role: "system", Content: "S"}, {Role: "user", Content: "U"}},
+		PromptName: "relationship", PromptVersion: "1.3.0",
+	})
+	pipelineFor := func(captured **pb.RenderPromptRequest, getJobs *int) *mockPipeline {
+		return &mockPipeline{
+			renderPromptFn: func(_ context.Context, req *connect.Request[pb.RenderPromptRequest]) (*connect.Response[pb.RenderPromptResponse], error) {
+				*captured = req.Msg
+				return rendered, nil
+			},
+			getJobFn: func(_ context.Context, req *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
+				*getJobs++
+				return connect.NewResponse(&pb.GetJobResponse{Job: &pb.PipelineJob{
+					JobId: req.Msg.GetJobId(), Audit: &pb.AuditMetadata{CreatedBy: "user-a"},
+				}}), nil
+			},
+		}
+	}
+
+	It("sends the auth-derived TenantContext and passes the backend's response through", func() {
+		var captured *pb.RenderPromptRequest
+		var getJobs int
+		svc := newTestService(gateway.WithPipelineBackend(pipelineFor(&captured, &getJobs)))
+
+		got, err := svc.RenderPrompt(ctxWithIdentity("user-1", "real-tenant", []string{"user"}),
+			connect.NewRequest(&pb.RenderPromptRequest{
+				TenantContext: &pb.TenantContext{TenantId: "spoofed-tenant"},
+				Analyzer:      "relationship", SourceCatalogId: "cat-1", SourceControlId: "cat-1/ac-2",
+				TargetCatalogId: "cat-2", TargetControlId: "cat-2/po.1",
+			}))
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(BeIdenticalTo(rendered))
+		Expect(captured.GetTenantContext().GetTenantId()).To(Equal("real-tenant"))
+		Expect(captured.GetSourceControlId()).To(Equal("cat-1/ac-2"))
+		Expect(getJobs).To(BeZero(), "a render from catalogs alone reads no job")
+	})
+
+	It("returns Unauthenticated when no identity in context", func() {
+		_, err := newTestService().RenderPrompt(context.Background(), connect.NewRequest(&pb.RenderPromptRequest{Analyzer: "relationship"}))
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeUnauthenticated))
+	})
+
+	It("passes the backend's NotFound through unchanged", func() {
+		notFound := connect.NewError(connect.CodeNotFound, errors.New("no prompt to render: a catalog, control or job is not your tenant's"))
+		svc := newTestService(gateway.WithPipelineBackend(&mockPipeline{
+			renderPromptFn: func(context.Context, *connect.Request[pb.RenderPromptRequest]) (*connect.Response[pb.RenderPromptResponse], error) {
+				return nil, notFound
+			},
+		}))
+		_, err := svc.RenderPrompt(userCtx("user-a"), connect.NewRequest(&pb.RenderPromptRequest{Analyzer: "critique", JobId: "job-9"}))
+		Expect(err).To(BeIdenticalTo(notFound))
+	})
+
+	DescribeTable("renders a job's prompt only for the job's owner or an admin",
+		func(ctx context.Context, wantCode connect.Code) {
+			var captured *pb.RenderPromptRequest
+			var getJobs int
+			svc := newTestService(gateway.WithPipelineBackend(pipelineFor(&captured, &getJobs)))
+			got, err := svc.RenderPrompt(ctx, connect.NewRequest(&pb.RenderPromptRequest{Analyzer: "critique", JobId: "job-1",
+				SourceControlId: "cat-1/ac-2", TargetControlId: "cat-2/po.1"}))
+			if wantCode == 0 {
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got).To(BeIdenticalTo(rendered))
+				return
+			}
+			Expect(got).To(BeNil())
+			Expect(connect.CodeOf(err)).To(Equal(wantCode))
+			Expect(err.Error()).To(ContainSubstring("not the job owner"))
+		},
+		Entry("the owner", userCtx("user-a"), connect.Code(0)),
+		Entry("an admin", adminCtx(), connect.Code(0)),
+		Entry("another user of the tenant", userCtx("user-b"), connect.CodePermissionDenied),
+	)
+
+	// A refusal about a job tells of the job's data (its catalogs, its
+	// verdicts, whether it ran), so only its owner or an admin may read it.
+	jobRefusals := map[string]error{
+		"no accepted verdict": connect.NewError(connect.CodeFailedPrecondition,
+			errors.New("job job-1 accepted no relationship or requires verdict for cat-1/ac-2 -> cat-2/po.1")),
+		"two verdicts": connect.NewError(connect.CodeFailedPrecondition,
+			errors.New("job job-1 accepted both a relationship (SUBSET_OF) and a requires verdict")),
+		"not one of the job's catalogs": connect.NewError(connect.CodeInvalidArgument,
+			errors.New(`source_catalog_id "cat-9" is not a catalog of job job-1, whose catalogs are cat-1 and cat-2`)),
+		"never ran analysis": connect.NewError(connect.CodeFailedPrecondition,
+			errors.New("cannot render a prompt of job job-1: its stored config names no catalog")),
+	}
+	DescribeTable("shows a refusal about a job only to the job's owner or an admin",
+		func(refusal string, ctx context.Context, wantOwn bool) {
+			want := jobRefusals[refusal]
+			svc := newTestService(gateway.WithPipelineBackend(&mockPipeline{
+				renderPromptFn: func(context.Context, *connect.Request[pb.RenderPromptRequest]) (*connect.Response[pb.RenderPromptResponse], error) {
+					return nil, want
+				},
+			}))
+			_, err := svc.RenderPrompt(ctx, connect.NewRequest(&pb.RenderPromptRequest{Analyzer: "critique", JobId: "job-1",
+				SourceControlId: "cat-1/ac-2", TargetControlId: "cat-2/po.1"}))
+			if wantOwn {
+				Expect(err).To(BeIdenticalTo(want))
+				return
+			}
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodePermissionDenied))
+			Expect(err.Error()).To(ContainSubstring("not the job owner"))
+			Expect(err.Error()).NotTo(ContainSubstring("cat-"))
+		},
+		Entry("no accepted verdict, to the owner", "no accepted verdict", userCtx("user-a"), true),
+		Entry("no accepted verdict, to an admin", "no accepted verdict", adminCtx(), true),
+		Entry("no accepted verdict, to another user", "no accepted verdict", userCtx("user-b"), false),
+		Entry("two verdicts, to the owner", "two verdicts", userCtx("user-a"), true),
+		Entry("two verdicts, to another user", "two verdicts", userCtx("user-b"), false),
+		Entry("not one of the job's catalogs, to the owner", "not one of the job's catalogs", userCtx("user-a"), true),
+		Entry("not one of the job's catalogs, to another user", "not one of the job's catalogs", userCtx("user-b"), false),
+		Entry("never ran analysis, to an admin", "never ran analysis", adminCtx(), true),
+		Entry("never ran analysis, to another user", "never ran analysis", userCtx("user-b"), false),
+	)
+
+	It("gives another user the pipeline's NotFound unchanged, without a job lookup", func() {
+		notFound := connect.NewError(connect.CodeNotFound, errors.New("no prompt to render"))
+		var getJobs int
+		svc := newTestService(gateway.WithPipelineBackend(&mockPipeline{
+			renderPromptFn: func(context.Context, *connect.Request[pb.RenderPromptRequest]) (*connect.Response[pb.RenderPromptResponse], error) {
+				return nil, notFound
+			},
+			getJobFn: func(context.Context, *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
+				getJobs++
+				return nil, errors.New("unexpected job lookup")
+			},
+		}))
+		_, err := svc.RenderPrompt(userCtx("user-b"), connect.NewRequest(&pb.RenderPromptRequest{Analyzer: "critique", JobId: "job-1"}))
+		Expect(err).To(BeIdenticalTo(notFound))
+		Expect(getJobs).To(BeZero())
+	})
+
+	It("gives a non-admin NotFound for an unknown job when the pipeline fails with another error, leaking nothing of it", func() {
+		svc := newTestService(gateway.WithPipelineBackend(&mockPipeline{
+			renderPromptFn: func(context.Context, *connect.Request[pb.RenderPromptRequest]) (*connect.Response[pb.RenderPromptResponse], error) {
+				return nil, connect.NewError(connect.CodeInternal, errors.New("reading job-1 config: pq: secret-detail"))
+			},
+			getJobFn: func(context.Context, *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
+				return nil, connect.NewError(connect.CodeNotFound, errors.New("job not found"))
+			},
+		}))
+		got, err := svc.RenderPrompt(userCtx("user-a"), connect.NewRequest(&pb.RenderPromptRequest{Analyzer: "critique", JobId: "job-1"}))
+		Expect(got).To(BeNil())
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeNotFound))
+		Expect(err.Error()).NotTo(ContainSubstring("secret-detail"))
+	})
+})
+
 var _ = Describe("RetireCatalogVersion handler", func() {
 	retireReq := func() *connect.Request[pb.RetireCatalogVersionRequest] {
 		return connect.NewRequest(&pb.RetireCatalogVersionRequest{
@@ -451,6 +657,24 @@ var _ = Describe("Job handlers", func() {
 			resp, err := svc.GetJob(ctx, connect.NewRequest(&pb.GetJobRequest{JobId: "job-1"}))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.Msg.GetJob().GetJobId()).To(Equal("job-1"))
+		})
+
+		It("passes each stage's task progress through unchanged", func() {
+			progress := &pb.StageProgress{TasksTotal: 10, TasksDone: 9, TasksSucceeded: 8, TasksFailed: 1,
+				TasksRetried: 3, TasksCacheHits: 2, LastSuccessAt: timestamppb.New(time.Date(2026, 11, 24, 9, 30, 0, 0, time.UTC))}
+			backend := &mockPipeline{getJobFn: func(context.Context, *connect.Request[pb.GetJobRequest]) (*connect.Response[pb.GetJobResponse], error) {
+				return connect.NewResponse(&pb.GetJobResponse{Job: &pb.PipelineJob{
+					JobId: "job-1", Audit: &pb.AuditMetadata{CreatedBy: "user-a"},
+					Stages: []*pb.JobStage{{StageName: "classify", Progress: progress}, {StageName: "synthesis"}},
+				}}), nil
+			}}
+			svc := newTestService(gateway.WithPipelineBackend(backend))
+
+			resp, err := svc.GetJob(userCtx("user-a"), connect.NewRequest(&pb.GetJobRequest{JobId: "job-1"}))
+			Expect(err).NotTo(HaveOccurred())
+			stages := resp.Msg.GetJob().GetStages()
+			Expect(proto.Equal(stages[0].GetProgress(), progress)).To(BeTrue(), "progress: %v", stages[0].GetProgress())
+			Expect(stages[1].GetProgress()).To(BeNil())
 		})
 
 		It("returns PermissionDenied when non-owner non-admin accesses job", func() {
@@ -1335,6 +1559,10 @@ var _ = Describe("Required request arguments", func() {
 		}),
 		Entry("empty query on SearchControls", userCtx("user-1"), func(ctx context.Context, svc *gateway.Service) error {
 			_, err := svc.SearchControls(ctx, connect.NewRequest(&pb.SearchControlsRequest{Query: ""}))
+			return err
+		}),
+		Entry("empty catalog_id on ListCatalogControls", userCtx("user-1"), func(ctx context.Context, svc *gateway.Service) error {
+			_, err := svc.ListCatalogControls(ctx, connect.NewRequest(&pb.ListCatalogControlsRequest{CatalogId: ""}))
 			return err
 		}),
 		Entry("empty job_id on GetJob", userCtx("user-a"), func(ctx context.Context, svc *gateway.Service) error {

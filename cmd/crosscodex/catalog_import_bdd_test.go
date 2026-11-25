@@ -397,6 +397,37 @@ var _ = Describe("catalog import under a document", func() {
 			Expect(out).NotTo(ContainSubstring("Current:"))
 		})
 
+		It("inspects a catalog with the SHA-256 of its imported bytes in JSON and text", func() {
+			out, err := serve(&importGateway{catalogs: cats[:1]})("inspect", "--json", "cat-v")
+			Expect(err).NotTo(HaveOccurred())
+			var got map[string]any
+			Expect(json.Unmarshal([]byte(out), &got)).To(Succeed())
+			Expect(got).To(HaveKeyWithValue("content_hash", "abcdef0123456789"))
+
+			out, err = serve(&importGateway{catalogs: cats[:1]})("inspect", "--plain", "cat-v")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).To(ContainSubstring("Content SHA-256: abcdef0123456789\n"))
+		})
+
+		It("inspects a catalog without a recorded hash as an empty content_hash and no text line", func() {
+			out, err := serve(&importGateway{catalogs: cats[1:]})("inspect", "--json", "cat-u")
+			Expect(err).NotTo(HaveOccurred())
+			var got map[string]any
+			Expect(json.Unmarshal([]byte(out), &got)).To(Succeed())
+			Expect(got).To(HaveKeyWithValue("content_hash", ""))
+
+			out, err = serve(&importGateway{catalogs: cats[1:]})("inspect", "--plain", "cat-u")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).NotTo(ContainSubstring("Content SHA-256"))
+		})
+
+		It("escapes control characters in a content hash from the server", func() {
+			hostile := &pb.Catalog{CatalogId: "x", Provenance: &pb.ProvenanceMetadata{LineageMetadata: map[string]string{"content_hash": "ab\x1b[2Jcd"}}}
+			out, err := serve(&importGateway{catalogs: []*pb.Catalog{hostile}})("inspect", "--plain", "x")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out).NotTo(ContainSubstring("\x1b"))
+		})
+
 		It("carries document fields into the JSON list", func() {
 			out, err := serve(&importGateway{catalogs: cats})("list", "--json")
 			Expect(err).NotTo(HaveOccurred())

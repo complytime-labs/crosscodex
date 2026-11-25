@@ -163,6 +163,14 @@ func (s *stubPipeline) RetryJob(_ context.Context, _ *connect.Request[pb.RetryJo
 	return connect.NewResponse(&pb.RetryJobResponse{}), nil
 }
 
+func (s *stubPipeline) ListCatalogControls(_ context.Context, _ *connect.Request[pb.ListCatalogControlsRequest]) (*connect.Response[pb.ListCatalogControlsResponse], error) {
+	return connect.NewResponse(&pb.ListCatalogControlsResponse{}), nil
+}
+
+func (s *stubPipeline) RenderPrompt(_ context.Context, _ *connect.Request[pb.RenderPromptRequest]) (*connect.Response[pb.RenderPromptResponse], error) {
+	return connect.NewResponse(&pb.RenderPromptResponse{}), nil
+}
+
 type stubGraph struct{}
 
 func (s *stubGraph) Traverse(_ context.Context, _ *connect.Request[pb.TraverseRequest]) (*connect.Response[pb.TraverseResponse], error) {

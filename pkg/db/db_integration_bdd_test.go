@@ -1286,6 +1286,166 @@ var _ = Describe("Database Integration", Ordered, Serial, func() {
 			})
 		})
 
+		Context("job stage progress", func() {
+			insertProgress := func(tx *sql.Tx, tenantID, jobID string, succeeded, failed, done int) error {
+				_, err := tx.ExecContext(context.Background(),
+					`INSERT INTO job_stage_progress (tenant_id, job_id, stage_name, tasks_total, tasks_done, tasks_succeeded, tasks_failed)
+					 VALUES ($1, $2, 'relationship', 10, $5, $3, $4)`,
+					tenantID, jobID, succeeded, failed, done)
+				return err
+			}
+
+			It("hides one tenant's rows from another and lets it update none of them", func() {
+				setupTenant("prog-a", "Progress A Corp")
+				setupTenant("prog-b", "Progress B Corp")
+				conn := appUserConn()
+
+				execAsTenant(conn, "prog-a", func(tx *sql.Tx) {
+					_, err := tx.ExecContext(context.Background(),
+						"INSERT INTO jobs (job_id, tenant_id, status, created_by) VALUES ($1, $2, 'running', 'setup') ON CONFLICT DO NOTHING",
+						"job-prog-a", "prog-a")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(insertProgress(tx, "prog-a", "job-prog-a", 3, 1, 4)).To(Succeed())
+				})
+
+				execAsTenant(conn, "prog-b", func(tx *sql.Tx) {
+					var count int
+					Expect(tx.QueryRowContext(context.Background(),
+						"SELECT count(*) FROM job_stage_progress WHERE job_id = $1", "job-prog-a").Scan(&count)).To(Succeed())
+					Expect(count).To(Equal(0), "tenant B must see none of tenant A's progress")
+
+					res, err := tx.ExecContext(context.Background(),
+						"UPDATE job_stage_progress SET tasks_total = 99 WHERE job_id = $1", "job-prog-a")
+					Expect(err).NotTo(HaveOccurred())
+					affected, err := res.RowsAffected()
+					Expect(err).NotTo(HaveOccurred())
+					Expect(affected).To(BeZero(), "tenant B must update none of tenant A's progress")
+				})
+
+				execAsTenant(conn, "prog-a", func(tx *sql.Tx) {
+					var total int
+					Expect(tx.QueryRowContext(context.Background(),
+						"SELECT tasks_total FROM job_stage_progress WHERE job_id = $1", "job-prog-a").Scan(&total)).To(Succeed())
+					Expect(total).To(Equal(10), "the refused update must leave tenant A's row unchanged")
+				})
+			})
+
+			It("rejects a row whose done count is not succeeded plus failed", func() {
+				setupTenant("prog-chk", "Progress Check Corp")
+				conn := appUserConn()
+
+				execAsTenant(conn, "prog-chk", func(tx *sql.Tx) {
+					_, err := tx.ExecContext(context.Background(),
+						"INSERT INTO jobs (job_id, tenant_id, status, created_by) VALUES ($1, $2, 'running', 'setup') ON CONFLICT DO NOTHING",
+						"job-prog-chk", "prog-chk")
+					Expect(err).NotTo(HaveOccurred())
+				})
+
+				expectErrorAsTenant(conn, "prog-chk", func(tx *sql.Tx) {
+					err := insertProgress(tx, "prog-chk", "job-prog-chk", 3, 1, 5)
+					Expect(err).To(HaveOccurred(), "tasks_done = 5 != 3 + 1 must be refused")
+					Expect(err.Error()).To(ContainSubstring("job_stage_progress_done_check"))
+				})
+
+				expectErrorAsTenant(conn, "prog-chk", func(tx *sql.Tx) {
+					err := insertProgress(tx, "prog-chk", "job-prog-chk", -1, 1, 0)
+					Expect(err).To(HaveOccurred(), "a negative count must be refused")
+					Expect(err.Error()).To(ContainSubstring("job_stage_progress_tasks_succeeded_check"))
+				})
+
+				execAsTenant(conn, "prog-chk", func(tx *sql.Tx) {
+					var count int
+					Expect(tx.QueryRowContext(context.Background(),
+						"SELECT count(*) FROM job_stage_progress WHERE job_id = $1", "job-prog-chk").Scan(&count)).To(Succeed())
+					Expect(count).To(BeZero(), "the refused inserts must leave no row")
+				})
+			})
+
+			It("refuses an insert naming another tenant and leaves that tenant's view unchanged", func() {
+				setupTenant("prog-x-a", "Progress X A Corp")
+				setupTenant("prog-x-b", "Progress X B Corp")
+				conn := appUserConn()
+
+				execAsTenant(conn, "prog-x-a", func(tx *sql.Tx) {
+					_, err := tx.ExecContext(context.Background(),
+						"INSERT INTO jobs (job_id, tenant_id, status, created_by) VALUES ($1, $2, 'running', 'setup') ON CONFLICT DO NOTHING",
+						"job-prog-x-a", "prog-x-a")
+					Expect(err).NotTo(HaveOccurred())
+				})
+
+				expectErrorAsTenant(conn, "prog-x-b", func(tx *sql.Tx) {
+					err := insertProgress(tx, "prog-x-a", "job-prog-x-a", 1, 0, 1)
+					Expect(err).To(HaveOccurred(), "tenant B must not insert a row for tenant A")
+					Expect(err.Error()).To(ContainSubstring("row-level security"))
+				})
+
+				execAsTenant(conn, "prog-x-a", func(tx *sql.Tx) {
+					var count int
+					Expect(tx.QueryRowContext(context.Background(),
+						"SELECT count(*) FROM job_stage_progress WHERE job_id = $1", "job-prog-x-a").Scan(&count)).To(Succeed())
+					Expect(count).To(BeZero(), "the refused cross-tenant insert must leave no row")
+				})
+			})
+
+			It("refuses a row of its own tenant naming another tenant's job", func() {
+				setupTenant("prog-fk-a", "Progress FK A Corp")
+				setupTenant("prog-fk-b", "Progress FK B Corp")
+				conn := appUserConn()
+
+				execAsTenant(conn, "prog-fk-a", func(tx *sql.Tx) {
+					_, err := tx.ExecContext(context.Background(),
+						"INSERT INTO jobs (job_id, tenant_id, status, created_by) VALUES ($1, $2, 'running', 'setup') ON CONFLICT DO NOTHING",
+						"job-prog-fk-a", "prog-fk-a")
+					Expect(err).NotTo(HaveOccurred())
+				})
+
+				expectErrorAsTenant(conn, "prog-fk-b", func(tx *sql.Tx) {
+					err := insertProgress(tx, "prog-fk-b", "job-prog-fk-a", 1, 0, 1)
+					Expect(err).To(HaveOccurred(), "tenant B must not attach a row to tenant A's job")
+					Expect(err.Error()).To(ContainSubstring("job_stage_progress_job_tenant_fkey"))
+				})
+
+				execAsTenant(conn, "prog-fk-b", func(tx *sql.Tx) {
+					var count int
+					Expect(tx.QueryRowContext(context.Background(),
+						"SELECT count(*) FROM job_stage_progress WHERE job_id = $1", "job-prog-fk-a").Scan(&count)).To(Succeed())
+					Expect(count).To(BeZero(), "the refused insert must leave no row")
+				})
+			})
+
+			It("denies TRUNCATE and ALTER TABLE to app_user and keeps the rows", func() {
+				setupTenant("prog-trunc", "Progress Trunc Corp")
+				conn := appUserConn()
+
+				execAsTenant(conn, "prog-trunc", func(tx *sql.Tx) {
+					_, err := tx.ExecContext(context.Background(),
+						"INSERT INTO jobs (job_id, tenant_id, status, created_by) VALUES ($1, $2, 'running', 'setup') ON CONFLICT DO NOTHING",
+						"job-prog-trunc", "prog-trunc")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(insertProgress(tx, "prog-trunc", "job-prog-trunc", 3, 1, 4)).To(Succeed())
+				})
+
+				_, err := conn.ExecContext(context.Background(), "TRUNCATE TABLE job_stage_progress")
+				Expect(err).To(HaveOccurred(), "app_user must not truncate job_stage_progress")
+				Expect(err.Error()).To(ContainSubstring("permission denied"))
+
+				_, err = conn.ExecContext(context.Background(), "ALTER TABLE job_stage_progress ADD COLUMN hacked TEXT")
+				Expect(err).To(HaveOccurred(), "app_user must not alter job_stage_progress")
+				Expect(err.Error()).To(SatisfyAny(
+					ContainSubstring("permission denied"),
+					ContainSubstring("must be owner"),
+				))
+
+				execAsTenant(conn, "prog-trunc", func(tx *sql.Tx) {
+					var total, done int
+					Expect(tx.QueryRowContext(context.Background(),
+						"SELECT tasks_total, tasks_done FROM job_stage_progress WHERE job_id = $1", "job-prog-trunc").Scan(&total, &done)).To(Succeed())
+					Expect(total).To(Equal(10), "the refused statements must leave the row unchanged")
+					Expect(done).To(Equal(4))
+				})
+			})
+		})
+
 		Context("bulk operations with mixed status", func() {
 			It("fails entirely when any row is completed (no partial success)", func() {
 				setupTenant("imm-bulk", "Imm Bulk Corp")

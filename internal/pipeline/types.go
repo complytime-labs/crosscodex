@@ -89,3 +89,14 @@ type SynthesisExecutor interface {
 	Execute(ctx context.Context, jobID string, inputs []synthesis.SynthesisInput,
 		classifications map[string]synthesis.Classification) (*synthesis.ExecuteResult, error)
 }
+
+// StageProgress is one analyzer stage's stored task progress
+// (job_stage_progress). Done is Succeeded+Failed; Succeeded includes
+// CacheHits; Retried counts retry attempts, not tasks. Counts accumulate
+// across a resumed stage's runs, and Total is the latest run's task count.
+// LastSuccessAt is the latest worker success, nil before the first one;
+// cache hits never set it.
+type StageProgress struct {
+	Total, Done, Succeeded, Failed, Retried, CacheHits int
+	LastSuccessAt                                      *time.Time
+}

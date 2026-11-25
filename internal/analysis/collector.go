@@ -273,12 +273,18 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 				if c.retriedCounter != nil {
 					c.retriedCounter.Add(handlerCtx, 1, metric.WithAttributes(attribute.String("cause", cause)))
 				}
+				if req.Progress != nil {
+					req.Progress.TaskRetried()
+				}
 
 				// Get the original task for redispatch
 				task := taskMap[taskID]
 				if task == nil {
 					c.logger.Error("missing original task for redispatch", "task_id", taskID)
 					delete(pending, taskID)
+					if req.Progress != nil {
+						req.Progress.TaskFailed()
+					}
 					resultChan <- analyzer.TaskResult{
 						TaskID:   taskID,
 						TaskType: string(req.TaskType),
@@ -309,6 +315,9 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 							mu.Lock()
 							delete(pending, t.TaskID)
 							mu.Unlock()
+							if req.Progress != nil {
+								req.Progress.TaskFailed()
+							}
 							resultChan <- analyzer.TaskResult{
 								TaskID:   t.TaskID,
 								TaskType: t.TaskType,
@@ -329,6 +338,9 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 			// Retries exhausted
 			if c.failedCounter != nil {
 				c.failedCounter.Add(handlerCtx, 1)
+			}
+			if req.Progress != nil {
+				req.Progress.TaskFailed()
 			}
 
 			delete(pending, taskID)
@@ -354,6 +366,9 @@ func (c *NATSCollector) PrepareCollect(ctx context.Context, req CollectRequest) 
 		*watch = successWatch{lastSuccess: time.Now()}
 		if c.completeCounter != nil {
 			c.completeCounter.Add(handlerCtx, 1)
+		}
+		if req.Progress != nil {
+			req.Progress.TaskSucceeded()
 		}
 
 		delete(pending, taskID)

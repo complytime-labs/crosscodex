@@ -30,6 +30,13 @@ type PipelineBackend interface {
 	ListJobs(ctx context.Context, req *connect.Request[pb.ListJobsRequest]) (*connect.Response[pb.ListJobsResponse], error)
 	CancelJob(ctx context.Context, req *connect.Request[pb.CancelJobRequest]) (*connect.Response[pb.CancelJobResponse], error)
 	RetryJob(ctx context.Context, req *connect.Request[pb.RetryJobRequest]) (*connect.Response[pb.RetryJobResponse], error)
+	// ListCatalogControls lists a catalog's controls as analysis receives
+	// them. An unknown catalog and another tenant's are the same NotFound.
+	ListCatalogControls(ctx context.Context, req *connect.Request[pb.ListCatalogControlsRequest]) (*connect.Response[pb.ListCatalogControlsResponse], error)
+	// RenderPrompt renders an analyzer's prompt for one control pair without
+	// calling an LLM. Another tenant's control or job, an unknown control
+	// and an unknown job are the same NotFound.
+	RenderPrompt(ctx context.Context, req *connect.Request[pb.RenderPromptRequest]) (*connect.Response[pb.RenderPromptResponse], error)
 }
 
 type GraphBackend interface {

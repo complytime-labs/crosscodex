@@ -109,4 +109,12 @@ func (b *connectPipelineBackend) RetryJob(ctx context.Context, req *connect.Requ
 	return b.client.RetryJob(ctx, req)
 }
 
+func (b *connectPipelineBackend) ListCatalogControls(ctx context.Context, req *connect.Request[pb.ListCatalogControlsRequest]) (*connect.Response[pb.ListCatalogControlsResponse], error) {
+	return b.client.ListCatalogControls(ctx, req)
+}
+
+func (b *connectPipelineBackend) RenderPrompt(ctx context.Context, req *connect.Request[pb.RenderPromptRequest]) (*connect.Response[pb.RenderPromptResponse], error) {
+	return b.client.RenderPrompt(ctx, req)
+}
+
 var _ PipelineBackend = (*connectPipelineBackend)(nil)

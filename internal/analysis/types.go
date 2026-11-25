@@ -115,6 +115,11 @@ type CacheSettings struct {
 // checkpoint it names.
 const MetadataCacheAttempt = "result_cache.attempt"
 
+// MetadataProgressStale is the analyzer.Output.Metadata key set to "true"
+// when a completed stage's final progress write failed (see
+// WithProgressStore), so its stored progress counts lag the real ones.
+const MetadataProgressStale = "progress_stale"
+
 // ExecutionResult holds the outcome of an Engine.Execute call.
 type ExecutionResult struct {
 	JobID     string
@@ -159,6 +164,9 @@ type CollectRequest struct {
 	// may already have billed the timed-out call.
 	RetryOnTimeout bool
 	Dispatcher     Dispatcher
+	// Progress, when non-nil, receives each task's final outcome and every
+	// retry attempt as the collector counts them (see ProgressObserver).
+	Progress ProgressObserver
 }
 
 // CollectionHandle holds the subscription and channels for a two-phase collect operation.

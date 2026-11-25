@@ -145,8 +145,9 @@ func (a *RelationshipAnalyzer) ResultSchema() proto.Message {
 
 // GenerateWork produces one Task per candidate pair per model per sample.
 // Each task carries LLM parameters in a structpb.Struct payload for the worker.
-// The rendered prompt messages travel in the payload's "messages" field,
-// alongside prompt_name, prompt_version and their content_hash.
+// The prompt messages, rendered by Render, travel in the payload's
+// "messages" field, alongside prompt_name, prompt_version and their
+// content_hash.
 //
 // input is unused: the pipeline runs this candidate-dependent pass once per
 // job, so each pair's texts come from cfg.Parameters ("source_text_<id>",
@@ -199,9 +200,6 @@ func (a *RelationshipAnalyzer) GenerateWork(ctx context.Context, input *pb.Contr
 		return nil, fmt.Errorf("relationship.GenerateWork: resolving prompt %q: %w", promptName, err)
 	}
 
-	// Format few-shot examples inline in the user template.
-	fewShotStr := intanalyzer.FormatFewShotExamples(spec.FewShot)
-
 	// Determine temperature.
 	temperature := a.cfg.SamplingTemperature
 	if a.cfg.SamplesPerModel <= 1 {
@@ -211,83 +209,12 @@ func (a *RelationshipAnalyzer) GenerateWork(ctx context.Context, input *pb.Contr
 	// Build tasks.
 	var tasks []analyzer.Task
 	for _, pair := range pairs {
-		// The candidate-dependent pass has no per-control input: the pipeline
-		// passes every control's text as parameters.
-		sourceKey := "source_text_" + pair.SourceControlID
-		targetKey := "target_text_" + pair.TargetControlID
-		// Every catalog value is uploader- or OSCAL-controlled, so each is
-		// hardened: format characters removed, UTF-8 repaired, whitespace
-		// collapsed, tag delimiters escaped. Statements go through
-		// PromptText with their end's limit. Hardening comes before the
-		// blank check, so a statement of only invisible characters counts
-		// as missing.
-		sourceText := intanalyzer.PromptText(cfg.Parameters[sourceKey], a.cfg.MaxSourceChars)
-		targetText := intanalyzer.PromptText(cfg.Parameters[targetKey], a.cfg.MaxTargetChars)
-		var missingKey string
-		switch {
-		case sourceText == "":
-			missingKey = sourceKey
-		case targetText == "":
-			missingKey = targetKey
-		}
-		if missingKey != "" {
-			reason := fmt.Sprintf("no %q parameter", missingKey)
-			if _, ok := cfg.Parameters[missingKey]; ok {
-				reason = fmt.Sprintf("parameter %q has no statement text after removing whitespace and format characters; "+
-					"give the control a statement in the catalog and re-import it", missingKey)
-			}
-			err := fmt.Errorf("relationship.GenerateWork: pair %s--%s: %s: %w",
-				pair.SourceControlID, pair.TargetControlID, reason, intanalyzer.ErrMissingControlText)
+		messages, err := a.Render(spec, pair, cfg.Parameters)
+		if err != nil {
+			err = fmt.Errorf("relationship.GenerateWork: %w", err)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			return nil, err
-		}
-		// IDs, framework names, types, levels and titles are short
-		// values: PromptValue caps each at MaxPromptValueBytes, so a catalog
-		// name cannot carry a statement-sized payload.
-		short := func(v string) string { return intanalyzer.PromptValue(v, intanalyzer.MaxPromptValueBytes) }
-
-		vars := map[string]string{
-			"classification_guidance":  classificationGuidance,
-			"relationship_definitions": relationshipDefinitions,
-			"few_shot_examples":        fewShotStr,
-			"source_id":                short(pair.SourceControlID),
-			"target_id":                short(pair.TargetControlID),
-			"source_text":              sourceText,
-			"target_text":              targetText,
-			// Keyed per control: in a bidirectional crosswalk either end of a
-			// pair can come from either catalog.
-			"source_framework": short(cfg.Parameters["source_framework_"+pair.SourceControlID]),
-			"target_framework": short(cfg.Parameters["target_framework_"+pair.TargetControlID]),
-			"source_type":      short(cfg.Parameters["source_type_"+pair.SourceControlID]),
-			"source_level":     short(cfg.Parameters["source_level_"+pair.SourceControlID]),
-			"source_context":   intanalyzer.PromptContext(cfg.Parameters["source_context_"+pair.SourceControlID], intanalyzer.MaxPromptContextBytes),
-			"source_title":     short(cfg.Parameters["source_title_"+pair.SourceControlID]),
-			"target_type":      short(cfg.Parameters["target_type_"+pair.TargetControlID]),
-			"target_level":     short(cfg.Parameters["target_level_"+pair.TargetControlID]),
-			"target_context":   intanalyzer.PromptContext(cfg.Parameters["target_context_"+pair.TargetControlID], intanalyzer.MaxPromptContextBytes),
-			"target_title":     short(cfg.Parameters["target_title_"+pair.TargetControlID]),
-		}
-
-		systemMsg, err := prompt.SubstitutePlaceholders(spec.Templates.System, vars)
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			return nil, fmt.Errorf("relationship.GenerateWork: substituting system template for %s--%s: %w",
-				pair.SourceControlID, pair.TargetControlID, err)
-		}
-
-		userMsg, err := prompt.SubstitutePlaceholders(spec.Templates.User, vars)
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			return nil, fmt.Errorf("relationship.GenerateWork: substituting user template for %s--%s: %w",
-				pair.SourceControlID, pair.TargetControlID, err)
-		}
-
-		messages := []llmclient.ChatMessage{
-			{Role: llmclient.RoleSystem, Content: systemMsg},
-			{Role: llmclient.RoleUser, Content: userMsg},
 		}
 		contentHash := llmclient.ContentHash(messages)
 
@@ -327,6 +254,86 @@ func (a *RelationshipAnalyzer) GenerateWork(ctx context.Context, input *pb.Contr
 	span.SetAttributes(attribute.Int("task.count", len(tasks)))
 	span.SetStatus(codes.Ok, "")
 	return tasks, nil
+}
+
+// Render returns the system and user messages GenerateWork sends for pair:
+// spec is the prompt the registry resolves for PromptName(), and params the
+// AnalyzerConfig parameters GenerateWork is given, from which the pair's
+// texts are read ("source_text_<id>", "target_text_<id>" and the other
+// per-control keys GenerateWork documents). GenerateWork renders every
+// pair through it, so a caller showing the prompt shows the one sent.
+//
+// A pair whose source or target text is missing or empty returns an error
+// wrapping intanalyzer.ErrMissingControlText.
+func (a *RelationshipAnalyzer) Render(spec *prompt.PromptSpec, pair CandidatePair, params map[string]string) ([]llmclient.ChatMessage, error) {
+	sourceKey := "source_text_" + pair.SourceControlID
+	targetKey := "target_text_" + pair.TargetControlID
+	// Every catalog value is uploader- or OSCAL-controlled, so each is
+	// hardened: format characters removed, UTF-8 repaired, whitespace
+	// collapsed, tag delimiters escaped. Statements go through
+	// PromptText with their end's limit. Hardening comes before the
+	// blank check, so a statement of only invisible characters counts
+	// as missing.
+	sourceText := intanalyzer.PromptText(params[sourceKey], a.cfg.MaxSourceChars)
+	targetText := intanalyzer.PromptText(params[targetKey], a.cfg.MaxTargetChars)
+	var missingKey string
+	switch {
+	case sourceText == "":
+		missingKey = sourceKey
+	case targetText == "":
+		missingKey = targetKey
+	}
+	if missingKey != "" {
+		reason := fmt.Sprintf("no %q parameter", missingKey)
+		if _, ok := params[missingKey]; ok {
+			reason = fmt.Sprintf("parameter %q has no statement text after removing whitespace and format characters; "+
+				"give the control a statement in the catalog and re-import it", missingKey)
+		}
+		return nil, fmt.Errorf("pair %s--%s: %s: %w",
+			pair.SourceControlID, pair.TargetControlID, reason, intanalyzer.ErrMissingControlText)
+	}
+	// IDs, framework names, types, levels and titles are short
+	// values: PromptValue caps each at MaxPromptValueBytes, so a catalog
+	// name cannot carry a statement-sized payload.
+	short := func(v string) string { return intanalyzer.PromptValue(v, intanalyzer.MaxPromptValueBytes) }
+
+	vars := map[string]string{
+		"classification_guidance":  classificationGuidance,
+		"relationship_definitions": relationshipDefinitions,
+		// Few-shot examples are formatted inline in the user template.
+		"few_shot_examples": intanalyzer.FormatFewShotExamples(spec.FewShot),
+		"source_id":         short(pair.SourceControlID),
+		"target_id":         short(pair.TargetControlID),
+		"source_text":       sourceText,
+		"target_text":       targetText,
+		// Keyed per control: in a bidirectional crosswalk either end of a
+		// pair can come from either catalog.
+		"source_framework": short(params["source_framework_"+pair.SourceControlID]),
+		"target_framework": short(params["target_framework_"+pair.TargetControlID]),
+		"source_type":      short(params["source_type_"+pair.SourceControlID]),
+		"source_level":     short(params["source_level_"+pair.SourceControlID]),
+		"source_context":   intanalyzer.PromptContext(params["source_context_"+pair.SourceControlID], intanalyzer.MaxPromptContextBytes),
+		"source_title":     short(params["source_title_"+pair.SourceControlID]),
+		"target_type":      short(params["target_type_"+pair.TargetControlID]),
+		"target_level":     short(params["target_level_"+pair.TargetControlID]),
+		"target_context":   intanalyzer.PromptContext(params["target_context_"+pair.TargetControlID], intanalyzer.MaxPromptContextBytes),
+		"target_title":     short(params["target_title_"+pair.TargetControlID]),
+	}
+
+	systemMsg, err := prompt.SubstitutePlaceholders(spec.Templates.System, vars)
+	if err != nil {
+		return nil, fmt.Errorf("substituting system template for %s--%s: %w",
+			pair.SourceControlID, pair.TargetControlID, err)
+	}
+	userMsg, err := prompt.SubstitutePlaceholders(spec.Templates.User, vars)
+	if err != nil {
+		return nil, fmt.Errorf("substituting user template for %s--%s: %w",
+			pair.SourceControlID, pair.TargetControlID, err)
+	}
+	return []llmclient.ChatMessage{
+		{Role: llmclient.RoleSystem, Content: systemMsg},
+		{Role: llmclient.RoleUser, Content: userMsg},
+	}, nil
 }
 
 var _ analyzer.Cacheable = (*RelationshipAnalyzer)(nil)

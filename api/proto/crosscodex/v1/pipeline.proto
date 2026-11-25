@@ -40,6 +40,22 @@ service PipelineService {
   // gateway does not expose it. tenant_context.tenant_id must equal the
   // tenant of the authenticated connection (PERMISSION_DENIED otherwise).
   rpc GetCurrentStageRecord(GetCurrentStageRecordRequest) returns (GetCurrentStageRecordResponse);
+
+  // List a catalog's controls exactly as analysis receives them: the
+  // Title and Statement each analyzer is given, composed from the stored
+  // control rows and the catalog's control tree. An unknown catalog and
+  // another tenant's catalog get the same NOT_FOUND. tenant_context.tenant_id
+  // must equal the tenant of the authenticated connection (PERMISSION_DENIED
+  // otherwise).
+  rpc ListCatalogControls(ListCatalogControlsRequest) returns (ListCatalogControlsResponse);
+
+  // Render the exact prompt one analyzer sends for one control pair, built
+  // by the analyzer's own prompt code from the stored controls (and, with
+  // job_id, the job's stored classifications or critique verdicts). No LLM
+  // is called. Another tenant's control or job, an unknown control and an
+  // unknown job get the same NOT_FOUND. tenant_context.tenant_id must equal
+  // the tenant of the authenticated connection (PERMISSION_DENIED otherwise).
+  rpc RenderPrompt(RenderPromptRequest) returns (RenderPromptResponse);
 }
 
 enum JobType {
@@ -254,6 +270,33 @@ message JobStage {
   // has started its analysis, and for a completed one whose record is
   // missing (independence "not recorded"). Unset for every other stage.
   PanelProvenance panel = 9;
+  // The stage's task counts, as last flushed by the analysis engine. Unset
+  // for a stage that has not dispatched tasks (not started, not an analyzer
+  // stage, or a job from before progress was recorded).
+  StageProgress progress = 10;
+}
+
+// StageProgress counts an analyzer stage's tasks. A resumed stage adds its
+// counts onto the earlier run's, so tasks_done can exceed tasks_total, which
+// is the resumed run's task count.
+message StageProgress {
+  // Tasks the stage dispatched (set by the latest run of the stage).
+  int32 tasks_total = 1;
+  // Tasks that finished: tasks_succeeded + tasks_failed.
+  int32 tasks_done = 2;
+  // Tasks that produced a result, including those answered from the result
+  // cache (tasks_cache_hits) and other results served without a worker.
+  int32 tasks_succeeded = 3;
+  // Tasks that ended in an error after their retries.
+  int32 tasks_failed = 4;
+  // Retry attempts across all tasks: a task retried twice counts 2. Not a
+  // count of tasks.
+  int32 tasks_retried = 5;
+  // Succeeded tasks answered from the result cache rather than the model.
+  int32 tasks_cache_hits = 6;
+  // When a worker last completed a task successfully. Results served without
+  // a worker, such as cache hits, do not move it. Unset when none has.
+  google.protobuf.Timestamp last_success_at = 7;
 }
 
 // PanelProvenance is what the panel diversity check found for one panel
@@ -368,4 +411,89 @@ message GetCurrentStageRecordResponse {
   string prompt_version = 3;
   // Model alias to its configured revision ("" when none is pinned).
   map<string, string> models = 4;
+}
+
+message ListCatalogControlsRequest {
+  TenantContext tenant_context = 1;
+  // The imported catalog to list (as `crosscodex catalog list` shows it).
+  // Required.
+  string catalog_id = 2;
+}
+
+message ListCatalogControlsResponse {
+  // Every control of the catalog, sections and statement parts included,
+  // ordered by control_id. Title and statement are the composed analysis
+  // input: a statement part's statement carries its parents' lead-ins, a
+  // title that only repeats the control's label is dropped, and a
+  // title-only control's title becomes its statement. parts carries the
+  // control's props plus "class" and "context" (its titled ancestors).
+  // Empty for a catalog of the caller's that has no controls.
+  //
+  // The text is the catalog's own and untrusted: render it as plain text,
+  // never as markup.
+  //
+  // Not paginated: the response holds the whole catalog, so its size grows
+  // with the catalog's control count and statement text.
+  // Neither the gateway nor the pipeline service sets a Connect read or send
+  // limit (connect-go's default: unlimited), so a proxy or a client with a
+  // message size limit in between must allow it.
+  repeated Control controls = 1;
+}
+
+message RenderPromptRequest {
+  TenantContext tenant_context = 1;
+  // The analyzer whose prompt to render: "relationship", "requires" or
+  // "critique". Required.
+  string analyzer = 2;
+  // The catalog of source_control_id. Optional with job_id (defaults to the
+  // job's source catalog, and must be one of the job's catalogs); required
+  // without it.
+  string source_catalog_id = 3;
+  // The pair's source control, as `crosscodex catalog controls` lists it.
+  // Required.
+  string source_control_id = 4;
+  // The catalog of target_control_id. Optional with job_id (defaults to the
+  // job's target catalog, and must be one of the job's catalogs); required
+  // without it.
+  string target_catalog_id = 5;
+  // The pair's target control. Required.
+  string target_control_id = 6;
+  // A job of the caller's tenant. When set, the prompt uses the job's
+  // catalogs, the catalog names it recorded and its stored classify result
+  // (control types and levels); without it those types and levels are
+  // empty. For critique, the verdict reviewed is the one the job accepted
+  // for the pair. Exactly one of job_id and verdict is required for
+  // critique.
+  string job_id = 7;
+  // The proposed verdict critique reviews, for critique without job_id.
+  // Refused for the other analyzers.
+  ProposedVerdictInput verdict = 8;
+}
+
+// A proposed verdict for the critique prompt, as a job's relationship or
+// requires panel would have accepted it.
+message ProposedVerdictInput {
+  // A relationship type other than NO_RELATIONSHIP (e.g. "EQUIVALENT"), or
+  // "REQUIRES" for a prerequisite verdict. Required.
+  string verdict = 1;
+  // The proposing panel's justifications, in order. At most 64, each at
+  // most 2000 bytes (the size a job stores).
+  repeated string justifications = 2;
+}
+
+message RenderPromptResponse {
+  // The prompt's messages in the order they are sent. The content holds
+  // catalog text and, for critique, model output: it is untrusted, so
+  // render it as plain text, never as markup.
+  repeated PromptMessage messages = 1;
+  // The prompt template the messages were rendered from, as the prompt
+  // registry resolves it now (`crosscodex prompt show <name>`).
+  string prompt_name = 2;
+  string prompt_version = 3;
+}
+
+message PromptMessage {
+  // "system", "user" or "assistant".
+  string role = 1;
+  string content = 2;
 }

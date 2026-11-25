@@ -88,3 +88,11 @@ func PanelByProducts(aliases []string, allowShared bool, ids map[string]PanelIde
 func (s *Service) PanelProvenance(stages []*Stage) map[string]*pb.PanelProvenance {
 	return s.panelProvenance(stages)
 }
+
+// PairAnalyzerParameters bridges pairAnalyzerParameters, the parameters
+// runAnalysis gives the pair analyzers, to the external specs.
+var PairAnalyzerParameters = pairAnalyzerParameters
+
+// ServeRenderPromptWithLLM bridges serveRenderPrompt: ServeRenderPrompt with
+// the LLM client the analyzers are built with.
+var ServeRenderPromptWithLLM = serveRenderPrompt

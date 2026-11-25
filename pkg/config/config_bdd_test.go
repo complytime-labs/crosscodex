@@ -2739,6 +2739,8 @@ var _ = Describe("EngineConfig", func() {
 			SuccessTimeout: 10 * time.Minute,
 			MaxRetries:     3,
 			RetryBackoff:   time.Second,
+
+			ProgressFlushInterval: 10 * time.Second,
 		}
 	})
 
@@ -2776,6 +2778,23 @@ var _ = Describe("EngineConfig", func() {
 			Expect(err.Error()).To(ContainSubstring("a stage fails when no task of it succeeds for this long while its tasks fail"))
 			Expect(err.Error()).To(ContainSubstring("set a duration such as 10m, longer than llm.timeout × (llm.max_retries + 1)"))
 		})
+
+		It("says the range and a value to set when progress_flush_interval is out of range", func() {
+			cfg.ProgressFlushInterval = -time.Second
+			err := cfg.Validate()
+			Expect(err).To(MatchError(config.ErrInvalidConfig))
+			Expect(err.Error()).To(ContainSubstring("analysis.engine.progress_flush_interval -1s must be in range (0, 1h]"))
+			Expect(err.Error()).To(ContainSubstring("set a duration such as 10s"))
+		})
+
+		DescribeTable("accepts progress_flush_interval at its bounds",
+			func(interval time.Duration) {
+				cfg.ProgressFlushInterval = interval
+				Expect(cfg.Validate()).To(Succeed())
+			},
+			Entry("1ns", time.Nanosecond),
+			Entry("1h", time.Hour),
+		)
 
 		It("accepts boundary values", func() {
 			cfg.TaskTimeout = 30 * time.Minute
@@ -2840,6 +2859,41 @@ var _ = Describe("EngineConfig", func() {
 			c.Analysis.Engine.SuccessTimeout = time.Hour
 			Expect(config.ExportValidateConfig(c)).To(Succeed())
 		})
+	})
+
+	Context("progress_flush_interval loading", func() {
+		load := func(body string) (*config.Config, error) {
+			dir := GinkgoT().TempDir()
+			GinkgoT().Setenv("XDG_CONFIG_HOME", dir)
+			if body != "" {
+				Expect(os.MkdirAll(filepath.Join(dir, "crosscodex"), 0o700)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(dir, "crosscodex", "config.yaml"), []byte(body), 0o600)).To(Succeed())
+			}
+			return config.NewLoader().Load(context.Background())
+		}
+
+		It("defaults to 10s", func() {
+			loaded, err := load("")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(loaded.Analysis.Engine.ProgressFlushInterval).To(Equal(10 * time.Second))
+		})
+
+		It("loads an override from the user config", func() {
+			loaded, err := load("analysis:\n  engine:\n    progress_flush_interval: 30s\n")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(loaded.Analysis.Engine.ProgressFlushInterval).To(Equal(30 * time.Second))
+		})
+
+		DescribeTable("rejects an out-of-range value from the user config",
+			func(value string) {
+				_, err := load("analysis:\n  engine:\n    progress_flush_interval: " + value + "\n")
+				Expect(err).To(MatchError(config.ErrInvalidConfig))
+				Expect(err.Error()).To(ContainSubstring("analysis.engine.progress_flush_interval " + value))
+				Expect(err.Error()).To(ContainSubstring("must be in range (0, 1h]"))
+			},
+			Entry("zero", "0s"),
+			Entry("negative", "-1s"),
+		)
 	})
 
 	Context("success_timeout loading", func() {

@@ -76,20 +76,22 @@ var _ = Describe("Purger", func() {
 		Expect(retention.NewPurger(conn, nil).Purge(ctx, retention.Candidate{Store: retention.StorePostgres, Class: retention.ClassJobResults, ID: "job-old", TenantID: "t1"})).To(Succeed())
 		// set_config, then one DELETE per job child in FK-safe order (the four FK
 		// children plus requires_candidates, which is job-scoped by column with no
-		// FK), then the parent job last.
-		Expect(tx.Execs()).To(HaveLen(10))
+		// FK), then the parent job last. job_stage_progress goes first: it is the
+		// per-task progress of the stages that follow it.
+		Expect(tx.Execs()).To(HaveLen(11))
 		Expect(tx.Execs()[0].Query).To(ContainSubstring("app.current_tenant"))
-		Expect(tx.Execs()[1].Query).To(ContainSubstring("DELETE FROM job_stages"))
-		Expect(tx.Execs()[2].Query).To(ContainSubstring("DELETE FROM vote_summaries"))
-		Expect(tx.Execs()[3].Query).To(ContainSubstring("DELETE FROM analysis_results"))
-		Expect(tx.Execs()[4].Query).To(ContainSubstring("DELETE FROM relationship_candidates"))
-		Expect(tx.Execs()[5].Query).To(ContainSubstring("DELETE FROM requires_candidates"))
+		Expect(tx.Execs()[1].Query).To(ContainSubstring("DELETE FROM job_stage_progress"))
+		Expect(tx.Execs()[2].Query).To(ContainSubstring("DELETE FROM job_stages"))
+		Expect(tx.Execs()[3].Query).To(ContainSubstring("DELETE FROM vote_summaries"))
+		Expect(tx.Execs()[4].Query).To(ContainSubstring("DELETE FROM analysis_results"))
+		Expect(tx.Execs()[5].Query).To(ContainSubstring("DELETE FROM relationship_candidates"))
+		Expect(tx.Execs()[6].Query).To(ContainSubstring("DELETE FROM requires_candidates"))
 		// The results the job stored for reuse and its cache audit record
 		// go with it, so every surviving hit still names an existing write.
-		Expect(tx.Execs()[6].Query).To(ContainSubstring("DELETE FROM llm_result_cache"))
-		Expect(tx.Execs()[7].Query).To(ContainSubstring("DELETE FROM job_cache_entries"))
-		Expect(tx.Execs()[8].Query).To(ContainSubstring("DELETE FROM job_cache_stats"))
-		Expect(tx.Execs()[9].Query).To(ContainSubstring("DELETE FROM jobs"))
+		Expect(tx.Execs()[7].Query).To(ContainSubstring("DELETE FROM llm_result_cache"))
+		Expect(tx.Execs()[8].Query).To(ContainSubstring("DELETE FROM job_cache_entries"))
+		Expect(tx.Execs()[9].Query).To(ContainSubstring("DELETE FROM job_cache_stats"))
+		Expect(tx.Execs()[10].Query).To(ContainSubstring("DELETE FROM jobs"))
 		// Every child+parent delete keys on job_id via a bound $1; the id is never
 		// string-interpolated into the SQL text.
 		for _, e := range tx.Execs()[1:] {

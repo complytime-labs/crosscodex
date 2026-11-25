@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Drive one crosswalk quality evaluation (#260) against a running gateway:
 # subset the profile's source catalog, import it and the target, run the
-# analysis, then export the results and score them with crosswalk-eval.
+# analysis, then export the results and score them with crosswalk-eval. With
+# JOB set, score that existing job instead: nothing is imported or started.
 # Run it through `task eval:crosswalk`, which builds both binaries and sets the
 # environment. Direct runs must set every variable marked required.
 #
@@ -9,15 +10,22 @@
 #           EVAL_CERT EVAL_KEY
 # Optional: LABEL (default: UTC timestamp), BASELINE (report.json to compare),
 #           MODE=llm (print only the summary line), NO_CACHE=1 (run start
-#           --no-cache), EVAL_TIMEOUT (seconds, default 86400: a mapping run on a
-#           local model takes hours), EVAL_POLL
-#           (seconds, default 10), PROFILES_DIR, LABELS_DIR and EVAL_OUT_DIR (defaults
-#           under ROOT_DIR; the tooling suite overrides them). A score uses
-#           LABELS_DIR/PROFILE.yaml when it exists; without it no labels apply.
+#           --no-cache), JOB (an existing job's ID: wait for it, then score it
+#           after checking that its catalogs' content SHA-256 equals that of
+#           the profile's subset and target files; NO_CACHE is then ignored),
+#           EVAL_TIMEOUT (seconds, default 86400: a mapping run on a local
+#           model takes hours), LABEL_INPUT=1 (also write controls-source.json
+#           and controls-target.json, the job catalogs' `catalog controls
+#           --json`, to the run directory for `crosswalk-eval label-input`),
+#           EVAL_POLL (seconds, default 10), PROFILES_DIR,
+#           LABELS_DIR and EVAL_OUT_DIR (defaults under ROOT_DIR; the tooling
+#           suite overrides them). A score uses LABELS_DIR/PROFILE.yaml when it
+#           exists; without it no labels apply.
 #
-# PROFILE and LABEL become path components, so both are checked against a
-# strict pattern before use. Catalog text is only ever passed to commands as
-# quoted arguments or read by jq/crosswalk-eval; nothing reaches eval.
+# PROFILE and LABEL become path components and JOB a CLI argument, so all
+# three are checked against a strict pattern before use. Catalog text is only
+# ever passed to commands as quoted arguments or read by jq/crosswalk-eval;
+# nothing reaches eval.
 set -euo pipefail
 
 : "${ROOT_DIR:?ROOT_DIR is required}"
@@ -32,6 +40,8 @@ LABEL="${LABEL:-}"
 BASELINE="${BASELINE:-}"
 MODE="${MODE:-}"
 NO_CACHE="${NO_CACHE:-}"
+JOB="${JOB:-}"
+LABEL_INPUT="${LABEL_INPUT:-}"
 EVAL_TIMEOUT="${EVAL_TIMEOUT:-86400}"
 EVAL_POLL="${EVAL_POLL:-10}"
 PROFILES_DIR="${PROFILES_DIR:-${ROOT_DIR}/test/eval/crosswalk/profiles}"
@@ -53,6 +63,9 @@ progress() {
 
 [[ "${PROFILE}" =~ ^[a-z0-9][a-z0-9.-]*$ ]] ||
 	fail "invalid PROFILE '${PROFILE}': use lowercase letters, digits, '.' and '-' (e.g. ssdf-to-sp800-53r5)."
+# A leading letter or digit keeps JOB from being read as a CLI flag.
+[[ -z "${JOB}" || "${JOB}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+	fail "invalid JOB '${JOB}': pass the job ID 'crosscodex run start' printed (letters, digits, '.', '_' and '-')."
 [[ "${EVAL_TIMEOUT}" =~ ^[0-9]+$ && "${EVAL_POLL}" =~ ^[1-9][0-9]*$ ]] ||
 	fail "EVAL_TIMEOUT must be whole seconds and EVAL_POLL a positive number of seconds."
 
@@ -112,26 +125,83 @@ target_path="$("${EVAL_BIN}" subset --root "${ROOT_DIR}" --profile "${profile_fi
 	fail "building the subset failed; see the error above."
 [ -n "${target_path}" ] || fail "crosswalk-eval subset printed no target catalog path."
 
-progress "Importing the subset and the target catalog ..."
-source_id="$(import_catalog "${run_dir}/subset.json")"
-target_id="$(import_catalog "${target_path}")"
+if [ -n "${JOB}" ]; then
+	job_id="${JOB}"
+	if [ -n "${NO_CACHE}" ]; then
+		progress "NO_CACHE is ignored with JOB: the job already ran with its own cache setting."
+	fi
+	progress "Scoring existing job ${job_id}; polling every ${EVAL_POLL}s, timeout ${EVAL_TIMEOUT}s ..."
+else
+	progress "Importing the subset and the target catalog ..."
+	source_id="$(import_catalog "${run_dir}/subset.json")"
+	target_id="$(import_catalog "${target_path}")"
 
-start_args=(run start --source "${source_id}" --target "${target_id}")
-if [ "${NO_CACHE}" = "1" ]; then
-	start_args+=(--no-cache)
+	start_args=(run start --source "${source_id}" --target "${target_id}")
+	if [ "${NO_CACHE}" = "1" ]; then
+		start_args+=(--no-cache)
+	fi
+	job_id="$(crosscodex "${start_args[@]}" --json | jq -er '.job_id')" ||
+		fail "run start failed or returned no job_id; see the CLI error above."
+	progress "Job ${job_id} started (source ${source_id}, target ${target_id}); polling every ${EVAL_POLL}s, timeout ${EVAL_TIMEOUT}s ..."
 fi
-job_id="$(crosscodex "${start_args[@]}" --json | jq -er '.job_id')" ||
-	fail "run start failed or returned no job_id; see the CLI error above."
-progress "Job ${job_id} started (source ${source_id}, target ${target_id}); polling every ${EVAL_POLL}s, timeout ${EVAL_TIMEOUT}s ..."
+
+# check_job_catalogs refuses a JOB whose catalogs are not the profile's subset
+# and target file. Catalog IDs are per tenant, so it compares content: the
+# SHA-256 of the bytes each job catalog was imported from (catalog inspect's
+# content_hash; import stores OSCAL JSON unchanged) with the SHA-256 of
+# subset.json and of the target file. The subset is byte-identical for the
+# same profile and source. A missing hash is a mismatch. Server values are
+# compared raw and shown with control characters replaced.
+check_job_catalogs() {
+	jq -e '.analysis.source_catalog.catalog_id and .analysis.target_catalog.catalog_id' "${status_file}" >/dev/null ||
+		fail "run status of job ${job_id} names no source and target catalogs (no \"analysis\"), so it cannot be checked against profile ${PROFILE}. Score a job with a crosscodex version whose run status --json prints \"analysis\", or start a new run without JOB."
+	local side file key id label got want mismatches=""
+	for side in source target; do
+		file="${target_path}"
+		if [ "${side}" = "source" ]; then
+			file="${run_dir}/subset.json"
+		fi
+		key="${side}_catalog"
+		id="$(jq -r --arg k "${key}" '.analysis[$k].catalog_id' "${status_file}")"
+		label="$(jq -r --arg k "${key}" 'def show: tostring | gsub("[[:cntrl:]]"; "?") | .[0:200];
+			.analysis[$k] | "\(.name | show) (ID \(.catalog_id | show))"' "${status_file}")"
+		got="$(crosscodex --json catalog inspect -- "${id}" | jq -r '.content_hash // "" | tostring')" ||
+			fail "catalog inspect of job ${job_id}'s ${side} catalog ${label} failed; see the CLI error above."
+		want="$(sha256sum "${file}")" || fail "hashing ${file} failed."
+		want="${want%% *}"
+		if [ "${got}" != "${want}" ]; then
+			if [ -z "${got}" ]; then
+				got="none recorded"
+			else
+				got="$(printf '%s' "${got}" | LC_ALL=C tr -c '0-9a-f' '?' | cut -c1-12)"
+			fi
+			mismatches+="
+${side}: job catalog ${label} has content SHA-256 ${got}, but ${file} has ${want:0:12}"
+		fi
+	done
+	if [ -n "${mismatches}" ]; then
+		fail "the catalogs of job ${job_id} do not match profile ${PROFILE}:${mismatches}
+Pass the JOB of a run started on this profile's subset and target, or start a new run without JOB."
+	fi
+}
 
 # Poll until the job is terminal. A failed status call is reported and retried
 # until the timeout, so a gateway restart mid-run does not discard the job.
 started="$(date +%s)"
 status_file="${run_dir}/status.json"
+job_checked=0
 while true; do
 	if crosscodex run status "${job_id}" --json >"${status_file}.tmp"; then
 		mv "${status_file}.tmp" "${status_file}"
 		status="$(jq -r '.status' "${status_file}")"
+		# A wrong JOB is refused on the first status read that names its
+		# catalogs, not after it completes. A running job without "analysis"
+		# is not refused: it may not have recorded it yet.
+		if [ -n "${JOB}" ] && [ "${job_checked}" = "0" ] &&
+			jq -e '.analysis.source_catalog.catalog_id and .analysis.target_catalog.catalog_id' "${status_file}" >/dev/null; then
+			check_job_catalogs
+			job_checked=1
+		fi
 		case "${status}" in
 		JOB_STATUS_COMPLETED) break ;;
 		JOB_STATUS_FAILED | JOB_STATUS_CANCELLED)
@@ -150,9 +220,31 @@ while true; do
 	sleep "${EVAL_POLL}"
 done
 
+# A job whose status never named its catalogs is refused here, on the completed
+# job's final status, before anything is exported.
+if [ -n "${JOB}" ] && [ "${job_checked}" = "0" ]; then
+	check_job_catalogs
+fi
+
 progress "Exporting results ..."
 crosscodex results export "${job_id}" --stage analyzer --format json >"${run_dir}/mappings.json"
 crosscodex results candidates "${job_id}" --format json >"${run_dir}/candidates.json"
+
+# The composed text the pipeline sends analyzers, for crosswalk-eval label-input.
+# With JOB the catalog IDs are the job's own, from its run status.
+if [ "${LABEL_INPUT}" = "1" ]; then
+	if [ -n "${JOB}" ]; then
+		source_id="$(jq -er '.analysis.source_catalog.catalog_id' "${status_file}")" ||
+			fail "run status of job ${job_id} names no source catalog, so LABEL_INPUT cannot dump its controls."
+		target_id="$(jq -er '.analysis.target_catalog.catalog_id' "${status_file}")" ||
+			fail "run status of job ${job_id} names no target catalog, so LABEL_INPUT cannot dump its controls."
+	fi
+	progress "Dumping the catalogs' controls for label-input ..."
+	crosscodex --json catalog controls -- "${source_id}" >"${run_dir}/controls-source.json" ||
+		fail "dumping the controls of source catalog ${source_id} failed; see the CLI error above."
+	crosscodex --json catalog controls -- "${target_id}" >"${run_dir}/controls-target.json" ||
+		fail "dumping the controls of target catalog ${target_id} failed; see the CLI error above."
+fi
 
 score_args=(score --root "${ROOT_DIR}" --profile "${profile_file}"
 	--subset "${run_dir}/subset.json" --mappings "${run_dir}/mappings.json"

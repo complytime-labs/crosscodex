@@ -21,6 +21,8 @@ steps:
         CROSSCODEX_BIN={{.input.root}}/test/tooling/lib/fake-crosscodex.sh \
         EVAL_BIN={{.input.root}}/.test-output/eval/tooling-bin/crosswalk-eval \
         FAKE_FIXTURES={{.input.root}}/test/eval/crosswalk/testdata/run \
+        FAKE_SOURCE_FILE="$work/out/synth-run/t1/subset.json" \
+        FAKE_TARGET_FILE={{.input.root}}/test/eval/crosswalk/testdata/synthetic_catalog.json \
         EVAL_ENDPOINT=https://localhost:1 EVAL_CA=ca.pem EVAL_CERT=client.pem EVAL_KEY=client-key.pem \
         EVAL_POLL=1 {{.input.env}} \
         bash {{.input.root}}/test/eval/crosswalk/run.sh 2>&1) || rc=$?

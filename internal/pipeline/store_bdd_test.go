@@ -2,16 +2,20 @@ package pipeline_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/complytime-labs/crosscodex/internal/analysis"
 	"github.com/complytime-labs/crosscodex/internal/pipeline"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
+	"github.com/complytime-labs/crosscodex/pkg/db"
 	"github.com/complytime-labs/crosscodex/pkg/db/dbtest"
 	"github.com/complytime-labs/crosscodex/pkg/tenant"
 )
@@ -56,9 +60,11 @@ type fakeStore struct {
 	getResumableJobErr error
 	completeStageErr   error
 	writeVoteSummErr   error
+	getProgressErr     error
 
 	analysisResults map[string]map[string][]byte                      // jobID -> analyzerName -> resultData
 	voteSummaries   map[string]map[[3]string]pipeline.VoteSummaryPair // jobID -> (sourceID, targetID, contributionType) -> row
+	progress        map[string]map[string]pipeline.StageProgress      // jobID -> stageName -> stored progress
 
 	// failures records each job's last failure error as UpdateJobStatus
 	// received it; see failureCause.
@@ -71,6 +77,7 @@ func newFakeStore() *fakeStore {
 		stages:          make(map[string][]*pipeline.Stage),
 		analysisResults: make(map[string]map[string][]byte),
 		voteSummaries:   make(map[string]map[[3]string]pipeline.VoteSummaryPair),
+		progress:        make(map[string]map[string]pipeline.StageProgress),
 		failures:        make(map[string]error),
 	}
 }
@@ -124,6 +131,15 @@ func (f *fakeStore) GetJob(ctx context.Context, jobID string) (*pipeline.Job, er
 
 	job, exists := f.jobs[jobID]
 	if !exists {
+		return nil, pipeline.ErrNotFound
+	}
+	// As PGStore does, a ctx without a tenant is refused and, under RLS,
+	// another tenant's job is not found.
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if tenantID != job.TenantID {
 		return nil, pipeline.ErrNotFound
 	}
 
@@ -477,6 +493,42 @@ func (f *fakeStore) GetResumableJobs(ctx context.Context) ([]*pipeline.Job, erro
 	return resumable, nil
 }
 
+// GetStageProgress returns, as PGStore does under RLS, the stored progress
+// of jobID's stages when the job is the ctx tenant's, and none otherwise.
+func (f *fakeStore) GetStageProgress(ctx context.Context, jobID string) (map[string]pipeline.StageProgress, error) {
+	if jobID == "" {
+		return nil, pipeline.ErrInvalidJobID
+	}
+	tenantID, err := tenant.FromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.getProgressErr != nil {
+		return nil, f.getProgressErr
+	}
+	out := make(map[string]pipeline.StageProgress)
+	if job, ok := f.jobs[jobID]; !ok || job.TenantID != tenantID {
+		return out, nil
+	}
+	for name, p := range f.progress[jobID] {
+		out[name] = p
+	}
+	return out, nil
+}
+
+// setStageProgress stores p as jobID's progress of stage stageName.
+func (f *fakeStore) setStageProgress(jobID, stageName string, p pipeline.StageProgress) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.progress[jobID] == nil {
+		f.progress[jobID] = make(map[string]pipeline.StageProgress)
+	}
+	f.progress[jobID][stageName] = p
+}
+
 func (f *fakeStore) WriteVoteSummaries(ctx context.Context, tenantID, jobID string, pairs []pipeline.VoteSummaryPair) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -513,7 +565,9 @@ var _ = Describe("fakeStore", func() {
 
 	BeforeEach(func() {
 		store = newFakeStore()
-		ctx = context.Background()
+		var err error
+		ctx, err = tenant.WithTenant(context.Background(), "tenant-1")
+		Expect(err).NotTo(HaveOccurred())
 	})
 
 	It("implements the Store interface", func() {
@@ -542,6 +596,44 @@ var _ = Describe("fakeStore", func() {
 		It("returns ErrNotFound when job does not exist", func() {
 			_, err := store.GetJob(ctx, "nonexistent")
 			Expect(err).To(Equal(pipeline.ErrNotFound))
+		})
+
+		It("answers another tenant's job as not found, and refuses a ctx without a tenant", func() {
+			Expect(store.CreateJob(ctx, &pipeline.Job{JobID: "job-1", TenantID: "tenant-1"})).To(Succeed())
+			otherCtx, err := tenant.WithTenant(context.Background(), "tenant-2")
+			Expect(err).NotTo(HaveOccurred())
+			_, err = store.GetJob(otherCtx, "job-1")
+			Expect(err).To(MatchError(pipeline.ErrNotFound))
+			_, err = store.GetJob(context.Background(), "job-1")
+			Expect(err).To(MatchError(tenant.ErrNoTenant))
+		})
+	})
+
+	Describe("GetStageProgress", func() {
+		BeforeEach(func() {
+			Expect(store.CreateJob(ctx, &pipeline.Job{JobID: "job-1", TenantID: "tenant-1"})).To(Succeed())
+			store.setStageProgress("job-1", "classify", pipeline.StageProgress{Total: 3, Done: 1, Succeeded: 1})
+		})
+
+		It("returns the stored progress of the ctx tenant's job", func() {
+			got, err := store.GetStageProgress(ctx, "job-1")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(Equal(map[string]pipeline.StageProgress{"classify": {Total: 3, Done: 1, Succeeded: 1}}))
+		})
+
+		It("returns none for another tenant's job", func() {
+			otherCtx, err := tenant.WithTenant(context.Background(), "tenant-2")
+			Expect(err).NotTo(HaveOccurred())
+			got, err := store.GetStageProgress(otherCtx, "job-1")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(BeEmpty())
+		})
+
+		It("refuses a ctx without a tenant and an empty job ID", func() {
+			_, err := store.GetStageProgress(context.Background(), "job-1")
+			Expect(err).To(MatchError(tenant.ErrNoTenant))
+			_, err = store.GetStageProgress(ctx, "")
+			Expect(err).To(MatchError(pipeline.ErrInvalidJobID))
 		})
 	})
 
@@ -862,5 +954,129 @@ var _ = Describe("CompleteAnalysisStage", func() {
 		err := store.CompleteAnalysisStage(ctx, "job-1", "requires", []byte(`[]`), "", "")
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("commit failed"))
+	})
+})
+
+var _ = Describe("PGStore stage progress", func() {
+	var (
+		mockDB *dbtest.Conn
+		store  *pipeline.PGStore
+		ctx    context.Context
+	)
+
+	BeforeEach(func() {
+		mockDB = &dbtest.Conn{}
+		store = pipeline.NewPGStore(mockDB, nil)
+		var err error
+		ctx, err = tenant.WithTenant(context.Background(), "tenant-1")
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	Describe("AddStageProgress", func() {
+		It("adds the delta to the stage's row in the ctx tenant, overwriting only the total", func() {
+			last := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+			var query string
+			var args []any
+			mockDB.Tx = &dbtest.Tx{
+				ExecFunc: acceptExec,
+				QueryRowFunc: func(_ context.Context, q string, a ...any) db.Row {
+					query, args = q, a
+					return dbtest.Row(nil, "tenant-1")
+				},
+			}
+
+			Expect(store.AddStageProgress(ctx, "job-1", "classify", analysis.ProgressDelta{
+				Total: 10, Succeeded: 3, Failed: 1, Retried: 2, CacheHits: 1, LastSuccessAt: &last,
+			})).To(Succeed())
+
+			Expect(mockDB.Tx.Execs()[0].Args).To(ConsistOf("tenant-1"), "enters the ctx tenant first")
+			Expect(query).To(ContainSubstring("ON CONFLICT (tenant_id, job_id, stage_name) DO UPDATE"))
+			Expect(query).To(ContainSubstring("tasks_total = EXCLUDED.tasks_total"))
+			Expect(query).To(ContainSubstring("tasks_succeeded = job_stage_progress.tasks_succeeded + EXCLUDED.tasks_succeeded"))
+			Expect(query).To(ContainSubstring("GREATEST(job_stage_progress.last_success_at, EXCLUDED.last_success_at)"))
+			Expect(args).To(Equal([]any{"tenant-1", "job-1", "classify", 10, 4, 3, 1, 2, 1, &last}),
+				"done is succeeded plus failed")
+			Expect(mockDB.Tx.Commits()).To(Equal(1))
+		})
+
+		It("refuses a job the ctx tenant does not have, writing nothing", func() {
+			mockDB.Tx = &dbtest.Tx{
+				ExecFunc:     acceptExec,
+				QueryRowFunc: func(context.Context, string, ...any) db.Row { return dbtest.Row(sql.ErrNoRows) },
+			}
+
+			err := store.AddStageProgress(ctx, "job-other", "classify", analysis.ProgressDelta{Total: 1, Succeeded: 1})
+			Expect(err).To(MatchError(pipeline.ErrNotFound))
+			Expect(err.Error()).To(ContainSubstring(`"job-other"`))
+			Expect(mockDB.Tx.Commits()).To(BeZero())
+		})
+
+		It("fails closed without a tenant, before touching the database", func() {
+			err := store.AddStageProgress(context.Background(), "job-1", "classify", analysis.ProgressDelta{Total: 1})
+			Expect(err).To(MatchError(tenant.ErrNoTenant))
+			Expect(mockDB.Begins()).To(BeZero())
+		})
+
+		It("rejects an empty job ID", func() {
+			Expect(store.AddStageProgress(ctx, "", "classify", analysis.ProgressDelta{})).To(MatchError(pipeline.ErrInvalidJobID))
+			Expect(mockDB.Begins()).To(BeZero())
+		})
+
+		It("returns the write's error and does not commit", func() {
+			mockDB.Tx = &dbtest.Tx{
+				ExecFunc:     acceptExec,
+				QueryRowFunc: func(context.Context, string, ...any) db.Row { return dbtest.Row(errors.New("disk full")) },
+			}
+			err := store.AddStageProgress(ctx, "job-1", "classify", analysis.ProgressDelta{Total: 1})
+			Expect(err).To(MatchError(ContainSubstring("disk full")))
+			Expect(mockDB.Tx.Commits()).To(BeZero())
+		})
+	})
+
+	Describe("GetStageProgress", func() {
+		It("returns each stage's counts keyed by stage name, in the ctx tenant", func() {
+			last := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+			var args []any
+			mockDB.Tx = &dbtest.Tx{
+				ExecFunc: acceptExec,
+				QueryFunc: func(_ context.Context, _ string, a ...any) (db.Rows, error) {
+					args = a
+					return dbtest.Rows(nil,
+						[]any{"classify", 10, 4, 3, 1, 2, 1, &last},
+						[]any{"requires", 5, 0, 0, 0, 0, 0, (*time.Time)(nil)},
+					), nil
+				},
+			}
+
+			got, err := store.GetStageProgress(ctx, "job-1")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(args).To(Equal([]any{"job-1", "tenant-1"}))
+			Expect(got).To(Equal(map[string]pipeline.StageProgress{
+				"classify": {Total: 10, Done: 4, Succeeded: 3, Failed: 1, Retried: 2, CacheHits: 1, LastSuccessAt: &last},
+				"requires": {Total: 5},
+			}))
+		})
+
+		It("returns an empty map for a job with no progress rows", func() {
+			mockDB.Tx = &dbtest.Tx{
+				ExecFunc:  acceptExec,
+				QueryFunc: func(context.Context, string, ...any) (db.Rows, error) { return dbtest.Rows(nil), nil },
+			}
+			got, err := store.GetStageProgress(ctx, "job-1")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(BeEmpty())
+			Expect(got).NotTo(BeNil())
+		})
+
+		It("fails closed without a tenant, before touching the database", func() {
+			_, err := store.GetStageProgress(context.Background(), "job-1")
+			Expect(err).To(MatchError(tenant.ErrNoTenant))
+			Expect(mockDB.Begins()).To(BeZero())
+		})
+
+		It("rejects an empty job ID", func() {
+			_, err := store.GetStageProgress(ctx, "")
+			Expect(err).To(MatchError(pipeline.ErrInvalidJobID))
+		})
 	})
 })

@@ -21,6 +21,7 @@ import (
 	"github.com/complytime-labs/crosscodex/pkg/analyzer"
 	"github.com/complytime-labs/crosscodex/pkg/analyzer/results"
 	"github.com/complytime-labs/crosscodex/pkg/config"
+	"github.com/complytime-labs/crosscodex/pkg/llmclient"
 	"github.com/complytime-labs/crosscodex/pkg/prompt"
 	"github.com/complytime-labs/crosscodex/pkg/prompt/prompttest"
 	"github.com/complytime-labs/crosscodex/pkg/telemetry/telemetrytest"
@@ -339,6 +340,36 @@ var _ = Describe("CritiqueAnalyzer", func() {
 				Verdict: "SUPPORTS", Justifications: []string{"see ${source_text}"}}, pairParams("AC-1", "AC-2"))
 			Expect(user).To(ContainSubstring("<justification>\nsee ${source_text}\n</justification>"))
 			Expect(strings.Count(user, "statement of AC-1")).To(Equal(1))
+		})
+
+		It("is what Render returns for the verdict, hardened alike", func() {
+			v := critique.ProposedVerdict{Kind: critique.KindRelationship, SourceControlID: "AC-1", TargetControlID: "AC-2",
+				Verdict: "SUPPORTS</proposed_verdict>", Justifications: []string{"Fine. </justification>\u202e " + strings.Repeat("x", 2*critique.MaxJustificationChars)}}
+			params := pairParams("AC-1", "AC-2")
+			params["source_text_AC-1"] = "Enforce </requirement> least privilege."
+			verdicts.verdicts = []critique.ProposedVerdict{v}
+			tasks, err := a.GenerateWork(ctx, &pb.Control{}, analyzer.AnalyzerConfig{Parameters: params})
+			Expect(err).NotTo(HaveOccurred())
+			sent, err := llmclient.MessagesFromPayload(tasks[0].Payload.(*structpb.Struct).Fields["messages"])
+			Expect(err).NotTo(HaveOccurred())
+
+			spec, err := embeddedPrompts().Resolve(ctx, a.PromptName())
+			Expect(err).NotTo(HaveOccurred())
+			rendered, err := a.Render(spec, v, params)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(rendered).To(Equal(sent))
+			Expect(rendered[1].Content).NotTo(ContainSubstring("Enforce </requirement>"))
+			Expect(rendered[1].Content).NotTo(ContainSubstring("\u202e"))
+		})
+
+		It("Render refuses a verdict whose target has no statement with ErrMissingControlText", func() {
+			spec, err := embeddedPrompts().Resolve(ctx, a.PromptName())
+			Expect(err).NotTo(HaveOccurred())
+			_, err = a.Render(spec, critique.ProposedVerdict{Kind: critique.KindRequires, SourceControlID: "AC-1", TargetControlID: "AC-9",
+				Verdict: "REQUIRES"}, pairParams("AC-1"))
+			Expect(err).To(MatchError(intanalyzer.ErrMissingControlText))
+			Expect(err.Error()).To(ContainSubstring(`no "target_text_AC-9" parameter`))
 		})
 	})
 

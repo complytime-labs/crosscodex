@@ -78,6 +78,21 @@ var _ = Describe("Archiver", func() {
 		Expect(string(body)).To(ContainSubstring("requires_candidates"))
 	})
 
+	It("selects the job's stage progress into the archive doc", func() {
+		var query string
+		conn := &dbtest.Conn{Tx: &dbtest.Tx{
+			ExecFunc: func(context.Context, string, ...any) error { return nil },
+			QueryRowFunc: func(_ context.Context, q string, _ ...any) db.Row {
+				query = q
+				return dbtest.Row(nil, []byte(`{"job":{"job_id":"job-old"},"job_stage_progress":[]}`))
+			},
+		}}
+		a := retention.NewArchiver(conn, nil, &storagetest.Fake{})
+		Expect(a.Archive(ctx, retention.Candidate{Store: retention.StorePostgres, Class: retention.ClassJobResults, ID: "job-old"})).To(Succeed())
+		Expect(query).To(ContainSubstring("'job_stage_progress'"))
+		Expect(query).To(ContainSubstring("FROM job_stage_progress"))
+	})
+
 	DescribeTable("errors rather than archiving an empty doc when the parent is absent",
 		func(class retention.DataClass, docJSON, id, wantParent string) {
 			conn := archiveJSONConn([]byte(docJSON))

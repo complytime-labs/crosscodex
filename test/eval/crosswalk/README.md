@@ -94,6 +94,72 @@ are accepted.
   produced rows: read the labelled precision of a run only as far as coverage
   supports. Labels for pairs a run did not produce are ignored.
 
+### Labelling a run end to end
+
+Model judges are outside this repository: the tool prepares their input and
+merges their output, and a human resolves what they dispute. `crosswalk-eval`
+is built by `task eval:build` into `.test-output/eval/bin`. The steps:
+
+1. **Run with `LABEL_INPUT=1`**: `task eval:crosswalk PROFILE=<p> LABEL=<l>
+   LABEL_INPUT=1`. Besides the usual files, the run directory then holds
+   `controls-source.json` and `controls-target.json`, the output of
+   `crosscodex catalog controls <id> --json` for the job's two catalogs. That
+   is the text the pipeline sent the analyzers, so judges see what the models
+   saw and the text is never rebuilt from the OSCAL.
+2. **Write the pairs file**: `crosswalk-eval label-input --run <run dir>`
+   prints JSONL to stdout, one line per candidate pair in `candidates.json`:
+   `source`, `target`, `source_title`, `source_text`, `target_title`,
+   `target_text`. It writes nothing if a pair names a control missing from a
+   dump, and lists every such control.
+3. **Judge**: give the file to each judge (`opus`, `sonnet`). Each returns
+   JSONL, one object per pair, with exactly the keys `source`, `target`,
+   `verdict` (`related` or `unrelated`; a judge never emits `disputed`) and
+   `rationale` (at most 2,016 bytes). Every judge must cover every pair in the pairs file and no
+   other. Unknown keys and trailing data are errors.
+4. **Merge**: `crosswalk-eval labels merge --input labels/<p>.yaml --pairs
+   <pairs file> --judge opus=<file> --judge sonnet=<file> --out
+   labels/<p>.yaml`. `--input` is optional (start from no labels); `--pairs`,
+   `--judge` (at least one; repeat per judge) and `--out` are required. `--out`
+   is written atomically, so it may name the `--input` file.
+   - Judges that agree yield one entry with both in `judged_by` and the first
+     judge's rationale. Judges that disagree yield a `disputed` entry holding
+     every judge's rationale, labelled by name. A judge rationale over 2,016
+     bytes is an error, so the disputed entry always fits the loader's limit.
+   - Existing entries for pairs in the pairs file are replaced, except a
+     human entry, which is kept and suppresses the model entry. Entries for
+     other pairs are kept.
+   - The disputed pairs are printed to stdout, one `source<TAB>target` per
+     line, after the file is written. Resolve each by hand as under "Resolve
+     `disputed`" above.
+5. **Rescore** the run (or a new one with `JOB=`) to see the new coverage.
+
+Exit codes: 0 success (disputed pairs do not change it), 1 an input or
+output error (unreadable or oversized file, a pair a judge missed, a judge
+entry for a pair not in the pairs file, an invalid verdict, a bad existing
+labels file; nothing is written), 2 a usage error (missing flag, a `--judge`
+without `NAME=FILE`, a judge name other than `opus` or `sonnet`, a duplicate
+judge name). Judge files, the pairs file and the dumps hold untrusted text
+(catalog text and model output): the tool bounds their size (judge file 8 MiB
+and 50,000 lines, pairs file 128 MiB and 200,000 lines) and the labels it
+writes pass through the same loader the scorer uses. `FuzzMergeJudgeFile`
+covers the merge; fuzzing is run by a human (`task test:fuzz`), not by agents.
+
+### Scoring an existing job
+
+`task eval:crosswalk PROFILE=<p> JOB=<job id>` waits for the job to finish
+and scores it instead of importing and starting one; `NO_CACHE` is ignored
+because the job ran with its own cache setting. Catalog IDs differ per
+tenant, so the runner compares content: the SHA-256 of the bytes each of the
+job's catalogs was imported from (`catalog inspect --json`, `content_hash`)
+must equal the SHA-256 of the profile's `subset.json` and target catalog
+file. A mismatch, or a catalog with no recorded hash (imported before the hash
+existed), stops the run before scoring, naming both hashes. Limitation: the
+comparison is of exact bytes. A job whose catalogs were imported from another
+serialization of the same controls is refused even though it would score the
+same. With `LABEL_INPUT=1` the controls are dumped for the job's own catalogs,
+taken from its run status. `JOB` is validated as a plain identifier before
+use.
+
 ## Results
 
 `results/` holds dated records of measurements worth comparing against

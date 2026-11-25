@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 
 	connectrpc "connectrpc.com/connect"
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
+	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/internal/catalog"
 	"github.com/complytime-labs/crosscodex/pkg/catalogversion"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
@@ -30,6 +32,7 @@ func newCatalogCmd(state *cliState) *cobra.Command {
 	catalogCmd.AddCommand(newCatalogImportCmd(state))
 	catalogCmd.AddCommand(newCatalogListCmd(state))
 	catalogCmd.AddCommand(newCatalogInspectCmd(state))
+	catalogCmd.AddCommand(newCatalogControlsCmd(state))
 	catalogCmd.AddCommand(newCatalogValidateCmd(state))
 	catalogCmd.AddCommand(newCatalogRetireCmd(state))
 
@@ -443,6 +446,9 @@ func newCatalogInspectCmd(state *cliState) *cobra.Command {
 					fmt.Fprintf(w, "Format: %s\n", cat.GetFormat().String())
 					fmt.Fprintf(w, "Version: %s\n", cat.GetVersion())
 					fmt.Fprintf(w, "Controls: %d\n", cat.GetControlCount())
+					if hash := cat.GetProvenance().GetLineageMetadata()["content_hash"]; hash != "" {
+						fmt.Fprintf(w, "Content SHA-256: %s\n", terminalSafe(hash))
+					}
 					if version := catalogversion.OfCatalog(cat); version != "" {
 						fmt.Fprintf(w, "Document version: %s\n", terminalSafe(version))
 						fmt.Fprintf(w, "Current: %t\n", cat.GetCurrent())
@@ -470,6 +476,93 @@ func newCatalogInspectCmd(state *cliState) *cobra.Command {
 			"crosscodex catalog inspect cat_01234567890",
 			"crosscodex catalog show cat_01234567890",
 			"crosscodex catalog describe cat_01234567890 --tenant acme",
+		},
+	})
+
+	cmd.Flags().String("tenant", "", "Tenant to act on; must be the tenant your client certificate authenticates (default: that tenant)")
+
+	return cmd
+}
+
+// newCatalogControlsCmd lists a catalog's controls as analysis receives
+// them, so a reviewer sees the exact Title and Statement each analyzer is
+// given.
+func newCatalogControlsCmd(state *cliState) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "controls <catalog-id>",
+		Short: "List a catalog's controls as analysis receives them",
+		Long: `List every control of an imported catalog with the title and statement
+analysis gives each analyzer: a statement part's statement carries its
+parents' lead-ins, a title that only repeats the control's label is dropped,
+and a title-only control's title becomes its statement.
+
+The text comes from the catalog and is untrusted. The text output shows each
+field on one line, with control characters and invisible format characters
+removed; --json gives the text unchanged, JSON-escaped. Do not render either
+as markup (HTML, Markdown).
+
+The whole catalog is read in one response; it is not paginated.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			catalogID := args[0]
+			tenant, _ := cmd.Flags().GetString("tenant")
+
+			req := &pb.ListCatalogControlsRequest{
+				CatalogId: catalogID,
+			}
+			if tenant != "" {
+				req.TenantContext = &pb.TenantContext{
+					TenantId: tenant,
+				}
+			}
+
+			resp, err := state.client.ListCatalogControls(cmd.Context(), connectrpc.NewRequest(req))
+			if err != nil {
+				return fmt.Errorf("failed to list catalog controls: %w", err)
+			}
+
+			controls := resp.Msg.GetControls()
+			jsonControls := make([]map[string]any, len(controls))
+			for i, c := range controls {
+				jsonControls[i] = map[string]any{
+					"control_id": c.GetControlId(),
+					"title":      c.GetTitle(),
+					"statement":  c.GetStatement(),
+				}
+			}
+
+			return emit(cmd,
+				func(w io.Writer, _ bool) {
+					// Untrusted text is shown whole: cutting a statement
+					// would misstate what analysis receives.
+					for i, c := range controls {
+						if i > 0 {
+							fmt.Fprintln(w)
+						}
+						title := intanalyzer.CleanDisplay(c.GetTitle(), math.MaxInt)
+						if title == "" {
+							title = "(none)"
+						}
+						fmt.Fprintf(w, "Control: %s\n", intanalyzer.CleanDisplay(c.GetControlId(), math.MaxInt))
+						fmt.Fprintf(w, "Title: %s\n", title)
+						fmt.Fprintf(w, "Statement: %s\n", intanalyzer.CleanDisplay(c.GetStatement(), math.MaxInt))
+					}
+				},
+				map[string]any{
+					"catalog_id": catalogID,
+					"controls":   jsonControls,
+				},
+			)
+		},
+	}
+
+	guidedArgs(cmd, cobra.ExactArgs(1), argGuide{
+		noun:  "a catalog ID",
+		find:  "crosscodex catalog list",
+		usage: "crosscodex catalog controls <catalog-id>",
+		examples: []string{
+			"crosscodex catalog controls cat_01234567890",
+			"crosscodex catalog controls cat_01234567890 --json",
+			"crosscodex catalog controls cat_01234567890 --tenant acme",
 		},
 	})
 
@@ -641,6 +734,9 @@ func catalogToJSON(cat *pb.Catalog) map[string]any {
 		"version":       cat.GetVersion(),
 		"control_count": cat.GetControlCount(),
 		"properties":    cat.GetProperties(),
+		// The hex SHA-256 of the bytes the catalog was imported from; "" when
+		// none was recorded.
+		"content_hash": cat.GetProvenance().GetLineageMetadata()["content_hash"],
 	}
 	// Document fields appear only for a catalog under a document, so
 	// unversioned catalogs keep their previous JSON shape.
