@@ -10,6 +10,7 @@ import (
 	"pgregory.net/rapid"
 
 	"github.com/complytime-labs/crosscodex/internal/catalog"
+	"github.com/complytime-labs/crosscodex/pkg/oscal"
 )
 
 var _ = Describe("Property Specifications", Ordered, func() {
@@ -127,6 +128,86 @@ var _ = Describe("Property Specifications", Ordered, func() {
 					if s.Title != wantTitles[i] || s.Level != wantLevels[i] {
 						t.Fatalf("section %d = (%q, %d), want (%q, %d)", i, s.Title, s.Level, wantTitles[i], wantLevels[i])
 					}
+				}
+			})
+		})
+
+		It("maps every role element of a source tree to one item, in order, that BuildTree accepts", func() {
+			const maxDepth = 4
+			rapid.Check(GinkgoT(), func(t *rapid.T) {
+				groupLevels := rapid.IntRange(0, 2).Draw(t, "groupLevels")
+				var elements []map[string]any
+				var wantIDs []string
+				var wantGroup []bool
+				groups := 0
+				// node renders one source node at depth (0 = top) under the
+				// element parent (nil at the top), then its subtree. Groups
+				// (depth < groupLevels <= 2) always sit above the depth limit,
+				// so each gets at least one child.
+				var node func(depth int, parent any)
+				node = func(depth int, parent any) {
+					group := depth < groupLevels
+					minChildren, maxChildren := 0, 2
+					if group {
+						minChildren, maxChildren = 1, 3
+					}
+					if depth == maxDepth-1 {
+						maxChildren = 0
+					}
+					n := rapid.IntRange(minChildren, maxChildren).Draw(t, "children")
+					elementID := fmt.Sprintf("e-%03d", len(elements))
+					id := fmt.Sprintf("N-%03d", len(wantIDs))
+					e := map[string]any{"element_id": elementID, "type": "paragraph", "content": "Body " + id,
+						"level": nil, "parent_id": parent, "page": nil, "style": map[string]any{},
+						"id": id, "role": "control", "title": nil, "text": "Body " + id}
+					if n > 0 {
+						e["type"], e["level"] = "heading", depth+1
+					}
+					if group {
+						e["role"], e["title"], e["text"] = "group", "Group "+id, nil
+						groups++
+					}
+					elements = append(elements, e)
+					wantIDs = append(wantIDs, id)
+					wantGroup = append(wantGroup, group)
+					if n > 0 && rapid.Bool().Draw(t, "idlessText") {
+						elements = append(elements, map[string]any{"element_id": fmt.Sprintf("e-%03d", len(elements)),
+							"type": "paragraph", "content": "Kept for older readers.", "level": nil,
+							"parent_id": elementID, "page": nil, "style": map[string]any{}, "id": nil})
+					}
+					for range n {
+						node(depth+1, elementID)
+					}
+				}
+				for range rapid.IntRange(1, 3).Draw(t, "roots") {
+					node(0, nil)
+				}
+				data, err := json.Marshal(map[string]any{"schema_version": "1.3", "elements": elements})
+				if err != nil {
+					t.Fatalf("marshal: %v", err)
+				}
+
+				_, meta, err := catalog.AdaptIngestionOutput(data)
+				if err != nil {
+					t.Fatalf("valid output rejected: %v", err)
+				}
+				if len(meta.SourceItems) != len(wantIDs) {
+					t.Fatalf("got %d items, want %d", len(meta.SourceItems), len(wantIDs))
+				}
+				for i, item := range meta.SourceItems {
+					if item.ID != wantIDs[i] {
+						t.Fatalf("item %d has ID %q, want %q", i, item.ID, wantIDs[i])
+					}
+					if wantGroup[i] != (item.Class == "") {
+						t.Fatalf("item %d (%s) has class %q, want group=%v", i, item.ID, item.Class, wantGroup[i])
+					}
+				}
+				tree, err := oscal.BuildTree(meta.SourceItems)
+				if err != nil {
+					t.Fatalf("BuildTree: %v", err)
+				}
+				if len(tree.Containers) != groups {
+					t.Fatalf("got %d containers, want %d", len(tree.Containers), groups)
 				}
 			})
 		})

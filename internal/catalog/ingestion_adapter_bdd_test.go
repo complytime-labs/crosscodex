@@ -11,6 +11,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/complytime-labs/crosscodex/internal/catalog"
+	"github.com/complytime-labs/crosscodex/pkg/oscal"
 )
 
 // ingestionFixtureElement is the subset of a crosscodex-ingestion element the
@@ -65,6 +66,29 @@ func ingestionDoc(version string, elements ...map[string]any) []byte {
 
 func heading(id string, level int, parent any, content string) map[string]any {
 	return map[string]any{"element_id": id, "type": "heading", "level": level, "parent_id": parent, "content": content}
+}
+
+// withRole makes el a schema 1.3 source node: it sets id, role, title and text
+// (nil encodes null) and, when props is non-nil, properties.
+func withRole(el map[string]any, id, role string, title, text any, props map[string]string) map[string]any {
+	el["id"], el["role"], el["title"], el["text"] = id, role, title, text
+	if props != nil {
+		el["properties"] = props
+	}
+	return el
+}
+
+// withCatalogMeta sets metadata.title and metadata.source.catalog_version on
+// a document built by ingestionDoc (nil encodes null).
+func withCatalogMeta(data []byte, title, version any) []byte {
+	var doc map[string]any
+	Expect(json.Unmarshal(data, &doc)).To(Succeed())
+	meta := doc["metadata"].(map[string]any)
+	meta["title"] = title
+	meta["source"] = map[string]any{"kind": "structured", "format": "json", "catalog_version": version}
+	out, err := json.Marshal(doc)
+	Expect(err).NotTo(HaveOccurred())
+	return out
 }
 
 var _ = Describe("AdaptIngestionOutput", func() {
@@ -274,6 +298,14 @@ var _ = Describe("AdaptIngestionOutput", func() {
 		Entry("an element field of the wrong JSON type",
 			[]byte(`{"schema_version":"1.0","elements":[{"element_id":7,"type":"paragraph","content":"x"}]}`),
 			catalog.ErrInvalidIngestionOutput, "elements[0].element_id is not valid JSON"),
+		// Source-node and metadata keys are decoded on every path, so a
+		// schema-invalid value fails output without roles too.
+		Entry("a non-string id on output without roles",
+			ingestionDoc("1.2", map[string]any{"id": 5}),
+			catalog.ErrInvalidIngestionOutput, "elements[0].id is not valid JSON"),
+		Entry("metadata that is not an object, on output without roles",
+			[]byte(`{"schema_version":"1.2","metadata":"x","elements":[{"element_id":"e","type":"paragraph","content":"x"}]}`),
+			catalog.ErrInvalidIngestionOutput, "metadata is not valid JSON"),
 		Entry("a table whose delimiter row has a different number of cells",
 			ingestionDoc("1.2", map[string]any{"type": "table", "content": "| a | b |\n|---|\n| 1 | 2 |"}),
 			catalog.ErrInvalidIngestionOutput, "elements[0] is a table whose delimiter row has 1 cells, but its header has 2"),
@@ -281,6 +313,203 @@ var _ = Describe("AdaptIngestionOutput", func() {
 			ingestionDoc("1.2", map[string]any{"type": "table", "content": "| a | b |\n|---|---|\n| 1 |"}),
 			catalog.ErrInvalidIngestionOutput, "elements[0] is a table whose row 1 has 1 cells, but its header has 2"),
 	)
+})
+
+// sensitiveControl is a top-level role control paragraph whose id, title and
+// text carry markers a contract-break spec asserts never reach the error.
+func sensitiveControl(elementID, id string) map[string]any {
+	return withRole(map[string]any{"element_id": elementID, "content": "Sensitive body."},
+		id, "control", "Sensitive title", "Sensitive body.", nil)
+}
+
+func without(el map[string]any, key string) map[string]any {
+	delete(el, key)
+	return el
+}
+
+var _ = Describe("AdaptIngestionOutput with element roles", func() {
+	It("maps an ASVS-shaped output to source items, skipping id-less text", func() {
+		data := withCatalogMeta(ingestionDoc("1.3",
+			withRole(heading("e-1", 1, nil, "Encoding and Sanitization"), "V1", "group", "Encoding and Sanitization", "Chapter intro.", nil),
+			map[string]any{"element_id": "e-2", "content": "Chapter intro.", "parent_id": "e-1"},
+			withRole(heading("e-3", 2, "e-1", "Architecture"), "V1.1", "group", "Architecture", nil, nil),
+			withRole(map[string]any{"element_id": "e-4", "content": "Verify one.", "parent_id": "e-3"},
+				"V1.1.1", "control", nil, "Verify one.", map[string]string{"level": "1"}),
+			withRole(map[string]any{"element_id": "e-5", "content": "Verify two.", "parent_id": "e-3"},
+				"V1.1.2", "control", nil, "Verify two.", map[string]string{"level": "2"}),
+		), "Test Verification Standard", "5.0.0")
+
+		doc, meta, err := catalog.AdaptIngestionOutput(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(doc).To(BeZero())
+		Expect(meta.SchemaVersion).To(Equal("1.3"))
+		Expect(meta.CatalogTitle).To(Equal("Test Verification Standard"))
+		Expect(meta.CatalogVersion).To(Equal("5.0.0"))
+		Expect(meta.SourceItems).To(Equal([]oscal.ControlItem{
+			{ID: "V1", Title: "Encoding and Sanitization", Text: "Chapter intro."},
+			{ID: "V1.1", Title: "Architecture", GroupID: "V1"},
+			{ID: "V1.1.1", Text: "Verify one.", GroupID: "V1.1", Class: oscal.ClassRequirement, Props: map[string]string{"level": "1"}},
+			{ID: "V1.1.2", Text: "Verify two.", GroupID: "V1.1", Class: oscal.ClassRequirement, Props: map[string]string{"level": "2"}},
+		}))
+	})
+
+	It("links a control under a control by ParentID, outside any group", func() {
+		data := withCatalogMeta(ingestionDoc("1.3",
+			withRole(heading("e-1", 1, nil, "Account Management"), "AC-2", "control", "Account Management", "Manage accounts.", nil),
+			map[string]any{"element_id": "e-2", "content": "Manage accounts.", "parent_id": "e-1", "id": nil},
+			withRole(map[string]any{"element_id": "e-3", "content": "Automate it.", "parent_id": "e-1"},
+				"AC-2(1)", "control", "Automated Account Management", "Automate it.", nil),
+		), "Test Control Catalog", nil)
+
+		_, meta, err := catalog.AdaptIngestionOutput(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(meta.CatalogTitle).To(Equal("Test Control Catalog"))
+		Expect(meta.CatalogVersion).To(BeEmpty())
+		Expect(meta.SourceItems).To(Equal([]oscal.ControlItem{
+			{ID: "AC-2", Title: "Account Management", Text: "Manage accounts.", Class: oscal.ClassRequirement},
+			{ID: "AC-2(1)", Title: "Automated Account Management", Text: "Automate it.", ParentID: "AC-2", Class: oscal.ClassRequirement},
+		}))
+	})
+
+	It("decodes null title, text and catalog title to empty strings", func() {
+		data := withCatalogMeta(ingestionDoc("1.3",
+			withRole(map[string]any{"element_id": "e-1", "content": "Body."}, "C-1", "control", nil, nil, nil),
+		), nil, nil)
+
+		_, meta, err := catalog.AdaptIngestionOutput(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(meta.CatalogTitle).To(BeEmpty())
+		Expect(meta.SourceItems).To(Equal([]oscal.ControlItem{{ID: "C-1", Class: oscal.ClassRequirement}}))
+	})
+
+	DescribeTable("rejects output breaking the role contract",
+		func(data []byte, wantIndex string) {
+			before := append([]byte(nil), data...)
+			var (
+				doc  oscal.StructuredDoc
+				meta catalog.IngestionMeta
+				err  error
+			)
+			Expect(func() { doc, meta, err = catalog.AdaptIngestionOutput(data) }).NotTo(Panic())
+			Expect(err).To(MatchError(catalog.ErrInvalidIngestionOutput))
+			Expect(err).To(MatchError(ContainSubstring(wantIndex)))
+			Expect(err).To(MatchError(ContainSubstring("Re-run the conversion")))
+			Expect(err.Error()).NotTo(ContainSubstring("Sensitive"))
+			Expect(err.Error()).NotTo(ContainSubstring("SID-"))
+			Expect(doc).To(BeZero())
+			Expect(meta).To(BeZero())
+			Expect(data).To(Equal(before))
+		},
+		Entry("an id without a role",
+			ingestionDoc("1.3", sensitiveControl("e-1", "SID-1"), without(sensitiveControl("e-2", "SID-2"), "role")),
+			"elements[1]"),
+		Entry("a role without an id",
+			ingestionDoc("1.3", sensitiveControl("e-1", "SID-1"), without(sensitiveControl("e-2", "SID-2"), "id")),
+			"elements[1]"),
+		Entry("a role with a null id",
+			ingestionDoc("1.3", sensitiveControl("e-1", "SID-1"),
+				map[string]any{"element_id": "e-2", "content": "Sensitive body.", "id": nil, "role": "control", "title": nil, "text": nil}),
+			"elements[1]"),
+		Entry("a blank id",
+			ingestionDoc("1.3", sensitiveControl("e-1", "SID-1"), sensitiveControl("e-2", " ")),
+			"elements[1]"),
+		Entry("a role outside group and control",
+			ingestionDoc("1.3", sensitiveControl("e-1", "SID-1"),
+				withRole(map[string]any{"element_id": "e-2", "content": "Sensitive body."}, "SID-2", "part", nil, nil, nil)),
+			"elements[1]"),
+		Entry("an id and role without the title key",
+			ingestionDoc("1.3", sensitiveControl("e-1", "SID-1"), without(sensitiveControl("e-2", "SID-2"), "title")),
+			"elements[1]"),
+		Entry("an id and role without the text key",
+			ingestionDoc("1.3", sensitiveControl("e-1", "SID-1"), without(sensitiveControl("e-2", "SID-2"), "text")),
+			"elements[1]"),
+		Entry("a group whose parent is a control",
+			ingestionDoc("1.3",
+				withRole(heading("e-1", 1, nil, "Sensitive heading"), "SID-1", "control", "Sensitive title", nil, nil),
+				withRole(heading("e-2", 2, "e-1", "Sensitive heading"), "SID-2", "group", "Sensitive title", nil, nil),
+				withRole(map[string]any{"element_id": "e-3", "content": "Sensitive body.", "parent_id": "e-2"}, "SID-3", "control", nil, "Sensitive body.", nil)),
+			"elements[1]"),
+		Entry("a group without children",
+			ingestionDoc("1.3",
+				sensitiveControl("e-1", "SID-1"),
+				withRole(heading("e-2", 1, nil, "Sensitive heading"), "SID-2", "group", "Sensitive title", nil, nil)),
+			"elements[1]"),
+		Entry("a group with a null title",
+			ingestionDoc("1.3",
+				withRole(heading("e-1", 1, nil, "Sensitive heading"), "SID-1", "group", nil, nil, nil),
+				withRole(map[string]any{"element_id": "e-2", "content": "Sensitive body.", "parent_id": "e-1"}, "SID-2", "control", nil, "Sensitive body.", nil)),
+			"elements[0]"),
+		Entry("text without an id",
+			ingestionDoc("1.3", sensitiveControl("e-1", "SID-1"),
+				map[string]any{"element_id": "e-2", "content": "Sensitive body.", "id": nil, "text": "Sensitive body."}),
+			"elements[1]"),
+		Entry("a null role",
+			ingestionDoc("1.3", sensitiveControl("e-1", "SID-1"),
+				map[string]any{"element_id": "e-2", "content": "Sensitive body.", "id": "SID-2", "role": nil, "title": nil, "text": nil}),
+			"elements[1]"),
+		Entry("a blank title",
+			ingestionDoc("1.3", sensitiveControl("e-1", "SID-1"),
+				withRole(map[string]any{"element_id": "e-2", "content": "Sensitive body."}, "SID-2", "control", " ", "Sensitive body.", nil)),
+			"elements[1] has a blank title"),
+		Entry("a blank text",
+			ingestionDoc("1.3", sensitiveControl("e-1", "SID-1"),
+				withRole(map[string]any{"element_id": "e-2", "content": "Sensitive body."}, "SID-2", "control", "Sensitive title", "\t", nil)),
+			"elements[1] has a blank text"),
+		Entry("a blank metadata.title",
+			withCatalogMeta(ingestionDoc("1.3", sensitiveControl("e-1", "SID-1")), " ", nil),
+			"metadata.title is blank"),
+		Entry("a blank metadata.source.catalog_version",
+			withCatalogMeta(ingestionDoc("1.3", sensitiveControl("e-1", "SID-1")), "Sensitive catalog", "\n"),
+			"metadata.source.catalog_version is blank"),
+		Entry("a property name that is not a lowercase identifier",
+			ingestionDoc("1.3", sensitiveControl("e-1", "SID-1"),
+				withRole(map[string]any{"element_id": "e-2", "content": "Sensitive body."}, "SID-2", "control", nil, "Sensitive body.",
+					map[string]string{"Sensitive_name": "Sensitive value"})),
+			"elements[1] has a property"),
+		Entry("a blank property value",
+			ingestionDoc("1.3", sensitiveControl("e-1", "SID-1"),
+				withRole(map[string]any{"element_id": "e-2", "content": "Sensitive body."}, "SID-2", "control", nil, "Sensitive body.",
+					map[string]string{"level": " "})),
+			"elements[1] has a property"),
+		Entry("a role element whose parent has no id",
+			ingestionDoc("1.3",
+				heading("e-1", 1, nil, "Sensitive heading"),
+				withRole(map[string]any{"element_id": "e-2", "content": "Sensitive body.", "parent_id": "e-1"}, "SID-2", "control", nil, "Sensitive body.", nil)),
+			"elements[1]"),
+	)
+
+	DescribeTable("keeps today's path for output without roles",
+		func(data []byte) {
+			doc, meta, err := catalog.AdaptIngestionOutput(data)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(meta.SourceItems).To(BeNil())
+			Expect(meta.CatalogTitle).To(BeEmpty())
+			Expect(meta.CatalogVersion).To(BeEmpty())
+			Expect(doc.Sections).NotTo(BeEmpty())
+		},
+		Entry("1.2 output with source ids", withCatalogMeta(ingestionDoc("1.2",
+			map[string]any{"element_id": "e-1", "type": "heading", "level": 1, "content": "V1", "id": "V1", "title": "Chapter"},
+			map[string]any{"element_id": "e-2", "content": "Verify.", "parent_id": "e-1", "id": "V1.1", "properties": map[string]string{"level": "1"}},
+		), "Test Catalog", "5.0.0")),
+		Entry("Docling PDF output", mustReadFile("testdata/ingestion/nist-sp800-171r3-excerpt.json")),
+		Entry("Docling HTML output", mustReadFile("testdata/ingestion/eurlex-nis2-32022L2555.json")),
+	)
+
+	It("adapts 1.2 output with source ids exactly as it does without them", func() {
+		withIDs := ingestionDoc("1.2",
+			map[string]any{"element_id": "e-1", "type": "heading", "level": 1, "content": "Chapter", "id": "V1", "title": "Chapter"},
+			map[string]any{"element_id": "e-2", "content": "Verify.", "parent_id": "e-1", "id": "V1.1", "properties": map[string]string{"level": "1"}},
+		)
+		plain := ingestionDoc("1.2",
+			heading("e-1", 1, nil, "Chapter"),
+			map[string]any{"element_id": "e-2", "content": "Verify.", "parent_id": "e-1"},
+		)
+		got, _, err := catalog.AdaptIngestionOutput(withIDs)
+		Expect(err).NotTo(HaveOccurred())
+		want, _, err := catalog.AdaptIngestionOutput(plain)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal(want))
+	})
 })
 
 var _ = Describe("IsIngestionOutput", func() {

@@ -31,6 +31,9 @@ const (
 	StructureTierLLMDetect  StructureTier = "llm-detect"
 	StructureTierLLMExtract StructureTier = "llm-extract"
 	StructureTierFallback   StructureTier = "fallback"
+	// StructureTierSourceIDs is not a cascade tier: the converted output named
+	// its own controls and groups, so no Structurer ran.
+	StructureTierSourceIDs StructureTier = "source-ids"
 )
 
 type StructuredDoc struct {

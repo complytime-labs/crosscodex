@@ -328,7 +328,10 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		}
 	}
 
-	var tree *oscal.Tree
+	var (
+		tree          *oscal.Tree
+		ingestionMeta IngestionMeta
+	)
 	switch {
 	case isOSCAL:
 		// Parse via Parser
@@ -349,7 +352,7 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		// Without a structurer (ingestion.address unset) the same JSON is a
 		// caller's upload, not conversion output, and takes the default.
 		var cerr *connect.Error
-		tree, cerr = s.structureIngestion(ctx, prov, req.Msg.GetDocumentId(), data)
+		tree, ingestionMeta, cerr = s.structureIngestion(ctx, prov, req.Msg.GetDocumentId(), data)
 		if cerr != nil {
 			return nil, cerr
 		}
@@ -372,9 +375,13 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 	if catalogName == "" && isOSCAL {
 		catalogName = doc.MetadataString(OSCALTitleKey)
 	}
+	if catalogName == "" {
+		catalogName = ingestionMeta.CatalogTitle
+	}
 	// The catalog's own version, so a crosswalk shows the exact versions it
-	// mapped. Only OSCAL documents carry one; any other format records "".
-	var catalogVersion string
+	// mapped. Only OSCAL documents and ingestion output naming its own
+	// controls carry one; any other format records "".
+	catalogVersion := ingestionMeta.CatalogVersion
 	if isOSCAL {
 		catalogVersion = doc.MetadataString(OSCALVersionKey)
 	}
@@ -445,7 +452,7 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		} else {
 			catalogRecord.DocumentSlug = slug
 			var verr *connect.Error
-			version, versionLabel, supersededID, changeReport, verr = s.importVersion(ctx, catalogRecord, containerRecords, controlRecords, explicitLabel, doc.MetadataString(OSCALVersionKey))
+			version, versionLabel, supersededID, changeReport, verr = s.importVersion(ctx, catalogRecord, containerRecords, controlRecords, explicitLabel, catalogVersion)
 			if verr != nil {
 				return nil, verr
 			}
@@ -543,15 +550,16 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 // importVersion stores catalog as a version of catalog.DocumentSlug and
 // returns the version's display string, its stored label, the catalog it
 // superseded and the control differences against it. catalog.VersionLabel is resolved here:
-// explicitLabel (already validated), else oscalVersion when it is a valid
-// label, else "<date> · <hash6>". An OSCAL version comes from the untrusted
-// document, so an invalid one falls back rather than blocking the import.
+// explicitLabel (already validated), else catalogVersion (the catalog's own
+// version from whichever format supplied it) when it is a valid label, else
+// "<date> · <hash6>". The version comes from the untrusted document, so an
+// invalid one falls back rather than blocking the import.
 //
 // The superseded catalog is read back from the stored row after the upsert,
 // not from a pre-read of the document's current version, so a concurrent import
 // cannot make it stale. Content that already carried this slug before the call
 // is an identical re-import: it keeps its place and reports nothing superseded.
-func (s *Service) importVersion(ctx context.Context, catalog CatalogRecord, containers []ContainerRecord, controls []ControlRecord, explicitLabel, oscalVersion string) (string, string, string, *crosscodexv1.ChangeReport, *connect.Error) {
+func (s *Service) importVersion(ctx context.Context, catalog CatalogRecord, containers []ContainerRecord, controls []ControlRecord, explicitLabel, catalogVersion string) (string, string, string, *crosscodexv1.ChangeReport, *connect.Error) {
 	existing, err := s.store.GetCatalog(ctx, catalog.CatalogID)
 	if err != nil && !errors.Is(err, ErrCatalogNotFound) {
 		return "", "", "", nil, s.internalError(ctx, "ParseCatalog", fmt.Errorf("read catalog before versioning: %w", err))
@@ -563,10 +571,10 @@ func (s *Service) importVersion(ctx context.Context, catalog CatalogRecord, cont
 			ErrVersionLabelConflict, existing.VersionLabel, catalog.DocumentSlug, explicitLabel, existing.VersionLabel))
 	}
 
-	if ValidateVersionLabel(oscalVersion) != nil {
-		oscalVersion = ""
+	if ValidateVersionLabel(catalogVersion) != nil {
+		catalogVersion = ""
 	}
-	catalog.VersionLabel = ResolveVersionLabel(explicitLabel, oscalVersion, catalog.CreatedAt, catalog.ContentHash)
+	catalog.VersionLabel = ResolveVersionLabel(explicitLabel, catalogVersion, catalog.CreatedAt, catalog.ContentHash)
 
 	if err := s.store.UpsertCatalogVersion(ctx, catalog, containers, controls); err != nil {
 		if errors.Is(err, ErrCatalogInOtherDocument) {
