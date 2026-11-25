@@ -1,0 +1,317 @@
+cmd/crosscodex/prompt.go
+  s_51f263053339cb::t_ebe05503caad97 8-10,26,159-280
+  s_51f263053339cb::t_0cc272953a87a5 281
+pkg/config/types.go
+  s_51f263053339cb::t_d7e87fc5bbf3f9 784
+  s_51f263053339cb::t_095ade47b7660e 701-707,753-757,780-783
+internal/pipeline/export_test.go
+  s_51f263053339cb::t_d73ee53367d989 91-98
+internal/gateway/pipeline_client.go
+  s_51f263053339cb::t_ef2789c5426d49 116-119
+  s_51f263053339cb::t_1cce273a22a189 112-115
+internal/gateway/backend_errors_bdd_test.go
+  s_51f263053339cb::t_fbf86cf6f5c15b 226-233
+  s_51f263053339cb::t_3a2537018de541 218-225
+.taskfiles/eval.yml
+  s_51f263053339cb::t_674530ed2d4cd7 39
+  s_e551c7f8f4d977::t_98ee735859d022 19
+cmd/crosscodex/run_bdd_test.go
+  s_51f263053339cb::t_2414c28b85c719 20
+  s_51f263053339cb::t_28bd9753aad311 399-478
+pkg/retention/purge.go
+  s_51f263053339cb::t_3d836e623c9e5a 59
+internal/pipeline/store.go
+  s_51f263053339cb::t_c5b95a33182918 40-43
+  s_51f263053339cb::t_1bf04a804d4617 6,15,1243-1249,1320-1326
+  s_51f263053339cb::t_b12921a9a30aa3 1168-1242,1250-1319,1327-1329
+test/tooling/lib/fake-crosscodex.sh
+  s_51f263053339cb::t_1548a66218190d 5,45
+  s_51f263053339cb::t_9fb2b1b22c0da2 6-7,36,42-43
+  s_51f263053339cb::t_955e7bcc1a8cc6 8-9,37-41
+  s_e551c7f8f4d977::t_0c0e341e4e59d7 11
+  s_51f263053339cb::t_e82d03bbd72068 31
+  s_51f263053339cb::t_ef75e612bf8dae 10,21-30
+internal/pipeline/executor.go
+  s_51f263053339cb::t_27ce9af8bc88bd 281-291,433
+internal/analyzer/critique/critique.go
+  s_51f263053339cb::t_a20c80cd1d0d54 225,270-280
+cmd/crosscodexd/bootstrap.go
+  s_51f263053339cb::t_71b4fa0a810fd8 994-995
+  s_51f263053339cb::t_ffb44fad8ff03d 963-964
+internal/analyzer/relationship/relationship_bdd_test.go
+  s_51f263053339cb::t_2a77daac76b22c 363-366,376-397,399-408
+  s_51f263053339cb::t_c755e49713760a 367-375
+  s_51f263053339cb::t_131757b9be7384 20,398
+internal/pipeline/render_prompt_bdd_test.go
+  s_51f263053339cb::t_25b7c4ad4dd788 392-403
+  s_51f263053339cb::t_c4eece4866d153 1-31,33-36,39-391,404-412
+  s_51f263053339cb::t_2958a232364b69 32,37-38
+pkg/db/migrations/004_stage_progress.up.sql
+  s_51f263053339cb::t_43574b477f709c 14,25-30
+  s_6424c958efab63::t_83a26acc2f9d62 1-13,15-24,31-42
+internal/pipeline/types.go
+  s_51f263053339cb::t_b12921a9a30aa3 92-102
+pkg/retention/purge_bdd_test.go
+  s_6424c958efab63::t_310508e2190172 79-81,83-88,91-94
+internal/analysis/export_test.go
+  s_51f263053339cb::t_9ef15311413759 30-41
+  s_51f263053339cb::t_685520db4a4bcf 3-10
+docs/dev/prompt-render.md
+  s_51f263053339cb::t_3b956533e0e4e6 13,20
+  s_51f263053339cb::t_51bd76d59f5492 7,30
+  s_51f263053339cb::t_1e661163a467d1 1-6,8-12,14-19,21-29
+internal/pipeline/service_impl.go
+  s_51f263053339cb::t_b6f73142f2029a 845-846
+  s_51f263053339cb::t_c5b95a33182918 830-831,834-839
+  s_51f263053339cb::t_c799db0a2e5ac4 236-243,313-315,747-749,755-757,828-829,832-833,840-844
+docs/dev/migrations.md
+  s_51f263053339cb::t_4905cc66baec66 20-21,24
+internal/analysis/collector.go
+  s_51f263053339cb::t_fbdc527c32151a 372
+  s_51f263053339cb::t_52a65ee2772a55 276-278,285-287,318-320,342-344,370-371
+test/eval/crosswalk/README.md
+  s_51f263053339cb::t_523a63f0a4955e 97-108,110
+  s_51f263053339cb::t_f71e47e5f6a320 109
+internal/pipeline/store_integration_test.go
+  s_51f263053339cb::t_78d780fca3a5d9 19,662-735
+  s_51f263053339cb::t_2397e68e37bf11 736
+cmd/crosscodex/prompt_render_bdd_test.go
+  s_51f263053339cb::t_802a13ee73c482 1-139
+api/proto/crosscodex/v1/pipeline.proto
+  s_51f263053339cb::t_6b654bd65ed691 442-499
+  s_51f263053339cb::t_ad60909e272d2c 288,297-298
+  s_51f263053339cb::t_200ebe7d8627b1 273-287,289-296,299
+  s_51f263053339cb::t_74c6c12a1aeace 436
+  s_51f263053339cb::t_6933827964384e 43-50
+  s_51f263053339cb::t_091a0e0cadf934 415-435,437-441
+  s_51f263053339cb::t_c903a12f848b95 51-58
+pkg/retention/archive.go
+  s_51f263053339cb::t_1a339b09af824f 39
+pkg/retention/engine_integration_bdd_test.go
+  s_51f263053339cb::t_5a969236adf998 626,628
+  s_51f263053339cb::t_17d14ae0f14322 172,198-202,250,255,287,655,665
+internal/analysis/progress.go
+  s_51f263053339cb::t_21b59dd5616b47 138-143,192
+  s_51f263053339cb::t_b3a0592d0ad32d 1-137,144-173,176,178-184,186,188-191,193-224,229-244
+  s_51f263053339cb::t_4b541aaced77d3 174-175,177,185,187
+  s_51f263053339cb::t_9b675ff6c7cd94 225-228
+internal/pipeline/store_bdd_test.go
+  s_51f263053339cb::t_a801acf79e5c6d 959-1082
+  s_51f263053339cb::t_a444428992869f 5,10,15,18
+  s_51f263053339cb::t_9cdace5fde8b02 136-144,496-530
+  s_51f263053339cb::t_86707c881362bb 531
+  s_51f263053339cb::t_00bb47511f6707 568-570,600-637
+  s_51f263053339cb::t_407acc9a2b1881 63,67,80
+pkg/db/migrations/004_stage_progress.down.sql
+  s_6424c958efab63::t_21773e992f1dc0 1-4
+internal/analyzer/requires/requires.go
+  s_51f263053339cb::t_fef8e8776a906c 141-143,205,207,210,252-329
+  s_51f263053339cb::t_6da0376e853f5d 330-331
+cmd/crosscodex/embedded.go
+  s_51f263053339cb::t_80a9877ae42370 255,289,700
+  s_51f263053339cb::t_ab24e884dc1fd9 247,251-253,286-288,694-698,703
+  s_51f263053339cb::t_f903bf23659873 17,249,256-264,270-279,701-702
+  s_51f263053339cb::t_29a0e1fbda232d 36,248,254,265,267-269,280-285,699
+  s_51f263053339cb::t_c5b95a33182918 328-332,334-340
+  s_51f263053339cb::t_da6638273e8199 266
+internal/gateway/stream_bdd_test.go
+  s_51f263053339cb::t_fbf86cf6f5c15b 170-173
+  s_51f263053339cb::t_3a2537018de541 166-169
+cmd/crosscodex/embedded_bdd_test.go
+  s_51f263053339cb::t_977f410c645dfc 972
+  s_51f263053339cb::t_c9e61de3fe4c3d 13-15,20,524-574
+  s_51f263053339cb::t_559c7f3b596956 28-29,883-895,969-971,973-1000
+  s_51f263053339cb::t_19dd4e7664d0cf 42
+  s_51f263053339cb::t_c755e49713760a 595-597
+  s_51f263053339cb::t_a12ded34426ae2 650-651
+  s_51f263053339cb::t_adc5942b29f61b 578,582-583,636-643,729-741
+  s_51f263053339cb::t_e8fad8ca399c0b 584-594,598-635,644-649
+  s_51f263053339cb::t_daebbd8daaf1ed 576-577,579-581
+  s_51f263053339cb::t_fcf6ab6c349c0c 1001-1002
+  s_51f263053339cb::t_dc7fe35659f833 575
+pkg/config/defaults.go
+  s_51f263053339cb::t_095ade47b7660e 122
+test/eval/crosswalk/run.sh
+  s_51f263053339cb::t_9542a9bacc8445 224
+  s_51f263053339cb::t_ef75e612bf8dae 14-15
+  s_51f263053339cb::t_85393bb92c23f8 188,193-200,219-221
+  s_51f263053339cb::t_63a0715be1202a 4-5,40,62-64,124-141,143-144,151,153,180-182
+  s_51f263053339cb::t_58e0f7ec35aafb 145-150,152,154-179
+  s_51f263053339cb::t_b564d4dd058104 13,16,18-20,22-25,222-223
+  s_51f263053339cb::t_cdc3137d4b3aad 17
+internal/analysis/progress_bdd_test.go
+  s_51f263053339cb::t_97eaa55f231831 1-354,364-411,439-449
+  s_51f263053339cb::t_688d603448a953 412-438
+  s_51f263053339cb::t_2d7a0a2ebfda3b 355-363
+internal/analysis/options.go
+  s_51f263053339cb::t_c6454a949e19fc 57
+  s_51f263053339cb::t_f60c5de85f93bf 97-110
+internal/analysis/collector_bdd_test.go
+  s_51f263053339cb::t_b8ca9c56886a91 819-862,865-882
+  s_51f263053339cb::t_ff6acba9cfe9f9 883
+pkg/retention/archive_bdd_test.go
+  s_6424c958efab63::t_a864c23ca1fa69 81-95
+internal/analyzer/critique/critique_bdd_test.go
+  s_51f263053339cb::t_1e4f90b610faee 24,344-373
+README.md
+  s_51f263053339cb::t_3af4353f2d7b89 511-512,529
+  s_51f263053339cb::t_d02a11554db453 433-435,438
+  s_51f263053339cb::t_d4c51f55a6aad7 19-26,28
+  s_51f263053339cb::t_3ff79c3fe84c18 497-510,513-524,526,528,530
+  s_51f263053339cb::t_c48a0695c484fa 525,527
+  s_51f263053339cb::t_095ade47b7660e 830
+  s_51f263053339cb::t_5ec295f9018d31 439
+  s_51f263053339cb::t_1f9179b52d2a75 27
+pkg/config/config_bdd_test.go
+  s_51f263053339cb::t_a42e61bf4ffd46 2742-2743,2782-2798,2864-2896
+  s_51f263053339cb::t_4572a4be13a756 2897-2898
+internal/analyzer/requires/requires_bdd_test.go
+  s_51f263053339cb::t_1e331ad0688148 21,499-542
+  s_51f263053339cb::t_afc88be448e325 543-544
+internal/analysis/types.go
+  s_51f263053339cb::t_1642a9ee70b36c 118-122
+  s_51f263053339cb::t_4af8a8d08cbde8 167-169
+internal/pipeline/executor_bdd_test.go
+  s_51f263053339cb::t_2ec4003d4507c6 1759-1767
+pkg/config/helpers_test.go
+  s_51f263053339cb::t_095ade47b7660e 46
+internal/analyzer/relationship/relationship.go
+  s_51f263053339cb::t_371fe2542444bc 212,214,217
+  s_51f263053339cb::t_997e16a594f6c7 259-338
+  s_51f263053339cb::t_40446ae785bbe0 148-150
+cmd/crosscodex/run.go
+  s_51f263053339cb::t_ad60909e272d2c 160-161
+  s_51f263053339cb::t_7b3b49d6f309f8 150-159,162-164,204,206,212-214,248
+internal/analysis/progress_property_test.go
+  s_51f263053339cb::t_c82119e42f8ff0 67-68
+  s_51f263053339cb::t_974b663ddb0feb 1-66,69-100
+test/eval/crosswalk/testdata/run/status.json
+  s_51f263053339cb::t_1548a66218190d 5-9
+cmd/crosscodex/catalog.go
+  s_51f263053339cb::t_b345e8ce3a68be 450-451
+  s_51f263053339cb::t_06912b11d6afa0 449,737-739
+  s_51f263053339cb::t_b396ed7651fe95 8,18,35,487-566
+  s_51f263053339cb::t_4b5e8771304b2d 567-573
+internal/pipeline/service_bdd_test.go
+  s_51f263053339cb::t_31a6dd71d960a1 34-35
+  s_51f263053339cb::t_977f410c645dfc 24
+  s_51f263053339cb::t_745e162c480a89 10-11
+  s_51f263053339cb::t_03c9b9aa5d5de2 2261-2335,2337-2407,2414-2472
+  s_51f263053339cb::t_8476fa109af176 40
+  s_51f263053339cb::t_71972412455864 2336,2408-2413
+  s_51f263053339cb::t_5323b93dbf00b0 670-730
+internal/pipeline/render_prompt.go
+  s_51f263053339cb::t_169e89438cbabe 441,445
+  s_51f263053339cb::t_a0cb07a559547e 437-440,447-451
+  s_51f263053339cb::t_27ce9af8bc88bd 252-253,257
+  s_51f263053339cb::t_5bc3ea4bfcb059 34-36,95,372,374
+  s_51f263053339cb::t_9d736ba3cae319 199-200,202-203,205-218
+  s_51f263053339cb::t_f581cf9ad6d925 1-33,37-94,96-131,141-180,182-186,188-198,201,204,219-230,232-244,246-251,254-256,258-371,373,375-436,442-444,446,452
+  s_51f263053339cb::t_915372a396ced0 132-138,140,181,187,231,245
+  s_51f263053339cb::t_a139bbc98606e7 139
+pkg/db/role_check_integration_bdd_test.go
+  s_51f263053339cb::t_a7f0a569e04371 38
+internal/gateway/gateway_bdd_test.go
+  s_51f263053339cb::t_d5be60bb7c1d71 662-679
+  s_51f263053339cb::t_3a2537018de541 117-118,159-162,402-444,1564-1565
+  s_51f263053339cb::t_764dffc47fe84f 1566-1567
+  s_51f263053339cb::t_fbf86cf6f5c15b 119,163-166,445-519
+  s_51f263053339cb::t_0f2bfb049e3ff4 593-594
+  s_51f263053339cb::t_90fbc19716bbce 17-18
+  s_51f263053339cb::t_2389278135a46e 578-592
+  s_51f263053339cb::t_adc5942b29f61b 520-577
+api/proto/crosscodex/v1/gateway.proto
+  s_51f263053339cb::t_0aa187452d2453 95-104
+  s_51f263053339cb::t_4e976e9b4cbc62 105-115
+cmd/crosscodex/catalog_controls_bdd_test.go
+  s_51f263053339cb::t_0d1979da213c65 55,88
+  s_51f263053339cb::t_4a200171b1f4a4 1-54,56-87,89-116
+internal/pipeline/service.go
+  s_51f263053339cb::t_27ce9af8bc88bd 70-73
+cmd/crosscodex/catalog_import_bdd_test.go
+  s_51f263053339cb::t_1826fbdde05cc3 400-430
+test/tooling/eval-crosswalk.venom.yml
+  s_51f263053339cb::t_788ffc10945985 361,363,433
+  s_51f263053339cb::t_674530ed2d4cd7 410-417
+  s_51f263053339cb::t_ef75e612bf8dae 313,321,349,356-357,362,418-432,434-441
+  s_51f263053339cb::t_9e1c17e3f49203 295-312,314-320,322-348,350-355,358-360,364-409
+  s_51f263053339cb::t_955e7bcc1a8cc6 443-462
+  s_51f263053339cb::t_9fb2b1b22c0da2 463-481
+  s_51f263053339cb::t_1143913d74d315 442
+internal/analysis/engine.go
+  s_51f263053339cb::t_f60c5de85f93bf 64-68
+  s_51f263053339cb::t_4b541aaced77d3 416,427,439-442,445,447-470,502,542-544,655
+  s_51f263053339cb::t_88dd528897489a 443-444,446
+internal/gateway/prompts.go
+  s_51f263053339cb::t_bc9121c02deaad 1-22,27-46,52-60
+  s_51f263053339cb::t_169e89438cbabe 23-26,47-51
+pkg/db/db_integration_bdd_test.go
+  s_9771fb66d2daf7::t_c2d3eb38a8311b 1390-1415
+  s_6424c958efab63::t_ffb4023a9eab62 1289-1363,1367,1428-1437,1446-1448
+  s_51f263053339cb::t_b667adb9642864 1364-1366,1368-1389,1416-1427,1438-1445
+internal/gateway/backends.go
+  s_51f263053339cb::t_53b80d207ba85a 33-35
+  s_51f263053339cb::t_ef2789c5426d49 36-39
+internal/pipeline/catalog_controls_rpc.go
+  s_51f263053339cb::t_bcd301e7f8a3de 53
+  s_51f263053339cb::t_f3c54b60964deb 56-58,76-80,83,89-121
+  s_51f263053339cb::t_593e3dfe4c883b 1-24,28-52,54-55,59-75,81-82,84-88
+  s_51f263053339cb::t_9ddab0fea68bdf 25-27
+internal/gateway/catalog.go
+  s_51f263053339cb::t_f922d0382393f4 91
+  s_51f263053339cb::t_1cce273a22a189 76-90,92-110
+test/tooling/lib/run-eval-crosswalk.yml
+  s_51f263053339cb::t_ef75e612bf8dae 24-25
+cmd/crosscodex/stageprogress.go
+  s_51f263053339cb::t_224035aa55744d 58-60
+  s_51f263053339cb::t_2038eabfb642fe 1-57,61
+internal/pipeline/options.go
+  s_51f263053339cb::t_27ce9af8bc88bd 107-118
+  s_51f263053339cb::t_a1b5965cecb6f9 100
+docs/dev/telemetry.md
+  s_51f263053339cb::t_5bc5f172fa0542 208-209
+docs/dev/stage-progress.md
+  s_51f263053339cb::t_6b64f7c6b78bd1 22,43
+  s_51f263053339cb::t_3e8803e3fc7890 1-21,23-36,38-42,44
+  s_51f263053339cb::t_43574b477f709c 37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "ed1084e861b07792c3f0444c4082d4103578113a",
+  "prompts": {},
+  "sessions": {
+    "s_51f263053339cb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1ed4a700-2209-4f05-a54a-7a3c4228c5f4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_6424c958efab63": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aec4eedf71749f035",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_9771fb66d2daf7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a581cc5b9f403494b",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_e551c7f8f4d977": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5616a339-f6e2-482b-bd49-e4597b21a7fe",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
