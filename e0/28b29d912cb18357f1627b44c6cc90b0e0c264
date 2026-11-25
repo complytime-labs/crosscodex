@@ -1,0 +1,35 @@
+internal/catalog/ingestion_adapter.go
+  s_716be8e6f6d133::t_e4796ec3098f38 416-419
+README.md
+  s_f8b6dbaa613246::t_97fbb5b73d02be 19,433,439
+docs/dev/service-runtime.md
+  s_f8b6dbaa613246::t_3a6e29d875cd3b 230,235
+internal/catalog/catalog_fuzz_test.go
+  s_f8b6dbaa613246::t_f52d9c4c0cd2a6 6-7,58-60,96-101,106-119
+internal/catalog/ingestion_adapter_bdd_test.go
+  s_f8b6dbaa613246::t_fee7535a86704e 437-449
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "e028b29d912cb18357f1627b44c6cc90b0e0c264",
+  "prompts": {},
+  "sessions": {
+    "s_716be8e6f6d133": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "422310a8-cbba-4c80-ad5a-6a1823316b83",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    },
+    "s_f8b6dbaa613246": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a1eba5c99e606b043",
+        "model": "unknown"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
