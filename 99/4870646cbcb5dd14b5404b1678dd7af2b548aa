@@ -1,0 +1,38 @@
+README.md
+  s_51f263053339cb::t_c48a0695c484fa 525,527
+internal/gateway/gateway_bdd_test.go
+  s_51f263053339cb::t_2389278135a46e 578-592
+test/eval/crosswalk/labelsmerge_bdd_test.go
+  s_51f263053339cb::t_dba85a8996d491 99-114,196-205
+  s_51f263053339cb::t_a0aca21be59f43 346-401
+test/eval/crosswalk/labels.go
+  s_51f263053339cb::t_68a8beba208c73 63-66,69,71-75,77-79,81-85,96-98,101
+  s_51f263053339cb::t_1ba34be159c52f 67-68,70,76,80
+test/eval/crosswalk/labelsmerge_fuzz_test.go
+  s_51f263053339cb::t_dba85a8996d491 24-25
+test/eval/crosswalk/labelsmerge.go
+  s_51f263053339cb::t_68a8beba208c73 73-74,77,475-476,484-498
+  s_51f263053339cb::t_aade23f985262d 499-500
+test/eval/crosswalk/cmd/crosswalk-eval/main_bdd_test.go
+  s_51f263053339cb::t_dba85a8996d491 234-246
+test/eval/crosswalk/export_test.go
+  s_51f263053339cb::t_a0aca21be59f43 1-4
+test/eval/crosswalk/labelinput.go
+  s_51f263053339cb::t_68a8beba208c73 128,132-133,136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "994870646cbcb5dd14b5404b1678dd7af2b548aa",
+  "prompts": {},
+  "sessions": {
+    "s_51f263053339cb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1ed4a700-2209-4f05-a54a-7a3c4228c5f4",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
