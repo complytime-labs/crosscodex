@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -49,28 +50,57 @@ var (
 	ingestionVersionPattern = regexp.MustCompile(`^(\d+)\.(\d+)$`)
 	// markdownSeparatorCell matches one cell of a GFM table delimiter row.
 	markdownSeparatorCell = regexp.MustCompile(`^:?-+:?$`)
+	// ingestionPropertyName is the schema's rule for element property names.
+	ingestionPropertyName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 )
 
 // IngestionMeta describes the ingestion output a StructuredDoc came from.
 type IngestionMeta struct {
 	// SchemaVersion is the output's schema_version, MAJOR.MINOR.
 	SchemaVersion string
+	// SourceItems is non-nil exactly when the output carries element roles
+	// (schema 1.3 and later): one item per element with an id, in element
+	// order, holding the source's own ID, title, text and properties. The
+	// StructuredDoc returned with it is then zero. A role "control" item has
+	// Class ClassRequirement; a role "group" item has no Class and becomes a
+	// Container through oscal.BuildTree, because the items under it name it as
+	// their GroupID. An item under a control names it as ParentID.
+	SourceItems []oscal.ControlItem
+	// CatalogTitle is metadata.title, the catalog's name as the conversion's
+	// mapping gives it; "" when null or absent. Set only with SourceItems.
+	CatalogTitle string
+	// CatalogVersion is metadata.source.catalog_version; "" when null or
+	// absent. Set only with SourceItems.
+	CatalogVersion string
 }
 
 // ingestionOutput and ingestionElement hold the schema v1 fields the adapter
 // reads. decodeIngestionOutput fills them by exact key; they carry no json
 // tags because encoding/json matches struct tags case-insensitively.
 type ingestionOutput struct {
-	SchemaVersion *string
-	Elements      []ingestionElement
+	SchemaVersion  *string
+	Elements       []ingestionElement
+	CatalogTitle   *string // metadata.title
+	CatalogVersion *string // metadata.source.catalog_version (since 1.3)
 }
 
+// The source-node fields (since 1.1 and 1.3) are read only on the source-ID
+// path. The schema distinguishes an absent role, title or text key from a
+// null value, so their presence is recorded apart from the value.
 type ingestionElement struct {
-	ElementID string
-	Type      string
-	Content   string
-	Level     *int
-	ParentID  *string
+	ElementID  string
+	Type       string
+	Content    string
+	Level      *int
+	ParentID   *string
+	ID         *string
+	Role       *string
+	Title      *string
+	Text       *string
+	Properties map[string]string
+	HasRole    bool
+	HasTitle   bool
+	HasText    bool
 }
 
 // decodeIngestionOutput decodes data into the fields the adapter reads,
@@ -85,6 +115,19 @@ func decodeIngestionOutput(data []byte) (ingestionOutput, error) {
 	}
 	if err := decodeIngestionField(top, "schema_version", &out.SchemaVersion); err != nil {
 		return out, invalidIngestionJSON("schema_version", err)
+	}
+	var metadata, source map[string]json.RawMessage
+	if err := decodeIngestionField(top, "metadata", &metadata); err != nil {
+		return out, invalidIngestionJSON("metadata", err)
+	}
+	if err := decodeIngestionField(metadata, "title", &out.CatalogTitle); err != nil {
+		return out, invalidIngestionJSON("metadata.title", err)
+	}
+	if err := decodeIngestionField(metadata, "source", &source); err != nil {
+		return out, invalidIngestionJSON("metadata.source", err)
+	}
+	if err := decodeIngestionField(source, "catalog_version", &out.CatalogVersion); err != nil {
+		return out, invalidIngestionJSON("metadata.source.catalog_version", err)
 	}
 	var elements []map[string]json.RawMessage
 	if err := decodeIngestionField(top, "elements", &elements); err != nil {
@@ -102,12 +145,20 @@ func decodeIngestionOutput(data []byte) (ingestionOutput, error) {
 			{"content", &e.Content},
 			{"level", &e.Level},
 			{"parent_id", &e.ParentID},
+			{"id", &e.ID},
+			{"role", &e.Role},
+			{"title", &e.Title},
+			{"text", &e.Text},
+			{"properties", &e.Properties},
 		}
 		for _, f := range fields {
 			if err := decodeIngestionField(raw, f.key, f.dst); err != nil {
 				return out, invalidIngestionJSON(fmt.Sprintf("elements[%d].%s", i, f.key), err)
 			}
 		}
+		_, e.HasRole = raw["role"]
+		_, e.HasTitle = raw["title"]
+		_, e.HasText = raw["text"]
 	}
 	return out, nil
 }
@@ -141,8 +192,22 @@ func IsIngestionOutput(data []byte) bool {
 	return hasVersion && hasElements
 }
 
-// AdaptIngestionOutput decodes crosscodex-ingestion structured output and maps
-// it to an oscal.StructuredDoc:
+// AdaptIngestionOutput decodes crosscodex-ingestion structured output.
+//
+// When any element has a role key (schema 1.3 and later), the output is a
+// structured source whose structure is taken as given (the source-ID path):
+// the StructuredDoc is zero and IngestionMeta carries SourceItems,
+// CatalogTitle and CatalogVersion. Each element with an id becomes one item
+// with that id, title, text and properties; id-less elements (text kept for
+// older readers) are skipped. An item whose parent element is a control names
+// it as ParentID; one whose parent is a group names it as GroupID. Output that
+// breaks the role contract (an id without role, title or text key, a role
+// without an id, a role other than group or control, a parent without an id,
+// a group under a control, a group without children, a blank id, title, text,
+// metadata.title or catalog_version, a property name that is not a lowercase
+// identifier or a blank property value) returns ErrInvalidIngestionOutput.
+//
+// Otherwise it maps the output to an oscal.StructuredDoc:
 //   - each heading becomes a Section, in document order, with its level; its
 //     Text is the content of the non-heading elements whose parent_id is that
 //     heading, joined by blank lines;
@@ -172,6 +237,31 @@ func AdaptIngestionOutput(data []byte) (oscal.StructuredDoc, IngestionMeta, erro
 		return oscal.StructuredDoc{}, IngestionMeta{}, fmt.Errorf(
 			"%w: the output has no elements, so there is no content to structure into a catalog. Check that the source document has text (a scanned image without OCR text converts to nothing) and convert it again",
 			ErrInvalidIngestionOutput)
+	}
+	if slices.ContainsFunc(out.Elements, func(e ingestionElement) bool { return e.HasRole }) {
+		items, err := sourceItems(out.Elements)
+		if err != nil {
+			return oscal.StructuredDoc{}, IngestionMeta{}, err
+		}
+		meta := IngestionMeta{SchemaVersion: version, SourceItems: items}
+		for _, f := range []struct {
+			key   string
+			value *string
+			dst   *string
+		}{
+			{"metadata.title", out.CatalogTitle, &meta.CatalogTitle},
+			{"metadata.source.catalog_version", out.CatalogVersion, &meta.CatalogVersion},
+		} {
+			if f.value == nil {
+				continue
+			}
+			if strings.TrimSpace(*f.value) == "" {
+				return oscal.StructuredDoc{}, IngestionMeta{}, fmt.Errorf("%w: %s is blank; in output with roles it is a non-blank string or null. Re-run the conversion",
+					ErrInvalidIngestionOutput, f.key)
+			}
+			*f.dst = *f.value
+		}
+		return oscal.StructuredDoc{}, meta, nil
 	}
 
 	var doc oscal.StructuredDoc
@@ -273,6 +363,114 @@ func checkIngestionElement(i int, e ingestionElement, seen map[string]bool, sect
 		}
 	}
 	return nil
+}
+
+// Element roles defined by ingestion output schema 1.3.
+const (
+	ingestionRoleGroup   = "group"
+	ingestionRoleControl = "control"
+)
+
+// sourceItems maps the elements of output that carries roles to one
+// ControlItem per element with an id, in element order, after checking the
+// schema v1 rules (checkIngestionElement) and the 1.3 role contract. Ingestion
+// emits parents before children, and checkIngestionElement guarantees a
+// parent_id names an earlier element.
+func sourceItems(elements []ingestionElement) ([]oscal.ControlItem, error) {
+	seen := make(map[string]bool, len(elements))
+	sectionOf := make(map[string]int)
+	itemOf := make(map[string]int, len(elements)) // element_id -> index in items
+	items := make([]oscal.ControlItem, 0, len(elements))
+	isGroup := make([]bool, 0, len(elements))
+	elementOf := make([]int, 0, len(elements)) // item index -> element index
+	children := make([]int, 0, len(elements))
+	for i, e := range elements {
+		if err := checkIngestionElement(i, e, seen, sectionOf); err != nil {
+			return nil, err
+		}
+		seen[e.ElementID] = true
+		if e.Type == ingestionTypeHeading {
+			sectionOf[e.ElementID] = len(sectionOf)
+		}
+
+		if e.ID == nil {
+			if e.HasRole || e.HasText {
+				return nil, fmt.Errorf("%w: elements[%d] has a role or text but no id; schema 1.3 allows them only on an element with a source id. Re-run the conversion",
+					ErrInvalidIngestionOutput, i)
+			}
+			continue
+		}
+		if strings.TrimSpace(*e.ID) == "" {
+			return nil, fmt.Errorf("%w: elements[%d] has a blank id; a source id is a non-blank string or null. Re-run the conversion",
+				ErrInvalidIngestionOutput, i)
+		}
+		if !e.HasRole || !e.HasTitle || !e.HasText {
+			return nil, fmt.Errorf("%w: elements[%d] has an id but lacks the role, title or text key; in output with roles every element with an id carries all three (title and text may be null). Re-run the conversion with a matching ingestion version",
+				ErrInvalidIngestionOutput, i)
+		}
+		if e.Role == nil || (*e.Role != ingestionRoleGroup && *e.Role != ingestionRoleControl) {
+			return nil, fmt.Errorf("%w: elements[%d] has a role other than group or control, the only roles schema 1.3 defines. Re-run the conversion with a matching ingestion version",
+				ErrInvalidIngestionOutput, i)
+		}
+		group := *e.Role == ingestionRoleGroup
+		if group && e.Title == nil {
+			return nil, fmt.Errorf("%w: elements[%d] is a group with a null title; a group needs a title. Re-run the conversion or fix the mapping",
+				ErrInvalidIngestionOutput, i)
+		}
+
+		item := oscal.ControlItem{ID: *e.ID, Props: e.Properties}
+		for _, f := range []struct {
+			key   string
+			value *string
+			dst   *string
+		}{{"title", e.Title, &item.Title}, {"text", e.Text, &item.Text}} {
+			if f.value == nil {
+				continue
+			}
+			if strings.TrimSpace(*f.value) == "" {
+				return nil, fmt.Errorf("%w: elements[%d] has a blank %s; schema 1.3 makes it a non-blank string or null. Re-run the conversion",
+					ErrInvalidIngestionOutput, i, f.key)
+			}
+			*f.dst = *f.value
+		}
+		for name, value := range e.Properties {
+			if !ingestionPropertyName.MatchString(name) || strings.TrimSpace(value) == "" {
+				return nil, fmt.Errorf("%w: elements[%d] has a property whose name is not a lowercase identifier (a-z, 0-9, _; at most 64 characters) or whose value is blank. Re-run the conversion",
+					ErrInvalidIngestionOutput, i)
+			}
+		}
+		if !group {
+			item.Class = oscal.ClassRequirement
+		}
+		if e.ParentID != nil {
+			p, ok := itemOf[*e.ParentID]
+			switch {
+			case !ok:
+				return nil, fmt.Errorf("%w: elements[%d] has a role, but its parent element has no id; in output with roles a source node's parent is a source node. Re-run the conversion",
+					ErrInvalidIngestionOutput, i)
+			case isGroup[p]:
+				item.GroupID = items[p].ID
+			case group:
+				return nil, fmt.Errorf("%w: elements[%d] is a group whose parent elements[%d] is a control; groups nest only in groups. Re-run the conversion",
+					ErrInvalidIngestionOutput, i, elementOf[p])
+			default:
+				item.ParentID = items[p].ID
+			}
+			children[p]++
+		}
+		itemOf[e.ElementID] = len(items)
+		items = append(items, item)
+		isGroup = append(isGroup, group)
+		elementOf = append(elementOf, i)
+		children = append(children, 0)
+	}
+	for k := range items {
+		if isGroup[k] && children[k] == 0 {
+			return nil, fmt.Errorf("%w: elements[%d] is a group with no child; an empty group would import as a control. Re-run the conversion",
+				ErrInvalidIngestionOutput, elementOf[k])
+		}
+	}
+	return items, nil
 }
 
 // parseMarkdownTable parses the first GFM table block in a table element's

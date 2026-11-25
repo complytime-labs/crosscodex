@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
@@ -206,6 +207,156 @@ var _ = Describe("ParseCatalog with ingestion output", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ms.controlRecords).To(HaveLen(1))
 		Expect(structuredOutcomes(tp)).To(Equal(map[outcome]int64{{"llm-extract", "structured"}: 1}))
+	})
+
+	Context("when the output names its own controls and groups (schema 1.3 roles)", func() {
+		asvsDoc := func() []byte {
+			return withCatalogMeta(ingestionDoc("1.3",
+				withRole(heading("e-1", 1, nil, "Encoding"), "V1", "group", "Encoding", nil, nil),
+				withRole(heading("e-3", 2, "e-1", "Architecture"), "V1.1", "group", "Architecture", nil, nil),
+				withRole(map[string]any{"element_id": "e-4", "content": "Verify one.", "parent_id": "e-3"},
+					"V1.1.1", "control", nil, "Verify that one thing holds.", nil),
+				withRole(map[string]any{"element_id": "e-5", "content": "Verify two.", "parent_id": "e-3"},
+					"V1.1.2", "control", nil, "Verify that two things hold. Also, a second sentence follows here.", nil),
+			), "Test Verification Standard", "5.0.0")
+		}
+		parseNamed := func(svc *catalog.Service, data []byte, name string) *crosscodexv1.ParseCatalogResponse {
+			GinkgoHelper()
+			Expect(stg.Put(context.Background(), docID, bytes.NewReader(data))).To(Succeed())
+			resp, err := svc.ParseCatalog(context.Background(), connect.NewRequest(&crosscodexv1.ParseCatalogRequest{
+				TenantContext: &crosscodexv1.TenantContext{TenantId: tenantID},
+				DocumentId:    docID,
+				CatalogName:   name,
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			return resp.Msg
+		}
+
+		It("stores the source's own IDs and groups without running the structurer", func() {
+			st := &fixedStructurer{tier: oscal.StructureTierHeading, items: []oscal.ControlItem{{ID: "x", Text: "y"}}}
+
+			resp, err := parse(newService(catalog.WithStructurer(st)), asvsDoc(), crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(st.calls).To(BeZero())
+			Expect(ms.controlRecords).To(HaveLen(2))
+			Expect(ms.controlRecords).To(HaveKey(resp.CatalogId + "/V1.1.1"))
+			Expect(ms.controlRecords).To(HaveKey(resp.CatalogId + "/V1.1.2"))
+			Expect(ms.containerRecords).To(HaveLen(2))
+			var identifiers []string
+			for _, c := range ms.containerRecords {
+				identifiers = append(identifiers, c.Identifier)
+			}
+			Expect(identifiers).To(ConsistOf("V1", "V1.1"))
+			Expect(ms.catalogRecords[resp.CatalogId].Format).To(Equal(catalog.FormatIngestion))
+			Expect(ms.catalogRecords[resp.CatalogId].ExtractorVersion).To(Equal("1.3"))
+		})
+
+		It("names the catalog and its version from the output's metadata", func() {
+			resp := parseNamed(newService(catalog.WithStructurer(oscal.NewStructurer(nil, nil))), asvsDoc(), "")
+
+			Expect(ms.catalogRecords[resp.CatalogId].Name).To(Equal("Test Verification Standard"))
+			Expect(ms.catalogRecords[resp.CatalogId].Version).To(Equal("5.0.0"))
+		})
+
+		It("lets the request's catalog_name win over the output's title", func() {
+			resp := parseNamed(newService(catalog.WithStructurer(oscal.NewStructurer(nil, nil))), asvsDoc(), "Operator Name")
+
+			Expect(ms.catalogRecords[resp.CatalogId].Name).To(Equal("Operator Name"))
+			Expect(ms.catalogRecords[resp.CatalogId].Version).To(Equal("5.0.0"))
+		})
+
+		DescribeTable("labels a document version from the output's catalog_version",
+			func(catalogVersion any, expectLabel func(label string) bool) {
+				data := withCatalogMeta(asvsDoc(), "Test Verification Standard", catalogVersion)
+				Expect(stg.Put(context.Background(), docID, bytes.NewReader(data))).To(Succeed())
+
+				resp, err := newService(catalog.WithStructurer(oscal.NewStructurer(nil, nil))).ParseCatalog(context.Background(),
+					connect.NewRequest(&crosscodexv1.ParseCatalogRequest{
+						TenantContext: &crosscodexv1.TenantContext{TenantId: tenantID},
+						DocumentId:    docID,
+						DocumentSlug:  "test-verification-standard",
+					}))
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(expectLabel(resp.Msg.VersionLabel)).To(BeTrue(), "label %q", resp.Msg.VersionLabel)
+			},
+			Entry("a catalog_version is the label", "5.0.0", func(l string) bool { return l == "5.0.0" }),
+			Entry("a null catalog_version gets the date and hash label", nil, func(l string) bool {
+				return regexp.MustCompile(`^\d{4}-\d{2}-\d{2} · [0-9a-f]{6}$`).MatchString(l)
+			}),
+		)
+
+		It("stores every control unchanged under filtering and decomposition", func() {
+			cfg := defaultStructuring()
+			cfg.FilterByKeywords, cfg.Decompose = true, true
+
+			resp, err := parse(newService(catalog.WithStructurer(oscal.NewStructurer(nil, nil)), catalog.WithStructuring(cfg)),
+				asvsDoc(), crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(ms.controlRecords).To(HaveLen(2))
+			Expect(ms.controlRecords[resp.CatalogId+"/V1.1.1"].Statement).To(Equal("Verify that one thing holds."))
+			Expect(ms.controlRecords[resp.CatalogId+"/V1.1.2"].Statement).To(Equal("Verify that two things hold. Also, a second sentence follows here."))
+		})
+
+		It("counts the source-ids tier and records it on the span", func() {
+			tp, err := telemetrytest.NewTestProvider()
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { Expect(tp.Shutdown(context.Background())).To(Succeed()) })
+
+			parseNamed(newService(catalog.WithStructurer(oscal.NewStructurer(nil, nil)),
+				catalog.WithTracer(tp.TracerProvider().Tracer("catalog")),
+				catalog.WithMeter(tp.MeterProvider().Meter("test"))), asvsDoc(), "")
+
+			Expect(structuredOutcomes(tp)).To(Equal(map[outcome]int64{{"source-ids", "structured"}: 1}))
+			span := telemetrytest.FindSpan(tp.GetSpans(), "catalog.ParseCatalog")
+			Expect(span).NotTo(BeNil())
+			tier, ok := telemetrytest.SpanAttribute(span, "structure.tier")
+			Expect(ok).To(BeTrue())
+			Expect(tier.AsString()).To(Equal("source-ids"))
+		})
+
+		It("fails closed without leaking detail when a group has no children, and stores nothing", func() {
+			seed()
+			cats, ctrls, conts := snapshot()
+			data := ingestionDoc("1.3",
+				withRole(heading("e-1", 1, nil, "Sensitive heading"), "SID-1", "group", "Sensitive title", nil, nil))
+			tp, err := telemetrytest.NewTestProvider()
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { Expect(tp.Shutdown(context.Background())).To(Succeed()) })
+
+			_, err = parse(newService(catalog.WithStructurer(oscal.NewStructurer(nil, nil)),
+				catalog.WithMeter(tp.MeterProvider().Meter("test"))),
+				data, crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED)
+
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
+			Expect(err).To(MatchError(ContainSubstring("the server logged the cause")))
+			Expect(err).NotTo(MatchError(ContainSubstring("SID-1")))
+			Expect(structuredOutcomes(tp)).To(Equal(map[outcome]int64{{"none", "invalid_output"}: 1}))
+			expectUnchanged(cats, ctrls, conts)
+		})
+
+		It("blames the converter, not section_pattern, when the items clash, and stores nothing", func() {
+			seed()
+			cats, ctrls, conts := snapshot()
+			data := ingestionDoc("1.3",
+				withRole(map[string]any{"element_id": "e-1", "content": "One."}, "dup", "control", nil, "One.", nil),
+				withRole(map[string]any{"element_id": "e-2", "content": "Two."}, "dup", "control", nil, "Two.", nil))
+
+			_, err := parse(newService(catalog.WithStructurer(oscal.NewStructurer(nil, nil))),
+				data, crosscodexv1.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED)
+
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			Expect(err).To(MatchError(And(
+				ContainSubstring(`share the ID "dup"`),
+				ContainSubstring("re-run the conversion"),
+				ContainSubstring("Nothing was stored"),
+			)))
+			Expect(err).NotTo(MatchError(ContainSubstring("section_pattern")))
+			Expect(err).NotTo(MatchError(ContainSubstring("decompose")))
+			expectUnchanged(cats, ctrls, conts)
+		})
 	})
 
 	Context("when structuring reaches the fallback tier", func() {

@@ -2,6 +2,9 @@ package catalog_test
 
 import (
 	"encoding/json"
+	"fmt"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/complytime-labs/crosscodex/internal/catalog"
@@ -52,6 +55,9 @@ func FuzzValidateTree(f *testing.F) {
 	})
 }
 
+// propertyName mirrors the adapter's property-name pattern.
+var propertyName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+
 func FuzzAdaptIngestionOutput(f *testing.F) {
 	f.Add([]byte(`{"schema_version":"1.2","elements":[{"element_id":"e-1","type":"heading","content":"A","level":1,"parent_id":null},{"element_id":"e-2","type":"table","content":"| a |\n|---|\n| 1 |","level":null,"parent_id":"e-1"}]}`))
 	f.Add([]byte(`{"schema_version":"2.0","elements":[]}`))
@@ -59,6 +65,10 @@ func FuzzAdaptIngestionOutput(f *testing.F) {
 	f.Add([]byte(`{"schema_version":"1.0","elements":[{"element_id":"e-1","type":"table","content":"| a \\| |\n|---|\n|\\|"}]}`))
 	f.Add([]byte(`{"schema_version":"1.0","elements":[{"element_id":"e-1","type":"paragraph","content":"x","parent_id":"e-1"}]}`))
 	f.Add([]byte(`{"schema_version":"99999999999999999999.0","elements":[[[[[[]]]]]]}`))
+	f.Add([]byte(`{"schema_version":"1.3","metadata":{"title":"T","source":{"catalog_version":"1.0"}},"elements":[{"element_id":"e-1","type":"heading","content":"G","level":1,"parent_id":null,"id":"G1","role":"group","title":"G","text":null},{"element_id":"e-2","type":"paragraph","content":"C","level":null,"parent_id":"e-1","id":"G1.1","role":"control","title":null,"text":"C","properties":{"level":"1"}}]}`))
+	f.Add([]byte(`{"schema_version":"1.3","elements":[{"element_id":"e-1","type":"paragraph","content":"C","role":"control","title":null,"text":"C"}]}`))
+	f.Add([]byte(`{"schema_version":"1.3","elements":[{"element_id":"e-1","type":"heading","content":"C","level":1,"id":"C1","role":"control","title":null,"text":"C"},{"element_id":"e-2","type":"heading","content":"G","level":2,"parent_id":"e-1","id":"G1","role":"group","title":"G","text":null},{"element_id":"e-3","type":"paragraph","content":"C","parent_id":"e-2","id":"C2","role":"control","title":null,"text":"C"}]}`))
+	f.Add(deepControlChain(50))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		doc, meta, err := catalog.AdaptIngestionOutput(data)
@@ -83,5 +93,64 @@ func FuzzAdaptIngestionOutput(f *testing.F) {
 				}
 			}
 		}
+		if len(meta.SourceItems) == 0 {
+			return
+		}
+		seenIDs := make(map[string]bool, len(meta.SourceItems))
+		repeatedID := false
+		for _, item := range meta.SourceItems {
+			if seenIDs[item.ID] {
+				repeatedID = true
+				break
+			}
+			seenIDs[item.ID] = true
+		}
+		// Repeated source IDs are BuildTree's to refuse; the adapter does not check them.
+		if !repeatedID {
+			if _, err := oscal.BuildTree(meta.SourceItems); err != nil {
+				t.Fatalf("accepted source items do not build a tree: %v", err)
+			}
+		}
+		for i, item := range meta.SourceItems {
+			if item.ID == "" {
+				t.Fatalf("source item %d has no ID", i)
+			}
+			if item.Class != oscal.ClassRequirement && strings.TrimSpace(item.Title) == "" {
+				t.Fatalf("group item %d has a blank title", i)
+			}
+			if item.Title != "" && strings.TrimSpace(item.Title) == "" {
+				t.Fatalf("source item %d has a whitespace-only title", i)
+			}
+			if item.Text != "" && strings.TrimSpace(item.Text) == "" {
+				t.Fatalf("source item %d has whitespace-only text", i)
+			}
+			for name, value := range item.Props {
+				if !propertyName.MatchString(name) || strings.TrimSpace(value) == "" {
+					t.Fatalf("source item %d has property %q with a bad name or blank value", i, name)
+				}
+			}
+		}
 	})
+}
+
+// deepControlChain renders schema 1.3 output with n controls, each the parent
+// of the next.
+func deepControlChain(n int) []byte {
+	elements := make([]map[string]any, n)
+	for i := range elements {
+		e := map[string]any{"element_id": fmt.Sprintf("e-%d", i), "type": "heading", "content": "C",
+			"level": i + 1, "parent_id": nil, "id": fmt.Sprintf("C%d", i), "role": "control", "title": nil, "text": "C"}
+		if i > 0 {
+			e["parent_id"] = fmt.Sprintf("e-%d", i-1)
+		}
+		if i == n-1 {
+			e["type"], e["level"] = "paragraph", nil
+		}
+		elements[i] = e
+	}
+	data, err := json.Marshal(map[string]any{"schema_version": "1.3", "elements": elements})
+	if err != nil {
+		panic(err)
+	}
+	return data
 }

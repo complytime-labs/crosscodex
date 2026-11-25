@@ -16,6 +16,12 @@ CrossCodex is in early development. All foundational, domain, and service packag
 
 ## Upgrading
 
+Structured sources import by their own IDs and groups (#308). Needs [crosscodex-ingestion](https://github.com/complytime-labs/crosscodex-ingestion) with output schema 1.3 (crosscodex-ingestion#37; the bundled compose pin in `deploy/compose.ingestion.yaml` is updated separately); no config change, no migration:
+
+- **Behaviour.** Ingestion output whose elements carry a `role` (a structured source converted through a mapping, such as OWASP ASVS, NIST CSF 2.0, SP 800-53 xlsx or ATT&CK xlsx) now imports one control per `control` element and one group per `group` element, under the source's own IDs, instead of going through the structuring rules. Documents without roles (PDF, DOCX, HTML, older output) are unchanged. See [Import a structured source](#import-a-structured-source).
+- **Re-importing creates a new catalog.** The catalog ID derives from the content hash of the converted output, so converting a structured source again after upgrading ingestion gives a new catalog with source IDs and groups. The old catalog stays until you retire it. Import the new one under the same `--document` slug (it then supersedes the old version), and retire the old version as described under [Import a compliance catalog](#6-import-a-compliance-catalog), for example `crosscodex catalog retire --yes "asvs@old-label"`.
+- **Refusal.** Output that breaks the role contract is refused as an internal error and nothing is stored; re-run the conversion with a matching ingestion version.
+
 Operations progress, prompt rendering and eval tooling (#278). Additive; no breaking changes:
 
 - **Database.** Run `crosscodexd migrate` to apply migration `004_stage_progress` (the daemon never migrates). It adds the table `job_stage_progress`, which retention archives and purges with its job. Its down migration drops the table and loses the recorded progress only.
@@ -394,7 +400,7 @@ To track editions of one document, import each under the same slug. The newest i
 crosscodex catalog import --document nist-800-53 --version-label "Rev 5" catalogs/NIST_SP-800-53_rev5_catalog.json
 ```
 
-A slug is 1-63 characters of `a-z`, `0-9` and `-`. Without `--version-label` the label is the OSCAL metadata version, else the import date and a short content hash. Re-importing content the document already holds keeps its version and label; giving it a different `--version-label` is refused (relabelling is not supported). `catalog list` then shows `slug @ label (date · hash)` with the current version marked; catalogs imported without `--document` list as before.
+A slug is 1-63 characters of `a-z`, `0-9` and `-`. Without `--version-label` the label is the catalog's own version (OSCAL `metadata.version`, or a structured source's `catalog_version`), else the import date and a short content hash. Re-importing content the document already holds keeps its version and label; giving it a different `--version-label` is refused (relabelling is not supported). `catalog list` then shows `slug @ label (date · hash)` with the current version marked; catalogs imported without `--document` list as before.
 
 Retire old versions you no longer need (admin role; the server must run role `all` or `gateway` with `database.purge_dsn` and `retention.archive` set):
 
@@ -421,6 +427,16 @@ Conversion can take minutes for a long PDF. The import fails and no catalog is s
 A failed import can still leave objects in the tenant's storage; see the orphaned-output limitation under [Document ingestion](#document-ingestion).
 
 Without ingestion configured, a document that is not OSCAL JSON is rejected as before.
+
+#### Import a structured source
+
+A structured source (JSON, CSV or xlsx such as OWASP ASVS, NIST CSF 2.0, SP 800-53 xlsx or ATT&CK xlsx) is converted by crosscodex-ingestion through a mapping, which marks each element with a `role`. Output with roles (ingestion schema 1.3, crosscodex-ingestion#37; the bundled compose pin in `deploy/compose.ingestion.yaml` is updated separately) imports by the source's own IDs; the command is the same as for a document:
+
+- one control per `role: control` element, under the source's ID, with its title, text and properties;
+- one group (container) per `role: group` element, with the hierarchy taken from `parent_id`;
+- the catalog name is `metadata.title` unless the API request names one (the CLI sets none), and the catalog version is `metadata.source.catalog_version`.
+
+No `catalog.structuring.*` option applies to this path (keyword filter, decomposition, `section_pattern`, print artifacts): the mapping is the authority. Output without roles goes through the structuring rules as before. Output that breaks the role contract (an id without role, an unknown role, a group without children, a group without a title, a group under a control, a blank title or id) is refused as an internal error and nothing is stored.
 
 ### 7. List and inspect catalogs
 
@@ -1004,9 +1020,9 @@ All four fields are global-only (no `tenant_overrides`): the service and its cap
 
 - **Routing.** OSCAL JSON of any OSCAL model is stored unchanged, as before; every other document goes to ingestion. Known limitation: with ingestion configured, OSCAL XML and YAML also go to ingestion, so the advice to convert them with `oscal-cli` is no longer shown. Convert them to JSON first.
 - **Shared storage.** Ingestion writes its output to storage the gateway also reads: the same directory at the same absolute path (`storage.objects.base_path`, which must exist) or the same S3 bucket (`storage.objects.bucket`). The gateway accepts only output inside the calling tenant's own path and refuses any other URI. The embedded daemon shares its data directory.
-- **Structuring.** Controls are found by the heading, table and numbering rules, or by `catalog.structuring.section_pattern` when set. No LLM is wired for structuring, so a document those rules cannot split is refused and no catalog is stored. `catalog.structuring.section_pattern`, `decompose` (default `true`), `min_decompose_words`, `filter_by_keywords`, `keywords`, `max_heading_repeats` and `print_artifact_patterns` apply; `chunk_chars` affects only the LLM tiers and `max_validation_chars` and `allowed_formats` are not read.
+- **Structuring.** Output whose elements carry a `role` (schema 1.3) skips this and imports by the source's own IDs and groups; none of the options below applies to it. Otherwise controls are found by the heading, table and numbering rules, or by `catalog.structuring.section_pattern` when set. No LLM is wired for structuring, so a document those rules cannot split is refused and no catalog is stored. `catalog.structuring.section_pattern`, `decompose` (default `true`), `min_decompose_words`, `filter_by_keywords`, `keywords`, `max_heading_repeats` and `print_artifact_patterns` apply; `chunk_chars` affects only the LLM tiers and `max_validation_chars` and `allowed_formats` are not read.
 - **Provenance.** A stored catalog's `source_uri` is the converted document's storage key, and its extractor is `crosscodex-ingestion` at the output's `schema_version`.
-- **Known limitation: no groups.** Imported documents currently produce titled controls but no group containers, so a catalog's hierarchy is flat.
+- **Groups.** Documents split by the structuring rules produce titled controls but no group containers, so their hierarchy is flat. Structured sources converted with element roles import with groups; see [Import a structured source](#import-a-structured-source).
 - **Errors.** The ingestion service's error text is logged on the server and never returned. The caller gets a generic message with an error reference, to give to an operator, who finds the cause in the server log.
 - **Known limitation: orphaned output.** A conversion that fails, times out or is cancelled can leave files in the shared storage that CrossCodex does not remove. When the converted document is refused (`InvalidArgument`, `FailedPrecondition`) the gateway deletes the converted output, but when structuring or storing it fails with an internal error the output stays in the tenant's storage. With its attestation enabled, the ingestion service also writes a second object per conversion (`attestation.link`, next to the output), which CrossCodex never deletes. The ingestion service has no cancel or delete call, so CrossCodex cannot reclaim any of these; clear them from storage when it matters.
 - **Cost.** A conversion can take minutes on CPU; `ingestion.convert_timeout` and `ingestion.max_document_bytes` bound it, and `crosscodex.ingestion.conversion.duration_ms` shows how long conversions take. No LLM calls are made.

@@ -94,7 +94,7 @@ import `internal/catalog`, so the formatter lives in `pkg/`.
    `<`, `>`, backtick. Labels are stored and displayed escaped and never reach
    a prompt raw.
 2. **Resolve the label.** `ResolveVersionLabel`: explicit `--version-label`,
-   else the OSCAL `metadata.version`, else `<import date> · <6-hex content
+   else the catalog's own version (OSCAL `metadata.version`, or the structured source's `catalog_version`), else `<import date> · <6-hex content
    hash>`. The stored label is returned as `ParseCatalogResponse.version_label`
    and recorded as the gateway ingest attestation's `version_label` by-product,
    so an OSCAL-derived or fallback label is attested too.
