@@ -1,0 +1,26 @@
+internal/catalog/ingestion_adapter_bdd_test.go
+  s_716be8e6f6d133::t_6b8b23a8efb0d0 301-308
+  s_716be8e6f6d133::t_41e5d27aaa69f3 437-460
+internal/catalog/ingestion_adapter.go
+  s_716be8e6f6d133::t_c4b8a5502e767c 418-430,432-436
+  s_716be8e6f6d133::t_33c2119e74475b 54
+  s_716be8e6f6d133::t_246b1a880dcf23 206-208
+  s_716be8e6f6d133::t_188228255dbd9c 53
+  s_716be8e6f6d133::t_1ad5d6eba9b972 247-262
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "320ef7de834122efca31044880fce5f9060fc3f2",
+  "prompts": {},
+  "sessions": {
+    "s_716be8e6f6d133": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "422310a8-cbba-4c80-ad5a-6a1823316b83",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
