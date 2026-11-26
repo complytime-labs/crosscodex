@@ -1,0 +1,30 @@
+cmd/crosscodex/catalog_content_hash_bdd_test.go
+  s_40dce841606079::t_e2b5d377a81163 15,24-33,37,46,74-87
+  s_40dce841606079::t_8a1dc5ba9c837d 88
+internal/catalog/ingestion_adapter.go
+  s_40dce841606079::t_2f93e2e070a9ac 15
+  s_40dce841606079::t_6032c0df5d2264 458-482
+internal/catalog/ingestion_parse_bdd_test.go
+  s_40dce841606079::t_654c26d6376f28 165-170
+internal/catalog/ingestion_adapter_bdd_test.go
+  s_40dce841606079::t_2ba79293611420 726-754
+  s_40dce841606079::t_436cea388d8a9c 18
+cmd/crosscodex/catalog.go
+  s_40dce841606079::t_fb90800a0efc66 806-808
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "703aaaf6541ca012b96c659fbd1d3c31f9167b5a",
+  "prompts": {},
+  "sessions": {
+    "s_40dce841606079": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "29b3ff77-49f6-4634-8a53-8287337ecd8b",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
