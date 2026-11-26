@@ -1,0 +1,26 @@
+internal/catalog/ingestion_parse_bdd_test.go
+  s_17ed9c62c93906::t_3ad304776a637d 479
+cmd/crosscodex/catalog.go
+  s_17ed9c62c93906::t_6204c7e392cf04 790-798
+  s_17ed9c62c93906::t_398891986715de 808-809
+README.md
+  s_17ed9c62c93906::t_44c42f430d4e47 24-25,448,472
+cmd/crosscodex/catalog_content_hash_bdd_test.go
+  s_17ed9c62c93906::t_92017ef53a4329 55-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "b2502e77cd85040dcbfd6864f17f3ce2d4d29cc6",
+  "prompts": {},
+  "sessions": {
+    "s_17ed9c62c93906": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "de59e2d5-5936-4ca1-b6af-f1aa523b2e11",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
