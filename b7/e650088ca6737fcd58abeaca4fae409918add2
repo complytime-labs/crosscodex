@@ -1,0 +1,29 @@
+docs/dev/service-runtime.md
+  s_412731fd637f69::t_59b5af54a63ed4 218
+docs/dev/telemetry.md
+  s_412731fd637f69::t_59b5af54a63ed4 187
+README.md
+  s_412731fd637f69::t_59b5af54a63ed4 448
+internal/gateway/backend/ingestion_client_bdd_test.go
+  s_412731fd637f69::t_04776b485ff240 288-344
+internal/gateway/backend/ingestion_client.go
+  s_412731fd637f69::t_633e49e2d798d4 29-30
+  s_412731fd637f69::t_0b17603eb66d64 43-47
+  s_412731fd637f69::t_1e24f1013fd18c 219-241
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "b7e650088ca6737fcd58abeaca4fae409918add2",
+  "prompts": {},
+  "sessions": {
+    "s_412731fd637f69": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "baae5499-ef68-45d1-92de-9de7e802664e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
