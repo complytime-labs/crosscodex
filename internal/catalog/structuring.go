@@ -58,8 +58,11 @@ func WithStructuring(cfg config.StructuringConfig) ServiceOption {
 // from the fallback tier, which splits paragraphs rather than finding
 // controls, is refused before anything is stored. Output whose elements name
 // their own controls and groups skips the Structurer and is imported as given;
-// the returned meta then carries the catalog's title and version.
-func (s *Service) structureIngestion(ctx context.Context, prov *oscal.Provenance, documentID string, data []byte) (*oscal.Tree, IngestionMeta, *connect.Error) {
+// the returned meta then carries the catalog's title and version. The output
+// must name requestedMapping (an output naming none is ""), else the import
+// is refused before any tier runs; prov.ContentHash becomes the output's
+// stable content hash.
+func (s *Service) structureIngestion(ctx context.Context, prov *oscal.Provenance, documentID, requestedMapping string, data []byte) (*oscal.Tree, IngestionMeta, *connect.Error) {
 	// Every outcome is counted by the tier that ran ("none" before one did)
 	// and its result; "structured" means a tree was built, before ParseCatalog
 	// validates and stores it.
@@ -76,6 +79,13 @@ func (s *Service) structureIngestion(ctx context.Context, prov *oscal.Provenance
 	if err != nil {
 		count("", "invalid_output")
 		return nil, meta, s.internalError(ctx, "ParseCatalog", fmt.Errorf("adapt ingestion output %q: %w", documentID, err))
+	}
+	if meta.MappingID != requestedMapping {
+		count("", "mapping_mismatch")
+		return nil, meta, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"cannot import document %q: the import asked for mapping %.64q but the converted output names mapping %.64q. "+
+				"Nothing was stored; re-run the conversion, and if it recurs report it as an ingestion service bug",
+			documentID, requestedMapping, meta.MappingID))
 	}
 	items := meta.SourceItems
 	tier := oscal.StructureTierSourceIDs
@@ -130,6 +140,7 @@ func (s *Service) structureIngestion(ctx context.Context, prov *oscal.Provenance
 	count(tier, "structured")
 	prov.Format = FormatIngestion
 	prov.SourceURI = documentID
+	prov.ContentHash = meta.ContentHash
 	prov.SetExtractor(IngestionExtractorName, meta.SchemaVersion)
 	return tree, meta, nil
 }

@@ -3,15 +3,19 @@
 package catalog_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/complytime-labs/crosscodex/internal/catalog"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
+	"github.com/complytime-labs/crosscodex/pkg/storage"
 )
 
 // ingestionFixtureElement is the subset of a crosscodex-ingestion element the
@@ -620,6 +624,183 @@ var _ = Describe("IsIngestionOutput", func() {
 		Entry("PDF bytes", []byte("%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<< /Type /Catalog >>\nendobj\n"), false),
 		Entry("wrong-case keys", []byte(`{"SCHEMA_VERSION":"1.0","Elements":[]}`), false),
 		Entry("empty input", []byte{}, false),
+	)
+})
+
+// contentHashDoc is the base document of the content-hash specs, assembled
+// from named pieces so a spec can reorder or rewrite one of them.
+const (
+	hashMappingSHA = "de791a43657db03a3a728c4ec1bc14b31d400c0cfe70958fbe7d958847a0ec36"
+	hashOtherSHA   = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	hashMapping    = `{"id":"m","sha256":"` + hashMappingSHA + `","mapping_version":1}`
+	hashElements   = `[{"element_id":"e-1","type":"heading","content":"G","level":1,"parent_id":null,"id":"G1","role":"group","title":"G","text":null,"properties":{"k":"v"}},` +
+		`{"element_id":"e-2","type":"paragraph","content":"C","level":null,"parent_id":"e-1","id":"G1.1","role":"control","title":null,"text":"C","properties":{"level":"1"}}]`
+	hashMetadata = `{"title":"Cat","source":{"kind":"structured","node_count":2,"unmapped_fields":[],"catalog_version":"1.0","mapping":` + hashMapping + `},"processing_time_ms":9.4}`
+	hashBase     = `{"schema_version":"1.3","elements":` + hashElements + `,"metadata":` + hashMetadata + `}`
+)
+
+// hashSwap returns a transform replacing the one occurrence of old in a
+// document, failing the spec if old is absent so a typo cannot pass as "same".
+func hashSwap(old, replacement string) func(string) string {
+	return func(doc string) string {
+		Expect(strings.Count(doc, old)).To(Equal(1), "%q must occur once in the base document", old)
+		return strings.Replace(doc, old, replacement, 1)
+	}
+}
+
+func contentHashOf(doc string) string {
+	_, meta, err := catalog.AdaptIngestionOutput([]byte(doc))
+	Expect(err).NotTo(HaveOccurred())
+	return meta.ContentHash
+}
+
+var _ = Describe("content hash", func() {
+	profile := func(sha string) string { return `{"id":"p","sha256":"` + sha + `"}` }
+	withProfile := func(sha string) func(string) string {
+		return hashSwap(`"processing_time_ms":9.4}`, `"processing_time_ms":9.4,"html_profile":`+profile(sha)+`}`)
+	}
+
+	DescribeTable("gives the same hash",
+		func(transform func(string) string) {
+			Expect(contentHashOf(transform(hashBase))).To(Equal(contentHashOf(hashBase)))
+		},
+		Entry("when processing_time_ms changes", hashSwap(`"processing_time_ms":9.4`, `"processing_time_ms":123.5`)),
+		Entry("when top-level keys are reordered", func(string) string {
+			return `{"metadata":` + hashMetadata + `,"elements":` + hashElements + `,"schema_version":"1.3"}`
+		}),
+		Entry("when whitespace is added", func(doc string) string {
+			var out bytes.Buffer
+			Expect(json.Indent(&out, []byte(doc), "", "    ")).To(Succeed())
+			return out.String()
+		}),
+		Entry("when an unknown top-level key is added", hashSwap(`{"schema_version"`, `{"future":1,"schema_version"`)),
+		Entry("when the mapping has unknown keys", hashSwap(`"mapping_version":1}`, `"mapping_version":1,"note":"x"}`)),
+		Entry("when an element gains page and style", hashSwap(`"element_id":"e-1",`, `"element_id":"e-1","page":3,"style":{"b":true},`)),
+		Entry("when source.node_count and unmapped_fields change", hashSwap(`"node_count":2,"unmapped_fields":[]`, `"node_count":9,"unmapped_fields":["x"]`)),
+		Entry("when a duplicate title key ends on the same value", hashSwap(`"title":"Cat"`, `"title":"Other","title":"Cat"`)),
+	)
+
+	DescribeTable("gives a different hash",
+		func(transform func(string) string) {
+			Expect(contentHashOf(transform(hashBase))).NotTo(Equal(contentHashOf(hashBase)))
+		},
+		Entry("when element content changes", hashSwap(`"content":"C"`, `"content":"C2"`)),
+		Entry("when an element role changes", hashSwap(`"role":"group"`, `"role":"control"`)),
+		Entry("when an element title changes", hashSwap(`"title":"G"`, `"title":"H"`)),
+		Entry("when a property value changes", hashSwap(`"k":"v"`, `"k":"w"`)),
+		Entry("when catalog_version changes", hashSwap(`"catalog_version":"1.0"`, `"catalog_version":"2.0"`)),
+		Entry("when metadata.title changes", hashSwap(`"title":"Cat"`, `"title":"Dog"`)),
+		Entry("when the mapping sha256 changes", hashSwap(hashMappingSHA, hashOtherSHA)),
+		Entry("when the mapping id changes", hashSwap(`"id":"m"`, `"id":"n"`)),
+		Entry("when mapping_version changes", hashSwap(`"mapping_version":1`, `"mapping_version":2`)),
+		Entry("when an html_profile is added", withProfile(hashMappingSHA)),
+	)
+
+	It("hashes the html_profile sha256", func() {
+		Expect(contentHashOf(withProfile(hashMappingSHA)(hashBase))).NotTo(Equal(contentHashOf(withProfile(hashOtherSHA)(hashBase))))
+	})
+
+	It("tells an absent element title from a null one", func() {
+		absent := `{"schema_version":"1.3","elements":[{"element_id":"e-1","type":"paragraph","content":"x"}]}`
+		null := `{"schema_version":"1.3","elements":[{"element_id":"e-1","type":"paragraph","content":"x","title":null}]}`
+		Expect(contentHashOf(absent)).NotTo(Equal(contentHashOf(null)))
+	})
+
+	DescribeTable("hashes role-less output",
+		func(fixture string) {
+			data, _ := readIngestionFixture(fixture)
+			_, meta, err := catalog.AdaptIngestionOutput(data)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(meta.ContentHash).To(MatchRegexp(`^[0-9a-f]{64}$`))
+
+			retimed := regexp.MustCompile(`"processing_time_ms":\s*[0-9.eE+-]+`).ReplaceAll(data, []byte(`"processing_time_ms": 123456.789`))
+			Expect(retimed).NotTo(Equal(data), "the fixture must carry processing_time_ms for this spec to mean anything")
+			_, again, err := catalog.AdaptIngestionOutput(retimed)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(again.ContentHash).To(Equal(meta.ContentHash))
+		},
+		Entry("the NIS2 HTML fixture", "eurlex-nis2-32022L2555.json"),
+		Entry("the SP 800-171r3 PDF fixture", "nist-sp800-171r3-excerpt.json"),
+	)
+
+	DescribeTable("ContentIdentity hashes the bytes of anything that is not ingestion output",
+		func(content string) {
+			kind, hash, err := catalog.ContentIdentity([]byte(content))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(kind).To(Equal(catalog.ContentKindBytes))
+			Expect(hash).To(Equal(storage.ContentHash([]byte(content))))
+		},
+		Entry("plain text", "not json at all"),
+		Entry("JSON without elements", `{"schema_version":"1.3"}`),
+		Entry("an OSCAL catalog", `{"catalog":{"uuid":"u","metadata":{"title":"t"}}}`),
+		Entry("an OSCAL catalog that also looks like ingestion output",
+			`{"catalog":{"uuid":"u","metadata":{"title":"t"}},"schema_version":"1","elements":[]}`),
+	)
+
+	It("ContentIdentity returns the adapter's hash and error for ingestion output", func() {
+		data, _ := readIngestionFixture("nist-sp800-171r3-excerpt.json")
+		_, meta, err := catalog.AdaptIngestionOutput(data)
+		Expect(err).NotTo(HaveOccurred())
+		kind, hash, err := catalog.ContentIdentity(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(kind).To(Equal(catalog.ContentKindIngestion))
+		Expect(hash).To(Equal(meta.ContentHash))
+
+		kind, hash, err = catalog.ContentIdentity([]byte(`{"schema_version":"1.3","elements":[]}`))
+		Expect(err).To(MatchError(catalog.ErrInvalidIngestionOutput))
+		Expect(kind).To(BeEmpty())
+		Expect(hash).To(BeEmpty())
+	})
+
+	DescribeTable("exposes the mapping",
+		func(fixture, wantID, wantSHA string) {
+			data, _ := readIngestionFixture(fixture)
+			_, meta, err := catalog.AdaptIngestionOutput(data)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(meta.MappingID).To(Equal(wantID))
+			Expect(meta.MappingSHA256).To(Equal(wantSHA))
+		},
+		Entry("an ASVS fixture with a mapping", "owasp-asvs-5.0.0-excerpt.json", "owasp-asvs-5.0.0-json", "de791a43657db03a3a728c4ec1bc14b31d400c0cfe70958fbe7d958847a0ec36"),
+		Entry("an SP 800-171r3 fixture without one", "nist-sp800-171r3-excerpt.json", "", ""),
+	)
+
+	DescribeTable("rejects a malformed mapping or profile",
+		func(transform func(string) string, path string) {
+			_, _, err := catalog.AdaptIngestionOutput([]byte(transform(hashBase)))
+			Expect(err).To(MatchError(catalog.ErrInvalidIngestionOutput))
+			Expect(err.Error()).To(ContainSubstring(path))
+			Expect(err.Error()).To(ContainSubstring("Re-run the conversion"))
+		},
+		Entry("a null mapping", hashSwap(hashMapping, `null`), "metadata.source.mapping"),
+		Entry("a string mapping", hashSwap(hashMapping, `"m"`), "metadata.source.mapping"),
+		Entry("a mapping without id", hashSwap(`"id":"m",`, ``), "metadata.source.mapping.id"),
+		Entry("a mapping without sha256", hashSwap(`"sha256":"`+hashMappingSHA+`",`, ``), "metadata.source.mapping.sha256"),
+		Entry("a mapping without mapping_version", hashSwap(`,"mapping_version":1`, ``), "metadata.source.mapping.mapping_version"),
+		Entry("a blank mapping id", hashSwap(`"id":"m"`, `"id":"  "`), "metadata.source.mapping.id"),
+		Entry("an uppercase mapping sha256", hashSwap(hashMappingSHA, strings.ToUpper(hashMappingSHA)), "metadata.source.mapping.sha256"),
+		Entry("a 63-character mapping sha256", hashSwap(hashMappingSHA, hashMappingSHA[:63]), "metadata.source.mapping.sha256"),
+		Entry("mapping_version 0", hashSwap(`"mapping_version":1`, `"mapping_version":0`), "metadata.source.mapping.mapping_version"),
+		Entry("a fractional mapping_version", hashSwap(`"mapping_version":1`, `"mapping_version":1.5`), "metadata.source.mapping.mapping_version"),
+		Entry("a null html_profile", hashSwap(`"processing_time_ms":9.4}`, `"processing_time_ms":9.4,"html_profile":null}`), "metadata.html_profile"),
+		Entry("an html_profile without id", hashSwap(`"processing_time_ms":9.4}`, `"processing_time_ms":9.4,"html_profile":{"sha256":"`+hashMappingSHA+`"}}`), "metadata.html_profile.id"),
+		Entry("a malformed html_profile sha256", hashSwap(`"processing_time_ms":9.4}`, `"processing_time_ms":9.4,"html_profile":`+profile("abc")+`}`), "metadata.html_profile.sha256"),
+	)
+
+	DescribeTable("pins the v1 hash of each fixture",
+		func(fixture, want string) {
+			data, _ := readIngestionFixture(fixture)
+			_, meta, err := catalog.AdaptIngestionOutput(data)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(meta.ContentHash).To(Equal(want))
+		},
+		Entry("the NIS2 HTML fixture", "eurlex-nis2-32022L2555.json",
+			"08129ed7d8dde5fbe766064bc8816aaf690dc585917fcd4ce1d397504892099a"),
+		Entry("the SP 800-171r3 PDF fixture", "nist-sp800-171r3-excerpt.json",
+			"4972a9e2932b12f9a072daed8cb733ad51f0cc70da2194bd8e242cdd73cff3cf"),
+		Entry("the SP 800-53r5 fixture", "nist-sp800-53r5-excerpt.json",
+			"b55783a79ae22fd5e5a67a643eac65046d2f2342ba95413de0cd214684bf50a3"),
+		Entry("the ASVS fixture", "owasp-asvs-5.0.0-excerpt.json",
+			"a19a64cad1ad2bf35b634af7579baa3b8e23106760dc02ffca858626ec977231"),
 	)
 })
 

@@ -1,6 +1,8 @@
 package catalog
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
+	"github.com/complytime-labs/crosscodex/pkg/storage"
 )
 
 // This file adapts crosscodex-ingestion's structured output (the JSON document
@@ -52,7 +55,14 @@ var (
 	markdownSeparatorCell = regexp.MustCompile(`^:?-+:?$`)
 	// ingestionPropertyName is the schema's rule for element property names.
 	ingestionPropertyName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	// ingestionSHA256 is the form of a mapping or profile digest.
+	ingestionSHA256 = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
+
+// ingestionContentPrefix versions the content hash. The hash covers the
+// fields ingestionOutput decodes, so adding a field changes every hash:
+// bump the prefix to v2 and add a README Upgrading note.
+const ingestionContentPrefix = "crosscodex.ingestion-content.v1\n"
 
 // IngestionMeta describes the ingestion output a StructuredDoc came from.
 type IngestionMeta struct {
@@ -72,35 +82,64 @@ type IngestionMeta struct {
 	// CatalogVersion is metadata.source.catalog_version; "" when null or
 	// absent. Set only with SourceItems.
 	CatalogVersion string
+	// ContentHash identifies the conversion's content: hex SHA-256 of
+	// ingestionContentPrefix and the JSON encoding of the fields the adapter
+	// decodes. Unlike a hash of the raw bytes it ignores metadata such as
+	// processing_time_ms, so re-converting the same source with the same
+	// mapping gives the same value.
+	ContentHash string
+	// MappingID and MappingSHA256 are metadata.source.mapping's id and sha256;
+	// "" when the conversion applied no mapping.
+	MappingID     string
+	MappingSHA256 string
 }
 
 // ingestionOutput and ingestionElement hold the schema v1 fields the adapter
-// reads. decodeIngestionOutput fills them by exact key; they carry no json
-// tags because encoding/json matches struct tags case-insensitively.
+// reads. The json tags define the content-hash encoding only (see
+// ingestionContentPrefix). Decoding stays by exact key in
+// decodeIngestionOutput and never json.Unmarshals into these structs, because
+// tag matching is case-insensitive.
 type ingestionOutput struct {
-	SchemaVersion  *string
-	Elements       []ingestionElement
-	CatalogTitle   *string // metadata.title
-	CatalogVersion *string // metadata.source.catalog_version (since 1.3)
+	SchemaVersion  *string               `json:"schema_version"`
+	Elements       []ingestionElement    `json:"elements"`
+	CatalogTitle   *string               `json:"title"`           // metadata.title
+	CatalogVersion *string               `json:"catalog_version"` // metadata.source.catalog_version (since 1.3)
+	Mapping        *ingestionMapping     `json:"mapping"`         // metadata.source.mapping
+	HTMLProfile    *ingestionHTMLProfile `json:"html_profile"`    // metadata.html_profile
+}
+
+// ingestionMapping is metadata.source.mapping: the named mapping the
+// conversion applied.
+type ingestionMapping struct {
+	ID             string `json:"id"`
+	SHA256         string `json:"sha256"`
+	MappingVersion int    `json:"mapping_version"`
+}
+
+// ingestionHTMLProfile is metadata.html_profile: the HTML profile the
+// conversion applied.
+type ingestionHTMLProfile struct {
+	ID     string `json:"id"`
+	SHA256 string `json:"sha256"`
 }
 
 // The source-node fields (since 1.1 and 1.3) are read only on the source-ID
 // path. The schema distinguishes an absent role, title or text key from a
 // null value, so their presence is recorded apart from the value.
 type ingestionElement struct {
-	ElementID  string
-	Type       string
-	Content    string
-	Level      *int
-	ParentID   *string
-	ID         *string
-	Role       *string
-	Title      *string
-	Text       *string
-	Properties map[string]string
-	HasRole    bool
-	HasTitle   bool
-	HasText    bool
+	ElementID  string            `json:"element_id"`
+	Type       string            `json:"type"`
+	Content    string            `json:"content"`
+	Level      *int              `json:"level"`
+	ParentID   *string           `json:"parent_id"`
+	ID         *string           `json:"id"`
+	Role       *string           `json:"role"`
+	Title      *string           `json:"title"`
+	Text       *string           `json:"text"`
+	Properties map[string]string `json:"properties"`
+	HasRole    bool              `json:"has_role"`
+	HasTitle   bool              `json:"has_title"`
+	HasText    bool              `json:"has_text"`
 }
 
 // decodeIngestionOutput decodes data into the fields the adapter reads,
@@ -128,6 +167,18 @@ func decodeIngestionOutput(data []byte) (ingestionOutput, error) {
 	}
 	if err := decodeIngestionField(source, "catalog_version", &out.CatalogVersion); err != nil {
 		return out, invalidIngestionJSON("metadata.source.catalog_version", err)
+	}
+	if raw, ok := source["mapping"]; ok {
+		var err error
+		if out.Mapping, err = decodeIngestionMapping(raw); err != nil {
+			return out, err
+		}
+	}
+	if raw, ok := metadata["html_profile"]; ok {
+		var err error
+		if out.HTMLProfile, err = decodeIngestionHTMLProfile(raw); err != nil {
+			return out, err
+		}
 	}
 	var elements []map[string]json.RawMessage
 	if err := decodeIngestionField(top, "elements", &elements); err != nil {
@@ -161,6 +212,99 @@ func decodeIngestionOutput(data []byte) (ingestionOutput, error) {
 		_, e.HasText = raw["text"]
 	}
 	return out, nil
+}
+
+// decodeIngestionMapping decodes and validates metadata.source.mapping. The
+// key is optional, but a present value must be an object with all three
+// fields, so a null or partial mapping cannot pass as "no mapping".
+func decodeIngestionMapping(raw json.RawMessage) (*ingestionMapping, error) {
+	const path = "metadata.source.mapping"
+	obj, err := decodeIngestionRefObject(raw, path)
+	if err != nil {
+		return nil, err
+	}
+	var m ingestionMapping
+	if err := decodeIngestionRefFields(obj, path, []ingestionRefField{
+		{"id", &m.ID}, {"sha256", &m.SHA256}, {"mapping_version", &m.MappingVersion},
+	}); err != nil {
+		return nil, err
+	}
+	if err := checkIngestionRef(path, m.ID, m.SHA256); err != nil {
+		return nil, err
+	}
+	if m.MappingVersion < 1 {
+		return nil, ingestionRefRule(path+".mapping_version", "is not an integer of 1 or more")
+	}
+	return &m, nil
+}
+
+// decodeIngestionHTMLProfile decodes and validates metadata.html_profile with
+// the same rules as the mapping, minus the version.
+func decodeIngestionHTMLProfile(raw json.RawMessage) (*ingestionHTMLProfile, error) {
+	const path = "metadata.html_profile"
+	obj, err := decodeIngestionRefObject(raw, path)
+	if err != nil {
+		return nil, err
+	}
+	var p ingestionHTMLProfile
+	if err := decodeIngestionRefFields(obj, path, []ingestionRefField{
+		{"id", &p.ID}, {"sha256", &p.SHA256},
+	}); err != nil {
+		return nil, err
+	}
+	if err := checkIngestionRef(path, p.ID, p.SHA256); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+type ingestionRefField struct {
+	key string
+	dst any
+}
+
+// decodeIngestionRefObject requires raw to be a JSON object; null is not one.
+func decodeIngestionRefObject(raw json.RawMessage, path string) (map[string]json.RawMessage, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, invalidIngestionJSON(path, err)
+	}
+	if obj == nil {
+		return nil, ingestionRefRule(path, "is null; when the conversion applied none the key is omitted")
+	}
+	return obj, nil
+}
+
+// decodeIngestionRefFields decodes each field of obj by exact key; every key
+// is required.
+func decodeIngestionRefFields(obj map[string]json.RawMessage, path string, fields []ingestionRefField) error {
+	for _, f := range fields {
+		raw, ok := obj[f.key]
+		if !ok {
+			return ingestionRefRule(path+"."+f.key, "is missing")
+		}
+		if err := json.Unmarshal(raw, f.dst); err != nil {
+			return invalidIngestionJSON(path+"."+f.key, err)
+		}
+	}
+	return nil
+}
+
+// checkIngestionRef applies the id and sha256 rules shared by the mapping and
+// the HTML profile.
+func checkIngestionRef(path, id, sha string) error {
+	if strings.TrimSpace(id) == "" {
+		return ingestionRefRule(path+".id", "is blank")
+	}
+	if !ingestionSHA256.MatchString(sha) {
+		return ingestionRefRule(path+".sha256", "is not 64 lowercase hex digits")
+	}
+	return nil
+}
+
+func ingestionRefRule(where, problem string) error {
+	return fmt.Errorf("%w: %s %s. Re-run the conversion; if it fails again, report it as an ingestion service bug",
+		ErrInvalidIngestionOutput, where, problem)
 }
 
 // decodeIngestionField decodes obj[key] into dst; an absent key leaves dst
@@ -238,12 +382,22 @@ func AdaptIngestionOutput(data []byte) (oscal.StructuredDoc, IngestionMeta, erro
 			"%w: the output has no elements, so there is no content to structure into a catalog. Check that the source document has text (a scanned image without OCR text converts to nothing) and convert it again",
 			ErrInvalidIngestionOutput)
 	}
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		return oscal.StructuredDoc{}, IngestionMeta{}, fmt.Errorf("encoding the ingestion output for its content hash: %w", err)
+	}
+	digest := sha256.Sum256(append([]byte(ingestionContentPrefix), encoded...))
+	identity := IngestionMeta{SchemaVersion: version, ContentHash: hex.EncodeToString(digest[:])}
+	if out.Mapping != nil {
+		identity.MappingID, identity.MappingSHA256 = out.Mapping.ID, out.Mapping.SHA256
+	}
 	if slices.ContainsFunc(out.Elements, func(e ingestionElement) bool { return e.HasRole }) {
 		items, err := sourceItems(out.Elements)
 		if err != nil {
 			return oscal.StructuredDoc{}, IngestionMeta{}, err
 		}
-		meta := IngestionMeta{SchemaVersion: version, SourceItems: items}
+		meta := identity
+		meta.SourceItems = items
 		for _, f := range []struct {
 			key   string
 			value *string
@@ -298,7 +452,32 @@ func AdaptIngestionOutput(data []byte) (oscal.StructuredDoc, IngestionMeta, erro
 		doc.Sections[i].Text = strings.Join(sectionText[i], "\n\n")
 	}
 	doc.RawText = strings.Join(raw, "\n\n")
-	return doc, IngestionMeta{SchemaVersion: version}, nil
+	return doc, identity, nil
+}
+
+// Content identity kinds returned by ContentIdentity.
+const (
+	// ContentKindIngestion: the hash is IngestionMeta.ContentHash.
+	ContentKindIngestion = "ingestion"
+	// ContentKindBytes: the hash is the SHA-256 of the raw bytes.
+	ContentKindBytes = "bytes"
+)
+
+// ContentIdentity returns the content_hash ParseCatalog records for data
+// and which rule produced it. Ingestion output that is not an OSCAL catalog
+// takes the adapter's stable hash; anything else takes the SHA-256 of its
+// bytes. It assumes a daemon with ingestion configured and no format hint, so
+// it reports what an import would record, not whether the import would be
+// accepted. Malformed ingestion output returns the adapter's error.
+func ContentIdentity(data []byte) (kind, hash string, err error) {
+	if !oscal.DetectCatalogJSON(data).IsCatalog && IsIngestionOutput(data) {
+		_, meta, err := AdaptIngestionOutput(data)
+		if err != nil {
+			return "", "", err
+		}
+		return ContentKindIngestion, meta.ContentHash, nil
+	}
+	return ContentKindBytes, storage.ContentHash(data), nil
 }
 
 func checkIngestionVersion(v *string) (string, error) {

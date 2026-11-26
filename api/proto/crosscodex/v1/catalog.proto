@@ -70,6 +70,12 @@ message ParseCatalogRequest {
   // separators, '<', '>' or '`'. When empty, the OSCAL metadata.version is used
   // if it is a valid label, else "<UTC date> · <first 6 hex of content hash>".
   string version_label = 7;
+  // Optional. The ID of the crosscodex-ingestion mapping the conversion was
+  // asked to use; empty for none. For converted output, the output's
+  // metadata.source.mapping.id must equal it (an output naming no mapping
+  // equals ""), else the import is refused with FAILED_PRECONDITION and
+  // nothing is stored. Non-empty with OSCAL content is INVALID_ARGUMENT.
+  string ingestion_mapping = 8;
 }
 
 message ParseCatalogResponse {
@@ -93,6 +99,10 @@ message ParseCatalogResponse {
   // "date · hash6"). For content already in the document it is the label
   // stored by the first import.
   string version_label = 7;
+  // The SHA-256 (64 lowercase hex characters) of the mapping file the
+  // conversion used, as recorded in the converted output. Set exactly when the
+  // request's ingestion_mapping was non-empty.
+  string ingestion_mapping_sha256 = 8;
 }
 
 // ChangeReport lists control identifiers that differ between a version and the

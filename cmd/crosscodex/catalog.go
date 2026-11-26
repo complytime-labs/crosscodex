@@ -35,6 +35,7 @@ func newCatalogCmd(state *cliState) *cobra.Command {
 	catalogCmd.AddCommand(newCatalogInspectCmd(state))
 	catalogCmd.AddCommand(newCatalogControlsCmd(state))
 	catalogCmd.AddCommand(newCatalogValidateCmd(state))
+	catalogCmd.AddCommand(newCatalogContentHashCmd(state))
 	catalogCmd.AddCommand(newCatalogRetireCmd(state))
 
 	return catalogCmd
@@ -747,8 +748,10 @@ func catalogToJSON(cat *pb.Catalog) map[string]any {
 		"version":       cat.GetVersion(),
 		"control_count": cat.GetControlCount(),
 		"properties":    cat.GetProperties(),
-		// The hex SHA-256 of the bytes the catalog was imported from; "" when
-		// none was recorded.
+		// The catalog's content identity: the hex SHA-256 of the imported bytes
+		// for OSCAL, the ingestion content hash for a converted document
+		// (recompute with `crosscodex catalog content-hash`); "" when none was
+		// recorded.
 		"content_hash": cat.GetProvenance().GetLineageMetadata()["content_hash"],
 	}
 	// Document fields appear only for a catalog under a document, so
@@ -770,4 +773,64 @@ func catalogsToJSON(catalogs []*pb.Catalog) []map[string]any {
 		result[i] = catalogToJSON(cat)
 	}
 	return result
+}
+
+func newCatalogContentHashCmd(_ *cliState) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "content-hash <file>",
+		Short: "Print the content hash an import of a file records",
+		Long: `Print the content hash that importing a file records for its catalog.
+
+The result is the content_hash that 'catalog inspect' shows for the catalog
+imported from this file. For crosscodex-ingestion output it is the hash a
+daemon with ingestion configured records; it ignores timing and other fields
+crosscodex does not read. For anything else it is the file's SHA-256.
+
+Run it on the converted output (structured.json), not on an uploaded PDF,
+DOCX or HTML source: a source file reports kind "bytes", which never equals
+the catalog's content_hash. The source file's SHA-256 is the ingest link's
+content_hash byproduct instead.
+
+With --json the keys are path, kind ("ingestion" or "bytes") and
+content_hash. Malformed ingestion output exits with the adapter's error;
+re-run the conversion.
+
+This command runs locally and does not require a running daemon.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			filePath := args[0]
+			content, err := os.ReadFile(filePath)
+			if err != nil {
+				return fmt.Errorf("failed to read file: %w", err)
+			}
+
+			kind, hash, err := catalog.ContentIdentity(content)
+			if err != nil {
+				return err
+			}
+
+			return emit(cmd,
+				func(w io.Writer, color bool) {
+					fmt.Fprintf(w, "content_hash: %s (%s)\n", hash, kind)
+					fmt.Fprintf(w, "  Path: %s\n", filePath)
+				},
+				map[string]string{
+					"path":         filePath,
+					"kind":         kind,
+					"content_hash": hash,
+				},
+			)
+		},
+	}
+
+	guidedArgs(cmd, cobra.ExactArgs(1), argGuide{
+		noun:  "a file path",
+		find:  "crosscodex catalog content-hash <file>",
+		usage: "crosscodex catalog content-hash <file>",
+		examples: []string{
+			"crosscodex catalog content-hash structured.json",
+			"crosscodex catalog content-hash oscal-catalog.json",
+		},
+	})
+
+	return cmd
 }

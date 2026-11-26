@@ -142,6 +142,8 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 		CatalogName:   input.catalogName,
 		DocumentSlug:  input.documentSlug,
 		VersionLabel:  input.versionLabel,
+		// The catalog service refuses converted output that names another mapping.
+		IngestionMapping: input.convertReq.GetMapping(),
 	}
 
 	parseResp, err := s.catalog.ParseCatalog(ctx, connect.NewRequest(parseReq))
@@ -175,6 +177,7 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 	// The mapping decides what a structured source's controls are.
 	if mapping := input.convertReq.GetMapping(); mapping != "" {
 		byProducts["ingestion_mapping"] = mapping
+		byProducts["ingestion_mapping_sha256"] = parseResp.Msg.GetIngestionMappingSha256()
 	}
 	if err := s.attestIngest(ctx, "gateway."+input.rpcName, docID, catalogID, input.convertReq.GetContent(), byProducts); err != nil {
 		// The cause can name storage buckets, hosts or key files (CWE-209):

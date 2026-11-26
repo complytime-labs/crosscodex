@@ -328,6 +328,12 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		}
 	}
 
+	if isOSCAL && req.Msg.GetIngestionMapping() != "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+			"ingestion_mapping %.64q was given, but a mapping applies only to converted structured sources and this document is OSCAL. "+
+				"Leave ingestion_mapping empty for OSCAL. Nothing was stored", req.Msg.GetIngestionMapping()))
+	}
+
 	var (
 		tree          *oscal.Tree
 		ingestionMeta IngestionMeta
@@ -352,7 +358,7 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		// Without a structurer (ingestion.address unset) the same JSON is a
 		// caller's upload, not conversion output, and takes the default.
 		var cerr *connect.Error
-		tree, ingestionMeta, cerr = s.structureIngestion(ctx, prov, req.Msg.GetDocumentId(), data)
+		tree, ingestionMeta, cerr = s.structureIngestion(ctx, prov, req.Msg.GetDocumentId(), req.Msg.GetIngestionMapping(), data)
 		if cerr != nil {
 			return nil, cerr
 		}
@@ -536,14 +542,22 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 		textless[i] = &crosscodexv1.TextlessControl{Identifier: tc.Identifier, PartNames: tc.PartNames}
 	}
 
+	// A non-empty request mapping equals the output's, so the hash is the
+	// output's mapping file.
+	var mappingSHA256 string
+	if req.Msg.GetIngestionMapping() != "" {
+		mappingSHA256 = ingestionMeta.MappingSHA256
+	}
+
 	return connect.NewResponse(&crosscodexv1.ParseCatalogResponse{
-		CatalogId:           catalogID,
-		Status:              crosscodexv1.JobStatus_JOB_STATUS_COMPLETED,
-		TextlessControls:    textless,
-		Version:             version,
-		VersionLabel:        versionLabel,
-		SupersededCatalogId: supersededID,
-		ChangeReport:        changeReport,
+		CatalogId:              catalogID,
+		Status:                 crosscodexv1.JobStatus_JOB_STATUS_COMPLETED,
+		TextlessControls:       textless,
+		Version:                version,
+		VersionLabel:           versionLabel,
+		SupersededCatalogId:    supersededID,
+		ChangeReport:           changeReport,
+		IngestionMappingSha256: mappingSHA256,
 	}), nil
 }
 
