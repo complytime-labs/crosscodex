@@ -26,8 +26,8 @@ import (
 // Conversion outcomes, the "outcome" attribute of the conversions counter.
 const (
 	outcomeCompleted = "completed" // output stored and verified
-	outcomeRejected  = "rejected"  // refused before any RPC (size, source kind, tenant), or ingestion refused a mapped request
-	outcomeFailed    = "failed"    // ingestion reported a terminal non-success status
+	outcomeRejected  = "rejected"  // refused before any RPC (size, source kind, tenant), ingestion refused a mapped request, or it failed the input as invalid or over a limit
+	outcomeFailed    = "failed"    // ingestion reported any other terminal non-success status
 	outcomeTimeout   = "timeout"   // ingestion.convert_timeout elapsed
 	outcomeCanceled  = "canceled"  // the caller's context ended first
 	outcomeError     = "error"     // RPC, URI resolution or storage failure
@@ -40,9 +40,13 @@ const (
 // publicError can log it; every such error has a code publicError withholds
 // (Internal, Unavailable or DeadlineExceeded), so that text never reaches the
 // caller (CWE-209). Only refusals this client makes itself, with its own
-// message, use caller-actionable codes. One of them reports ingestion refusing
-// a mapped request as InvalidArgument: the client then logs ingestion's text
-// once, under an error reference the message gives.
+// message, use caller-actionable codes. Some follow ingestion's own
+// classification: ingestion refusing a mapped request (InvalidArgument), and a
+// conversion FAILED with ERROR_CODE_INVALID_ARGUMENT (InvalidArgument: a format
+// error, or a mapping missing or not fitting the file) or
+// ERROR_CODE_RESOURCE_EXHAUSTED (ResourceExhausted: a page, output, CPU or time
+// limit). The client then logs ingestion's text once, under an error reference
+// the message gives.
 type IngestionClient struct {
 	rpc   crosscodexv1connect.IngestionServiceClient
 	store storage.Provider
@@ -214,6 +218,51 @@ func (c *IngestionClient) convert(ctx context.Context, span trace.Span, msg *pb.
 		case pb.JobStatus_JOB_STATUS_PENDING, pb.JobStatus_JOB_STATUS_RUNNING:
 		case pb.JobStatus_JOB_STATUS_COMPLETED:
 			doc = got.Msg.GetDocument()
+		case pb.JobStatus_JOB_STATUS_FAILED:
+			// Ingestion classifies failures the caller can fix by changing the
+			// input. For those the code and advice are ours; ingestion's text
+			// goes only to the log (CWE-209).
+			ingErr := got.Msg.GetDocument().GetError()
+			var code connect.Code
+			var problem, advice string
+			switch ingErr.GetCode() {
+			case pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT:
+				// Ingestion uses this one code for every input problem (format,
+				// malformed structured data, structured-source limits, missing or
+				// ill-fitting mapping), so the advice names the candidates rather
+				// than guessing one.
+				code, problem = connect.CodeInvalidArgument, "as invalid input"
+				advice = "the file may be damaged or in a format the service does not accept, or it is a JSON, CSV or XLSX " +
+					"structured source, which must be imported with --mapping <id> (API field ingestion_mapping), the ID of a " +
+					"mapping registered on the ingestion server; ask an operator for the registered IDs " +
+					"(crosscodex-ingestion README \"Structured sources\")"
+				if mapping := msg.GetMapping(); mapping != "" {
+					advice = fmt.Sprintf("the file may not fit mapping %q (its format or layout), be malformed, or exceed the "+
+						"service's limits for structured sources; check the file, or import it with the mapping that fits it "+
+						"(ask an operator for the registered IDs, crosscodex-ingestion README \"Structured sources\")", mapping)
+				}
+			case pb.ErrorCode_ERROR_CODE_RESOURCE_EXHAUSTED:
+				code, problem = connect.CodeResourceExhausted, "for exceeding a conversion limit"
+				advice = "the document has too many pages, too much extracted text, or took too much CPU or time to convert. " +
+					"Split the document and import the parts, or ask an operator to raise the ingestion service's limits; " +
+					"if the service was busy, a later retry may succeed"
+			case pb.ErrorCode_ERROR_CODE_UNAVAILABLE:
+				// An outage or a mapping registry out of step during a rollout:
+				// transient, so keep the code clients retry on. publicError
+				// withholds the text.
+				return "", outcomeFailed, connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+					"ingestion could not convert document %q (status %s): %s", docID, status, ingErr.GetMessage()))
+			default:
+				return "", outcomeFailed, connect.NewError(connect.CodeInternal, fmt.Errorf(
+					"ingestion could not convert document %q (status %s): %s", docID, status, ingErr.GetMessage()))
+			}
+			ref := rpcserver.NewErrorReference()
+			c.logger.WarnContext(ctx, "ingestion rejected a document", "error_ref", ref,
+				"trace_id", rpcserver.LocalTraceID(ctx), "tenant", tenantID, "document_id", docID,
+				"mapping", msg.GetMapping(), "ingestion_code", ingErr.GetCode().String(), "error", ingErr.GetMessage())
+			return "", outcomeRejected, connect.NewError(code, fmt.Errorf(
+				"the ingestion service rejected document %q %s: %s. Its reason is in the server log under error reference %s",
+				docID, problem, advice, ref))
 		default:
 			return "", outcomeFailed, connect.NewError(connect.CodeInternal, fmt.Errorf(
 				"ingestion could not convert document %q (status %s): %s",
@@ -252,7 +301,15 @@ func (c *IngestionClient) rpcFailure(ctx, convCtx context.Context, rpc, docID st
 	if docID != "" {
 		doc = fmt.Sprintf("document %q", docID)
 	}
-	if ctxErr := ctx.Err(); ctxErr != nil {
+	// A context's Err is set by a timer that can fire after its deadline has
+	// passed. In that window connect already sends a zero grpc-timeout and
+	// the RPC fails with DeadlineExceeded, so judge expiry by the clock too.
+	now := time.Now()
+	ctxErr := ctx.Err()
+	if deadline, ok := ctx.Deadline(); ctxErr == nil && ok && !now.Before(deadline) {
+		ctxErr = context.DeadlineExceeded
+	}
+	if ctxErr != nil {
 		code := connect.CodeCanceled
 		if errors.Is(ctxErr, context.DeadlineExceeded) {
 			code = connect.CodeDeadlineExceeded
@@ -260,7 +317,7 @@ func (c *IngestionClient) rpcFailure(ctx, convCtx context.Context, rpc, docID st
 		return outcomeCanceled, connect.NewError(code, fmt.Errorf(
 			"document conversion stopped because the request ended before ingestion finished: %w", ctxErr))
 	}
-	if errors.Is(convCtx.Err(), context.DeadlineExceeded) {
+	if deadline, ok := convCtx.Deadline(); errors.Is(convCtx.Err(), context.DeadlineExceeded) || ok && !now.Before(deadline) {
 		return outcomeTimeout, connect.NewError(connect.CodeDeadlineExceeded, fmt.Errorf(
 			"%s did not finish converting within ingestion.convert_timeout (%s): retry later, "+
 				"or ask an operator to raise ingestion.convert_timeout or add ingestion workers", doc, c.cfg.ConvertTimeout))

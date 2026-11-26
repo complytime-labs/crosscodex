@@ -27,10 +27,11 @@ import (
 )
 
 // failedConversionRPC is an ingestion service whose every conversion fails
-// with message. Only the two RPCs the ingestion client calls are implemented;
+// with code and message. Only the two RPCs the ingestion client calls are implemented;
 // the embedded nil interface makes any other call panic.
 type failedConversionRPC struct {
 	crosscodexv1connect.IngestionServiceClient
+	code    pb.ErrorCode
 	message string
 }
 
@@ -40,7 +41,7 @@ func (failedConversionRPC) ConvertDocument(context.Context, *connect.Request[pb.
 
 func (r failedConversionRPC) GetDocument(context.Context, *connect.Request[pb.GetDocumentRequest]) (*connect.Response[pb.GetDocumentResponse], error) {
 	return connect.NewResponse(&pb.GetDocumentResponse{Document: &pb.Document{
-		DocumentId: "doc-1", ConversionStatus: pb.JobStatus_JOB_STATUS_FAILED, Error: &pb.Error{Message: r.message},
+		DocumentId: "doc-1", ConversionStatus: pb.JobStatus_JOB_STATUS_FAILED, Error: &pb.Error{Code: r.code, Message: r.message},
 	}}), nil
 }
 
@@ -401,6 +402,31 @@ var _ = Describe("Backend errors at the gateway boundary", func() {
 		Expect(message(err)).NotTo(ContainSubstring("secret_admin"))
 		Expect(strings.Count(logs.String(), "secret_admin")).To(Equal(1), "the ingestion text must be logged exactly once")
 	})
+
+	DescribeTable("returns the ingestion client's own advice for input the caller can fix, never ingestion's text, storing nothing",
+		func(code pb.ErrorCode, want connect.Code, advice string) {
+			store := &storagetest.Fake{}
+			var clientLogs bytes.Buffer
+			client, err := backend.NewIngestionClient(failedConversionRPC{code: code, message: "docling: " + secret}, store,
+				backend.StorageBackend{Kind: "local", Root: "/srv/objects"},
+				config.IngestionConfig{PollInterval: time.Millisecond, ConvertTimeout: time.Second, MaxDocumentBytes: 1024},
+				backend.WithIngestionClientLogger(slog.New(slog.NewTextHandler(&clientLogs, nil))))
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = newService(gateway.WithIngestionBackend(client)).SubmitDocument(ctxFor(userCtx("user-a"), localTrace), docRequest)
+			Expect(connect.CodeOf(err)).To(Equal(want))
+			Expect(message(err)).To(ContainSubstring(advice))
+			Expect(message(err)).To(MatchRegexp(`error reference [0-9a-f]{32}`))
+			Expect(message(err)).NotTo(ContainSubstring("secret_admin"))
+			Expect(logs.String()).To(BeEmpty(), "a caller-actionable code passes publicError unlogged")
+			Expect(strings.Count(clientLogs.String(), "secret_admin")).To(Equal(1), "the client logs ingestion's text exactly once")
+			Expect(store.Objects()).To(BeEmpty())
+		},
+		Entry("INVALID_ARGUMENT reaches the caller as InvalidArgument", pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
+			connect.CodeInvalidArgument, "must be imported with --mapping <id>"),
+		Entry("RESOURCE_EXHAUSTED reaches the caller as ResourceExhausted", pb.ErrorCode_ERROR_CODE_RESOURCE_EXHAUSTED,
+			connect.CodeResourceExhausted, "Split the document and import the parts"),
+	)
 
 	// The policy is an allowlist: only codes a caller can act on keep their
 	// message, so a code nobody classified fails closed.
