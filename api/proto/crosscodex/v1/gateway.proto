@@ -519,6 +519,14 @@ message SubmitDocumentResponse {
   // Control differences against superseded_catalog_id. Absent when there is no
   // superseded catalog.
   ChangeReport change_report = 8;
+  // How ingestion structured the converted document: "mapping" (a registered
+  // mapping you named decided the controls), or a guess from the document's own
+  // layout: "heading", "table" or "pattern". Empty for OSCAL and Gemara
+  // imports and for converted output below ingestion schema 1.4. A guess is not
+  // the document's own IDs: for those, import with a document mapping (planned:
+  // crosscodex-ingestion#38 phase 3). Recorded in the import's ingest
+  // attestation as byproduct ingestion_structure_method.
+  string ingestion_structure_method = 9;
 
   reserved 1, 3;
   reserved "job_id", "status";

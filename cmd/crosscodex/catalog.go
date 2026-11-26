@@ -169,12 +169,14 @@ document cannot be moved to this one.`,
 			version := terminalSafe(resp.Msg.GetVersion())
 			superseded := resp.Msg.GetSupersededCatalogId()
 			changes := toChangeReportResult(resp.Msg.GetChangeReport())
+			structureMethod := terminalSafe(resp.Msg.GetIngestionStructureMethod())
 			return emit(cmd,
 				func(w io.Writer, color bool) {
 					fmt.Fprintf(w, "Catalog imported\n")
 					fmt.Fprintf(w, "Catalog ID: %s\n", catalogID)
 					fmt.Fprintf(w, "Document ID: %s\n", resp.Msg.GetDocumentId())
 					printVersionOutcome(w, version, superseded, changes)
+					printStructureMethod(w, structureMethod, mapping)
 					printTextlessControls(w, textless)
 					fmt.Fprintf(w, "Next: crosscodex run start --source %s --target <catalog-id>\n", catalogID)
 				},
@@ -185,6 +187,7 @@ document cannot be moved to this one.`,
 					VersionDisplay:      resp.Msg.GetVersion(),
 					SupersededCatalogID: superseded,
 					ChangeReport:        changes,
+					StructureMethod:     resp.Msg.GetIngestionStructureMethod(),
 				},
 			)
 		},
@@ -228,6 +231,10 @@ type catalogImportResult struct {
 	// ChangeReport lists control identifiers that differ from the superseded
 	// version; omitted when nothing was superseded.
 	ChangeReport *changeReportResult `json:"change_report,omitempty"`
+	// StructureMethod is how ingestion structured a converted document:
+	// "mapping", or a guess ("heading", "table", "pattern"). Omitted for OSCAL
+	// and Gemara imports and for converted output below ingestion schema 1.4.
+	StructureMethod string `json:"ingestion_structure_method,omitempty"`
 }
 
 // changeReportResult mirrors pb.ChangeReport. The lists are never null.
@@ -249,6 +256,21 @@ func toChangeReportResult(r *pb.ChangeReport) *changeReportResult {
 		Removed:     append([]string{}, r.GetRemoved()...),
 		Changed:     append([]string{}, r.GetChanged()...),
 		IDsUnstable: r.GetIdsUnstable(),
+	}
+}
+
+// printStructureMethod tells the user whether the controls came from a mapping
+// they named or from ingestion's guess at the document's layout, so a guess is
+// never mistaken for the document's own IDs. It prints nothing for OSCAL and
+// Gemara imports, which report no method. method must already be terminalSafe.
+func printStructureMethod(w io.Writer, method, mapping string) {
+	switch method {
+	case "":
+		return
+	case "mapping":
+		fmt.Fprintf(w, "Structure: from mapping %s\n", terminalSafe(mapping))
+	default:
+		fmt.Fprintf(w, "Structure: guessed by ingestion (%s); the document's own IDs need a document mapping (planned: crosscodex-ingestion#38 phase 3)\n", method)
 	}
 }
 

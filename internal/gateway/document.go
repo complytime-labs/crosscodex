@@ -179,6 +179,11 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 		byProducts["ingestion_mapping"] = mapping
 		byProducts["ingestion_mapping_sha256"] = parseResp.Msg.GetIngestionMappingSha256()
 	}
+	// Empty for OSCAL and Gemara, which have no structure to attest.
+	structureMethod := parseResp.Msg.GetIngestionStructureMethod()
+	if structureMethod != "" {
+		byProducts["ingestion_structure_method"] = structureMethod
+	}
 	if err := s.attestIngest(ctx, "gateway."+input.rpcName, docID, catalogID, input.convertReq.GetContent(), byProducts); err != nil {
 		// The cause can name storage buckets, hosts or key files (CWE-209):
 		// it is logged here, once, and the caller gets a reference to it.
@@ -203,9 +208,10 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 		CatalogId:        catalogID,
 		TextlessControls: parseResp.Msg.GetTextlessControls(),
 
-		Version:             parseResp.Msg.GetVersion(),
-		SupersededCatalogId: parseResp.Msg.GetSupersededCatalogId(),
-		ChangeReport:        parseResp.Msg.GetChangeReport(),
+		Version:                  parseResp.Msg.GetVersion(),
+		SupersededCatalogId:      parseResp.Msg.GetSupersededCatalogId(),
+		ChangeReport:             parseResp.Msg.GetChangeReport(),
+		IngestionStructureMethod: structureMethod,
 	}), nil
 }
 

@@ -71,6 +71,10 @@ func FuzzAdaptIngestionOutput(f *testing.F) {
 	f.Add([]byte(`{"schema_version":"1.3","elements":[{"element_id":"e-1","type":"paragraph","content":"C","role":"control","title":null,"text":"C"}]}`))
 	f.Add([]byte(`{"schema_version":"1.3","elements":[{"element_id":"e-1","type":"heading","content":"C","level":1,"id":"C1","role":"control","title":null,"text":"C"},{"element_id":"e-2","type":"heading","content":"G","level":2,"parent_id":"e-1","id":"G1","role":"group","title":"G","text":null},{"element_id":"e-3","type":"paragraph","content":"C","parent_id":"e-2","id":"C2","role":"control","title":null,"text":"C"}]}`))
 	f.Add([]byte(`{"schema_version":"1.3","metadata":{"title":"T","source":{"catalog_version":"1.0","mapping":{"id":"m","sha256":"de791a43657db03a3a728c4ec1bc14b31d400c0cfe70958fbe7d958847a0ec36","mapping_version":1}},"html_profile":{"id":"p","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}},"elements":[{"element_id":"e-1","type":"paragraph","content":"C","id":"C1","role":"control","title":null,"text":"C"}]}`))
+	f.Add([]byte(`{"schema_version":"1.4","metadata":{"structure_method":"heading"},"elements":[{"element_id":"e-1","type":"heading","content":"S","level":1,"id":"sec-1","role":"section","title":"S","text":"Lead-in:"},{"element_id":"e-2","type":"paragraph","content":"Lead-in:","parent_id":"e-1"},{"element_id":"e-3","type":"paragraph","content":"A","parent_id":"e-1","id":"sec-1.a","role":"control","title":null,"text":"A"}]}`))
+	f.Add([]byte(`{"schema_version":"1.4","metadata":{},"elements":[{"element_id":"e-1","type":"paragraph","content":"C","id":"C1","role":"control","title":null,"text":"C"}]}`))
+	f.Add([]byte(`{"schema_version":"1.4","metadata":{"structure_method":"table"},"elements":[{"element_id":"e-1","type":"heading","content":"C","level":1,"id":"C1","role":"control","title":null,"text":"C"},{"element_id":"e-2","type":"heading","content":"S","level":2,"parent_id":"e-1","id":"S1","role":"section","title":"S","text":null},{"element_id":"e-3","type":"paragraph","content":"A","parent_id":"e-2","id":"S1.a","role":"control","title":null,"text":"A"}]}`))
+	f.Add([]byte(`{"schema_version":"1.3","metadata":{"structure_method":"heading"},"elements":[{"element_id":"e-1","type":"paragraph","content":"C","id":"C1","role":"control","title":null,"text":"C"}]}`))
 	f.Add(deepControlChain(50))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -124,7 +128,7 @@ func FuzzAdaptIngestionOutput(f *testing.F) {
 			if item.ID == "" {
 				t.Fatalf("source item %d has no ID", i)
 			}
-			if item.Class != oscal.ClassRequirement && strings.TrimSpace(item.Title) == "" {
+			if item.Class == "" && strings.TrimSpace(item.Title) == "" {
 				t.Fatalf("group item %d has a blank title", i)
 			}
 			if item.Title != "" && strings.TrimSpace(item.Title) == "" {

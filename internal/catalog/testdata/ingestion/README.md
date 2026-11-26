@@ -47,3 +47,33 @@ repo; this paragraph is its specification.
 | `nist-sp800-53r5-excerpt.json` | `nist-sp800-53r5-catalog-xlsx` | `1777ed6f839bccd55516e6e703bfe75e3cf63efb2ec80bb9309ed960af2c9ea4` | `AC-1`, `AC-2`, `AC-3` (with all their enhancements) | 33 / 31: no groups, 31 controls; enhancements such as `AC-2(1)` sit under their base control |
 
 Release URLs and licences are in `docs/dev/test-sources.md`.
+
+## Schema 1.4 document fixtures
+
+The same two document sources as above, converted by the schema 1.4 ingestion
+(document structure: roles, `metadata.structure_method`, the `section` role).
+Unlike the 1.2 fixtures, no layout elements remain: every element is a
+structure node, and both outputs have `structure_method` `heading`.
+
+How they were made (2026-11-26): crosscodex-ingestion branch
+`feat/38-document-structure` at commit `470bf52f3221d2d552b85d03709414c6c12c0bcc`
+(package 0.1.0, Docling 2.148.0, models from that repo's `.test-output/docling-models`).
+From that worktree, with `DOCLING_ARTIFACTS_PATH` set to the models directory,
+a short `uv run python` script called `converter.convert_document(path, fmt,
+IngestionSettings(), load_html_profiles(""), load_registry(""))` (the call
+`worker.py` makes), dropped `conversion_warnings`, ran
+`output_schema.validate_output`, and wrote the result with
+`json.dump(indent=2, ensure_ascii=False)` and a trailing newline. The
+script is not kept in the repo; this paragraph is its specification. The inputs
+and their SHA-256 are those in the first table.
+
+| File | Input (in crosscodex-ingestion) | Notes |
+| --- | --- | --- |
+| `nist-sp800-171r3-excerpt-1.4.json` | `tests/fixtures/documents/nist-sp800-171r3-excerpt.pdf` (`pdf`) | 13 controls, no section; `page` set |
+| `eurlex-nis2-32022L2555-1.4.json` | `tests/fixtures/documents/eurlex-nis2-32022L2555.html` (`html`) | 36 nodes: 34 controls and 2 `section` nodes (Article 2 lead-ins whose points are their children); `page` null |
+
+`owasp-asvs-5.0.0-excerpt-1.4.json` is not a converter output. It is
+`owasp-asvs-5.0.0-excerpt.json` with `schema_version` set to `1.4` and
+`metadata.structure_method` set to `mapping` (placed after `metadata.dropped`),
+so a mapped import under schema 1.4 can be tested. It has the same release file
+and mapping as the 1.3 row above.

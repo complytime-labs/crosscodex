@@ -25,11 +25,24 @@ import (
 // Ingestion output schema rules this adapter is written against (schema v1).
 const (
 	// supportedIngestionMajor is the schema_version major this adapter reads.
-	// A minor only adds optional fields, which are ignored, so any 1.x reads.
+	// Minors add optional fields that older readers ignore, except where a
+	// minor tightens the contract: 1.4 makes metadata.structure_method
+	// required and adds the role "section". Unknown enum values and roles are
+	// refused (fail closed), so a later minor may be refused until this reader
+	// learns it.
 	supportedIngestionMajor = 1
 	// maxIngestionHeadingLevel is the deepest heading level schema v1 allows.
 	maxIngestionHeadingLevel = 100
+	// structureMethodMinor is the first minor with metadata.structure_method
+	// and the section role.
+	structureMethodMinor = 4
 )
+
+// Values of metadata.structure_method (schema 1.4). A new value is a schema
+// minor bump, so any other value is rejected.
+const ingestionMethodMapping = "mapping"
+
+var ingestionStructureMethods = []string{ingestionMethodMapping, "heading", "table", "pattern"}
 
 // Element types defined by ingestion output schema v1. A new type is a major
 // version change, so any other value is rejected.
@@ -92,6 +105,11 @@ type IngestionMeta struct {
 	// "" when the conversion applied no mapping.
 	MappingID     string
 	MappingSHA256 string
+	// StructureMethod is metadata.structure_method (schema 1.4 and later): how
+	// the output's structure was found, one of mapping, heading, table or
+	// pattern. "mapping" is a reviewed mapping; the others are ingestion's
+	// guess. "" for pre-1.4 output.
+	StructureMethod string
 }
 
 // ingestionOutput and ingestionElement hold the schema v1 fields the adapter
@@ -106,6 +124,12 @@ type ingestionOutput struct {
 	CatalogVersion *string               `json:"catalog_version"` // metadata.source.catalog_version (since 1.3)
 	Mapping        *ingestionMapping     `json:"mapping"`         // metadata.source.mapping
 	HTMLProfile    *ingestionHTMLProfile `json:"html_profile"`    // metadata.html_profile
+	// StructureMethod is metadata.structure_method (since 1.4). omitempty keeps
+	// the hash of output below 1.4, which never carries it, unchanged.
+	StructureMethod *string `json:"structure_method,omitempty"`
+	// HasStructureMethod records that the key was present, even as null, so the
+	// pre-1.4 rule can refuse it. It is not part of the content hash.
+	HasStructureMethod bool `json:"-"`
 }
 
 // ingestionMapping is metadata.source.mapping: the named mapping the
@@ -162,6 +186,10 @@ func decodeIngestionOutput(data []byte) (ingestionOutput, error) {
 	if err := decodeIngestionField(metadata, "title", &out.CatalogTitle); err != nil {
 		return out, invalidIngestionJSON("metadata.title", err)
 	}
+	if err := decodeIngestionField(metadata, "structure_method", &out.StructureMethod); err != nil {
+		return out, invalidIngestionJSON("metadata.structure_method", err)
+	}
+	_, out.HasStructureMethod = metadata["structure_method"]
 	if err := decodeIngestionField(metadata, "source", &source); err != nil {
 		return out, invalidIngestionJSON("metadata.source", err)
 	}
@@ -373,8 +401,11 @@ func AdaptIngestionOutput(data []byte) (oscal.StructuredDoc, IngestionMeta, erro
 	if err != nil {
 		return oscal.StructuredDoc{}, IngestionMeta{}, err
 	}
-	version, err := checkIngestionVersion(out.SchemaVersion)
+	version, minor, err := checkIngestionVersion(out.SchemaVersion)
 	if err != nil {
+		return oscal.StructuredDoc{}, IngestionMeta{}, err
+	}
+	if err := checkStructureMethod(out, minor); err != nil {
 		return oscal.StructuredDoc{}, IngestionMeta{}, err
 	}
 	if len(out.Elements) == 0 {
@@ -388,11 +419,20 @@ func AdaptIngestionOutput(data []byte) (oscal.StructuredDoc, IngestionMeta, erro
 	}
 	digest := sha256.Sum256(append([]byte(ingestionContentPrefix), encoded...))
 	identity := IngestionMeta{SchemaVersion: version, ContentHash: hex.EncodeToString(digest[:])}
+	if out.StructureMethod != nil {
+		identity.StructureMethod = *out.StructureMethod
+	}
 	if out.Mapping != nil {
 		identity.MappingID, identity.MappingSHA256 = out.Mapping.ID, out.Mapping.SHA256
 	}
-	if slices.ContainsFunc(out.Elements, func(e ingestionElement) bool { return e.HasRole }) {
-		items, err := sourceItems(out.Elements)
+	hasRoles := slices.ContainsFunc(out.Elements, func(e ingestionElement) bool { return e.HasRole })
+	if !hasRoles && minor >= structureMethodMinor {
+		return oscal.StructuredDoc{}, IngestionMeta{}, fmt.Errorf(
+			"%w: schema 1.%d output has no element with a role; every 1.%d conversion names its controls. Re-run the conversion; if it recurs, report it as an ingestion service bug",
+			ErrInvalidIngestionOutput, minor, structureMethodMinor)
+	}
+	if hasRoles {
+		items, err := sourceItems(out.Elements, minor)
 		if err != nil {
 			return oscal.StructuredDoc{}, IngestionMeta{}, err
 		}
@@ -480,25 +520,59 @@ func ContentIdentity(data []byte) (kind, hash string, err error) {
 	return ContentKindBytes, storage.ContentHash(data), nil
 }
 
-func checkIngestionVersion(v *string) (string, error) {
+// checkIngestionVersion returns the schema_version and its minor.
+func checkIngestionVersion(v *string) (string, int, error) {
 	if v == nil {
-		return "", fmt.Errorf(
+		return "", 0, fmt.Errorf(
 			"%w: schema_version is not MAJOR.MINOR (it is missing). This server reads ingestion output schema major %d; re-run conversion with a matching ingestion version",
 			ErrUnsupportedSchema, supportedIngestionMajor)
 	}
 	m := ingestionVersionPattern.FindStringSubmatch(*v)
 	if m == nil {
-		return "", fmt.Errorf(
+		return "", 0, fmt.Errorf(
 			"%w: schema_version %.32q is not MAJOR.MINOR. This server reads ingestion output schema major %d; re-run conversion with a matching ingestion version",
 			ErrUnsupportedSchema, *v, supportedIngestionMajor)
 	}
 	major, err := strconv.Atoi(m[1])
 	if err != nil || major != supportedIngestionMajor {
-		return "", fmt.Errorf(
+		return "", 0, fmt.Errorf(
 			"%w: schema_version %.32q has major %.16s, but this server reads major %d; re-run conversion with a matching ingestion version",
 			ErrUnsupportedSchema, *v, m[1], supportedIngestionMajor)
 	}
-	return *v, nil
+	minor, err := strconv.Atoi(m[2])
+	if err != nil {
+		return "", 0, fmt.Errorf(
+			"%w: schema_version %.32q has a minor that is not a small integer. This server reads ingestion output schema major %d; re-run conversion with a matching ingestion version",
+			ErrUnsupportedSchema, *v, supportedIngestionMajor)
+	}
+	return *v, minor, nil
+}
+
+// checkStructureMethod enforces the schema 1.4 rules for
+// metadata.structure_method: required from 1.4, forbidden below it, one of the
+// closed enum, and "mapping" exactly when metadata.source.mapping is present.
+// Messages never echo the value.
+func checkStructureMethod(out ingestionOutput, minor int) error {
+	if minor < structureMethodMinor {
+		if out.HasStructureMethod {
+			return ingestionRefRule("metadata.structure_method", fmt.Sprintf("is not allowed below schema 1.%d", structureMethodMinor))
+		}
+		return nil
+	}
+	if out.StructureMethod == nil {
+		return ingestionRefRule("metadata.structure_method", "is missing or null; schema 1.4 output always names how its structure was found")
+	}
+	method := *out.StructureMethod
+	if !slices.Contains(ingestionStructureMethods, method) {
+		return ingestionRefRule("metadata.structure_method", "is not one of "+strings.Join(ingestionStructureMethods, ", "))
+	}
+	switch {
+	case method == ingestionMethodMapping && out.Mapping == nil:
+		return ingestionRefRule("metadata.structure_method", "is mapping but metadata.source.mapping is absent")
+	case method != ingestionMethodMapping && out.Mapping != nil:
+		return ingestionRefRule("metadata.structure_method", "names a guessed structure but metadata.source.mapping is present")
+	}
+	return nil
 }
 
 // checkIngestionElement enforces the schema v1 rules the adapter relies on for
@@ -544,10 +618,11 @@ func checkIngestionElement(i int, e ingestionElement, seen map[string]bool, sect
 	return nil
 }
 
-// Element roles defined by ingestion output schema 1.3.
+// Element roles: group and control since schema 1.3, section since 1.4.
 const (
 	ingestionRoleGroup   = "group"
 	ingestionRoleControl = "control"
+	ingestionRoleSection = "section"
 )
 
 // sourceItems maps the elements of output that carries roles to one
@@ -555,12 +630,12 @@ const (
 // schema v1 rules (checkIngestionElement) and the 1.3 role contract. Ingestion
 // emits parents before children, and checkIngestionElement guarantees a
 // parent_id names an earlier element.
-func sourceItems(elements []ingestionElement) ([]oscal.ControlItem, error) {
+func sourceItems(elements []ingestionElement, minor int) ([]oscal.ControlItem, error) {
 	seen := make(map[string]bool, len(elements))
 	sectionOf := make(map[string]int)
 	itemOf := make(map[string]int, len(elements)) // element_id -> index in items
 	items := make([]oscal.ControlItem, 0, len(elements))
-	isGroup := make([]bool, 0, len(elements))
+	roles := make([]string, 0, len(elements))  // item index -> role
 	elementOf := make([]int, 0, len(elements)) // item index -> element index
 	children := make([]int, 0, len(elements))
 	for i, e := range elements {
@@ -587,11 +662,16 @@ func sourceItems(elements []ingestionElement) ([]oscal.ControlItem, error) {
 			return nil, fmt.Errorf("%w: elements[%d] has an id but lacks the role, title or text key; in output with roles every element with an id carries all three (title and text may be null). Re-run the conversion with a matching ingestion version",
 				ErrInvalidIngestionOutput, i)
 		}
-		if e.Role == nil || (*e.Role != ingestionRoleGroup && *e.Role != ingestionRoleControl) {
-			return nil, fmt.Errorf("%w: elements[%d] has a role other than group or control, the only roles schema 1.3 defines. Re-run the conversion with a matching ingestion version",
+		if e.Role == nil || !slices.Contains([]string{ingestionRoleGroup, ingestionRoleControl, ingestionRoleSection}, *e.Role) {
+			return nil, fmt.Errorf("%w: elements[%d] has a role other than group, control or section, the only roles schema 1.4 defines. Re-run the conversion with a matching ingestion version",
 				ErrInvalidIngestionOutput, i)
 		}
-		group := *e.Role == ingestionRoleGroup
+		if *e.Role == ingestionRoleSection && minor < structureMethodMinor {
+			return nil, fmt.Errorf("%w: elements[%d] has the role section, which schema 1.%d introduced, but the output declares an older schema. Re-run the conversion with a matching ingestion version",
+				ErrInvalidIngestionOutput, i, structureMethodMinor)
+		}
+		role := *e.Role
+		group := role == ingestionRoleGroup
 		if group && e.Title == nil {
 			return nil, fmt.Errorf("%w: elements[%d] is a group with a null title; a group needs a title. Re-run the conversion or fix the mapping",
 				ErrInvalidIngestionOutput, i)
@@ -618,8 +698,11 @@ func sourceItems(elements []ingestionElement) ([]oscal.ControlItem, error) {
 					ErrInvalidIngestionOutput, i)
 			}
 		}
-		if !group {
+		switch role {
+		case ingestionRoleControl:
 			item.Class = oscal.ClassRequirement
+		case ingestionRoleSection:
+			item.Class = oscal.ClassSection
 		}
 		if e.ParentID != nil {
 			p, ok := itemOf[*e.ParentID]
@@ -627,10 +710,13 @@ func sourceItems(elements []ingestionElement) ([]oscal.ControlItem, error) {
 			case !ok:
 				return nil, fmt.Errorf("%w: elements[%d] has a role, but its parent element has no id; in output with roles a source node's parent is a source node. Re-run the conversion",
 					ErrInvalidIngestionOutput, i)
-			case isGroup[p]:
+			case roles[p] == ingestionRoleGroup:
 				item.GroupID = items[p].ID
 			case group:
-				return nil, fmt.Errorf("%w: elements[%d] is a group whose parent elements[%d] is a control; groups nest only in groups. Re-run the conversion",
+				return nil, fmt.Errorf("%w: elements[%d] is a group whose parent elements[%d] is a %s; groups nest only in groups. Re-run the conversion",
+					ErrInvalidIngestionOutput, i, elementOf[p], roles[p])
+			case role == ingestionRoleSection && roles[p] == ingestionRoleControl:
+				return nil, fmt.Errorf("%w: elements[%d] is a section whose parent elements[%d] is a control; a section sits at the top level, under a group or under a section. Re-run the conversion",
 					ErrInvalidIngestionOutput, i, elementOf[p])
 			default:
 				item.ParentID = items[p].ID
@@ -639,13 +725,20 @@ func sourceItems(elements []ingestionElement) ([]oscal.ControlItem, error) {
 		}
 		itemOf[e.ElementID] = len(items)
 		items = append(items, item)
-		isGroup = append(isGroup, group)
+		roles = append(roles, role)
 		elementOf = append(elementOf, i)
 		children = append(children, 0)
 	}
 	for k := range items {
-		if isGroup[k] && children[k] == 0 {
+		if children[k] > 0 {
+			continue
+		}
+		switch roles[k] {
+		case ingestionRoleGroup:
 			return nil, fmt.Errorf("%w: elements[%d] is a group with no child; an empty group would import as a control. Re-run the conversion",
+				ErrInvalidIngestionOutput, elementOf[k])
+		case ingestionRoleSection:
+			return nil, fmt.Errorf("%w: elements[%d] is a section with no child element that has an id; a section introduces its children. Re-run the conversion",
 				ErrInvalidIngestionOutput, elementOf[k])
 		}
 	}

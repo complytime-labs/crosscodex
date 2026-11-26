@@ -1332,6 +1332,17 @@ var _ = Describe("StreamDocument", func() {
 		Expect(createJobCalled).To(BeFalse())
 	})
 
+	It("returns the structure method the catalog backend reported", func() {
+		svc := newTestService(gateway.WithCatalogBackend(&mockCatalog{
+			parseFn: func(context.Context, *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
+				return connect.NewResponse(&pb.ParseCatalogResponse{CatalogId: "cat-1", IngestionStructureMethod: "table"}), nil
+			},
+		}))
+		resp, err := gateway.ExportHandleStreamedDocument(svc, userCtx("user-a"), time.Now(), &pb.StreamDocumentMetadata{}, []byte("test doc"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resp.Msg.GetIngestionStructureMethod()).To(Equal("table"))
+	})
+
 	It("returns error when metadata is nil", func() {
 		svc := newTestService()
 		ctx := userCtx("user-a")

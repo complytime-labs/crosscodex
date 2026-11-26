@@ -167,6 +167,38 @@ var _ = Describe("catalog import reporting", func() {
 		Expect(got.TextlessControls[0].PartNames).To(Equal([]string{"overview"}))
 	})
 
+	DescribeTable("reports how ingestion structured the document, without internal IDs to decode",
+		func(method string, args []string, want ...string) {
+			out := run(&pb.SubmitDocumentResponse{DocumentId: "doc-1", CatalogId: "cat-1", IngestionStructureMethod: method},
+				append([]string{"--plain"}, args...)...)
+			for _, line := range want {
+				Expect(out).To(ContainSubstring(line))
+			}
+		},
+		Entry("a guessed heading structure names the method and the document-mapping route", "heading", nil,
+			"Structure: guessed by ingestion (heading); the document's own IDs need a document mapping (planned: crosscodex-ingestion#38 phase 3)\n"),
+		Entry("a guessed table structure names its method", "table", nil, "Structure: guessed by ingestion (table);"),
+		Entry("a mapped import names the mapping the user passed", "mapping", []string{"--mapping", "owasp-asvs-5.0.0-json"},
+			"Structure: from mapping owasp-asvs-5.0.0-json\n"),
+		Entry("an escape sequence in the method cannot reach the terminal", "head\x1b[31ming", nil, `(head\x1b[31ming)`),
+	)
+
+	DescribeTable("prints no structure line for an OSCAL or Gemara import, or one that sent no method",
+		func(args ...string) {
+			out := run(&pb.SubmitDocumentResponse{DocumentId: "doc-1", CatalogId: "cat-1"}, append([]string{"--plain"}, args...)...)
+			Expect(out).NotTo(ContainSubstring("Structure:"))
+		},
+		Entry("no mapping"),
+		Entry("a mapping that produced no method", "--mapping", "owasp-asvs-5.0.0-json"),
+	)
+
+	It("carries the structure method in JSON, and omits it when there is none", func() {
+		out := run(&pb.SubmitDocumentResponse{DocumentId: "doc-1", CatalogId: "cat-1", IngestionStructureMethod: "pattern"}, "--json")
+		Expect(out).To(ContainSubstring(`"ingestion_structure_method": "pattern"`))
+		out = run(&pb.SubmitDocumentResponse{DocumentId: "doc-1", CatalogId: "cat-1"}, "--json")
+		Expect(out).NotTo(ContainSubstring("ingestion_structure_method"))
+	})
+
 	It("emits an empty array, not null, when nothing is textless", func() {
 		out := run(&pb.SubmitDocumentResponse{DocumentId: "doc-1", CatalogId: "cat-1"}, "--json")
 		Expect(out).To(ContainSubstring(`"textless_controls": []`))
