@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -159,21 +160,31 @@ var _ = Describe("catalog import attestation", func() {
 		Entry("a requested label the catalog did not store", "other"),
 	)
 
-	DescribeTable("records the ingestion mapping in the ingest link only when the import named one",
-		func(mapping string, want types.GomegaMatcher) {
-			_, err := service(forA).SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{
+	DescribeTable("forwards the ingestion mapping to the catalog and records it, with its sha256, only when the import named one",
+		func(mapping, sha string, wantForwarded string, want types.GomegaMatcher) {
+			var parsed *pb.ParseCatalogRequest
+			cat := &mockCatalog{parseFn: func(_ context.Context, req *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
+				parsed = req.Msg
+				return connect.NewResponse(&pb.ParseCatalogResponse{CatalogId: "cat-1", IngestionMappingSha256: sha}), nil
+			}}
+
+			_, err := service(forA, gateway.WithCatalogBackend(cat)).SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{
 				Source:           &pb.SubmitDocumentRequest_Content{Content: content},
 				IngestionMapping: mapping,
 			}))
 			Expect(err).NotTo(HaveOccurred())
+			Expect(parsed.GetIngestionMapping()).To(Equal(wantForwarded))
 
 			link, err := gen.Verify(context.Background(), store.Objects()[ingestKey])
 			Expect(err).NotTo(HaveOccurred())
 			Expect(link.ByProducts).To(want)
 		},
-		Entry("a mapped import records its mapping ID", "owasp-asvs-5.0.0-json",
-			HaveKeyWithValue("ingestion_mapping", "owasp-asvs-5.0.0-json")),
-		Entry("an import without a mapping records no mapping key", "", Not(HaveKey("ingestion_mapping"))),
+		Entry("a mapped import records its mapping ID and the mapping file's sha256",
+			"owasp-asvs-5.0.0-json", strings.Repeat("ab", 32), "owasp-asvs-5.0.0-json",
+			And(HaveKeyWithValue("ingestion_mapping", "owasp-asvs-5.0.0-json"),
+				HaveKeyWithValue("ingestion_mapping_sha256", strings.Repeat("ab", 32)))),
+		Entry("an import without a mapping forwards none and records neither key", "", "", "",
+			And(Not(HaveKey("ingestion_mapping")), Not(HaveKey("ingestion_mapping_sha256")))),
 	)
 
 	DescribeTable("fails the import, without leaking the cause, when the link cannot be stored",

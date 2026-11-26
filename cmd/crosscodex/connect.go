@@ -367,6 +367,7 @@ var localCommands = map[string]bool{
 	"config unset":          true,
 	"config profiles":       true,
 	"catalog validate":      true,
+	"catalog content-hash":  true,
 	"results verify":        true,
 	"version":               true,
 	"completion":            true,

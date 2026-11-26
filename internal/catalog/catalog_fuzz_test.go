@@ -58,6 +58,8 @@ func FuzzValidateTree(f *testing.F) {
 // propertyName mirrors the adapter's property-name pattern.
 var propertyName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
+var contentHashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
 func FuzzAdaptIngestionOutput(f *testing.F) {
 	f.Add([]byte(`{"schema_version":"1.2","elements":[{"element_id":"e-1","type":"heading","content":"A","level":1,"parent_id":null},{"element_id":"e-2","type":"table","content":"| a |\n|---|\n| 1 |","level":null,"parent_id":"e-1"}]}`))
 	f.Add([]byte(`{"schema_version":"2.0","elements":[]}`))
@@ -68,6 +70,7 @@ func FuzzAdaptIngestionOutput(f *testing.F) {
 	f.Add([]byte(`{"schema_version":"1.3","metadata":{"title":"T","source":{"catalog_version":"1.0"}},"elements":[{"element_id":"e-1","type":"heading","content":"G","level":1,"parent_id":null,"id":"G1","role":"group","title":"G","text":null},{"element_id":"e-2","type":"paragraph","content":"C","level":null,"parent_id":"e-1","id":"G1.1","role":"control","title":null,"text":"C","properties":{"level":"1"}}]}`))
 	f.Add([]byte(`{"schema_version":"1.3","elements":[{"element_id":"e-1","type":"paragraph","content":"C","role":"control","title":null,"text":"C"}]}`))
 	f.Add([]byte(`{"schema_version":"1.3","elements":[{"element_id":"e-1","type":"heading","content":"C","level":1,"id":"C1","role":"control","title":null,"text":"C"},{"element_id":"e-2","type":"heading","content":"G","level":2,"parent_id":"e-1","id":"G1","role":"group","title":"G","text":null},{"element_id":"e-3","type":"paragraph","content":"C","parent_id":"e-2","id":"C2","role":"control","title":null,"text":"C"}]}`))
+	f.Add([]byte(`{"schema_version":"1.3","metadata":{"title":"T","source":{"catalog_version":"1.0","mapping":{"id":"m","sha256":"de791a43657db03a3a728c4ec1bc14b31d400c0cfe70958fbe7d958847a0ec36","mapping_version":1}},"html_profile":{"id":"p","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}},"elements":[{"element_id":"e-1","type":"paragraph","content":"C","id":"C1","role":"control","title":null,"text":"C"}]}`))
 	f.Add(deepControlChain(50))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -80,6 +83,12 @@ func FuzzAdaptIngestionOutput(f *testing.F) {
 		}
 		if meta.SchemaVersion == "" {
 			t.Fatalf("accepted output has no schema version")
+		}
+		if !contentHashPattern.MatchString(meta.ContentHash) {
+			t.Fatalf("accepted output has content hash %q, want 64 lowercase hex", meta.ContentHash)
+		}
+		if _, again, err := catalog.AdaptIngestionOutput(data); err != nil || again.ContentHash != meta.ContentHash {
+			t.Fatalf("content hash is not stable across decodes: %q then %q (err %v)", meta.ContentHash, again.ContentHash, err)
 		}
 		for i, s := range doc.Sections {
 			if s.Level < 1 || s.Level > 100 {

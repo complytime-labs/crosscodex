@@ -7,6 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 
 	"connectrpc.com/connect"
@@ -159,7 +162,12 @@ var _ = Describe("ParseCatalog with ingestion output", func() {
 			Expect(cat.SourceURI).To(Equal(docID))
 			Expect(cat.ExtractorName).To(Equal(catalog.IngestionExtractorName))
 			Expect(cat.ExtractorVersion).To(Equal(declared.SchemaVersion))
-			Expect(cat.ContentHash).NotTo(BeEmpty())
+			// The CLI's content-hash command prints ContentIdentity; it must
+			// equal what the daemon records.
+			kind, hash, err := catalog.ContentIdentity(data)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(kind).To(Equal(catalog.ContentKindIngestion))
+			Expect(cat.ContentHash).To(Equal(hash))
 			Expect(ms.controlRecords).NotTo(BeEmpty())
 			for _, ctrl := range ms.controlRecords {
 				Expect(ctrl.CatalogID).To(Equal(resp.CatalogId))
@@ -288,22 +296,23 @@ var _ = Describe("ParseCatalog with ingestion output", func() {
 		)
 
 		DescribeTable("labels a document version from a real release's catalog_version",
-			func(fixture, wantLabel string) {
+			func(fixture, mapping, wantLabel string) {
 				data, _ := readIngestionFixture(fixture)
 				Expect(stg.Put(context.Background(), docID, bytes.NewReader(data))).To(Succeed())
 
 				resp, err := newService(catalog.WithStructurer(oscal.NewStructurer(nil, nil))).ParseCatalog(context.Background(),
 					connect.NewRequest(&crosscodexv1.ParseCatalogRequest{
-						TenantContext: &crosscodexv1.TenantContext{TenantId: tenantID},
-						DocumentId:    docID,
-						DocumentSlug:  "release-fixture",
+						TenantContext:    &crosscodexv1.TenantContext{TenantId: tenantID},
+						DocumentId:       docID,
+						DocumentSlug:     "release-fixture",
+						IngestionMapping: mapping,
 					}))
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(resp.Msg.VersionLabel).To(Equal(wantLabel))
 			},
-			Entry("ASVS 5.0.0 release", "owasp-asvs-5.0.0-excerpt.json", "5.0.0"),
-			Entry("SP 800-53 Rev. 5 release: a label with a space is valid", "nist-sp800-53r5-excerpt.json", "Revision 5"),
+			Entry("ASVS 5.0.0 release", "owasp-asvs-5.0.0-excerpt.json", "owasp-asvs-5.0.0-json", "5.0.0"),
+			Entry("SP 800-53 Rev. 5 release: a label with a space is valid", "nist-sp800-53r5-excerpt.json", "nist-sp800-53r5-catalog-xlsx", "Revision 5"),
 		)
 
 		It("stores every control unchanged under filtering and decomposition", func() {
@@ -374,6 +383,131 @@ var _ = Describe("ParseCatalog with ingestion output", func() {
 			)))
 			Expect(err).NotTo(MatchError(ContainSubstring("section_pattern")))
 			Expect(err).NotTo(MatchError(ContainSubstring("decompose")))
+			expectUnchanged(cats, ctrls, conts)
+		})
+	})
+
+	Context("when the import names a mapping", func() {
+		const (
+			asvsMapping = "owasp-asvs-5.0.0-json"
+			asvsSHA     = "de791a43657db03a3a728c4ec1bc14b31d400c0cfe70958fbe7d958847a0ec36"
+		)
+		parseMapped := func(svc *catalog.Service, documentID string, data []byte, mapping, slug string) (*crosscodexv1.ParseCatalogResponse, error) {
+			GinkgoHelper()
+			Expect(stg.Put(context.Background(), documentID, bytes.NewReader(data))).To(Succeed())
+			resp, err := svc.ParseCatalog(context.Background(), connect.NewRequest(&crosscodexv1.ParseCatalogRequest{
+				TenantContext:    &crosscodexv1.TenantContext{TenantId: tenantID},
+				DocumentId:       documentID,
+				IngestionMapping: mapping,
+				DocumentSlug:     slug,
+			}))
+			if err != nil {
+				return nil, err
+			}
+			return resp.Msg, nil
+		}
+		// withProcessingTime returns doc with metadata.processing_time_ms replaced.
+		withProcessingTime := func(doc []byte, ms float64) []byte {
+			GinkgoHelper()
+			var m map[string]any
+			Expect(json.Unmarshal(doc, &m)).To(Succeed())
+			m["metadata"].(map[string]any)["processing_time_ms"] = ms
+			out, err := json.Marshal(m)
+			Expect(err).NotTo(HaveOccurred())
+			return out
+		}
+		newSvc := func() *catalog.Service {
+			return newService(catalog.WithStructurer(oscal.NewStructurer(nil, nil)))
+		}
+
+		It("keeps one catalog across conversions that differ only in timing", func() {
+			data, _ := readIngestionFixture("owasp-asvs-5.0.0-excerpt.json")
+			_, meta, err := catalog.AdaptIngestionOutput(data)
+			Expect(err).NotTo(HaveOccurred())
+			svc := newSvc()
+
+			first, err := parseMapped(svc, "documents/d-1/structured.json", data, asvsMapping, "")
+			Expect(err).NotTo(HaveOccurred())
+			controls := len(ms.controlRecords)
+			second, err := parseMapped(svc, "documents/d-2/structured.json", withProcessingTime(data, 1234.5), asvsMapping, "")
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(second.CatalogId).To(Equal(first.CatalogId))
+			Expect(ms.catalogRecords).To(HaveLen(1))
+			Expect(ms.catalogRecords[first.CatalogId].ContentHash).To(Equal(meta.ContentHash))
+			Expect(ms.controlRecords).To(HaveLen(controls))
+			Expect(ms.catalogRecords[first.CatalogId].ObjectPath).To(Equal("documents/d-2/structured.json"))
+		})
+
+		It("does not supersede or re-version a document re-imported after a timing-only change", func() {
+			data, _ := readIngestionFixture("owasp-asvs-5.0.0-excerpt.json")
+			svc := newSvc()
+
+			first, err := parseMapped(svc, "documents/d-1/structured.json", data, asvsMapping, "asvs")
+			Expect(err).NotTo(HaveOccurred())
+			second, err := parseMapped(svc, "documents/d-2/structured.json", withProcessingTime(data, 1234.5), asvsMapping, "asvs")
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(second.SupersededCatalogId).To(BeEmpty())
+			Expect(second.CatalogId).To(Equal(first.CatalogId))
+			Expect(second.Version).To(Equal(first.Version))
+		})
+
+		It("returns the mapping sha256", func() {
+			data, _ := readIngestionFixture("owasp-asvs-5.0.0-excerpt.json")
+
+			resp, err := parseMapped(newSvc(), docID, data, asvsMapping, "")
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.GetIngestionMappingSha256()).To(Equal(asvsSHA))
+		})
+
+		It("leaves the mapping sha256 empty when no mapping was requested", func() {
+			data, _ := readIngestionFixture("nist-sp800-171r3-excerpt.json")
+
+			resp, err := parseMapped(newSvc(), docID, data, "", "")
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.GetIngestionMappingSha256()).To(BeEmpty())
+		})
+
+		DescribeTable("refuses a mapping the output did not use",
+			func(fixture, requested, named string) {
+				seed()
+				cats, ctrls, conts := snapshot()
+				data, _ := readIngestionFixture(fixture)
+
+				_, err := parseMapped(newSvc(), docID, data, requested, "")
+
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+				Expect(err).To(MatchError(And(
+					ContainSubstring(fmt.Sprintf("mapping %q", requested)),
+					ContainSubstring(fmt.Sprintf("%q", named)),
+					ContainSubstring("re-run the conversion"),
+					ContainSubstring("Nothing was stored"),
+				)))
+				expectUnchanged(cats, ctrls, conts)
+				_, getErr := stg.Get(context.Background(), docID)
+				Expect(getErr).NotTo(HaveOccurred())
+			},
+			Entry("a mapping requested but the output names none", "nist-sp800-171r3-excerpt.json", "owasp-asvs-5.0.0-json", ""),
+			Entry("no mapping requested but the output names one", "owasp-asvs-5.0.0-excerpt.json", "", "owasp-asvs-5.0.0-json"),
+			Entry("a different mapping requested", "owasp-asvs-5.0.0-excerpt.json", "other-mapping", "owasp-asvs-5.0.0-json"),
+		)
+
+		It("refuses a mapping with OSCAL content, and stores nothing", func() {
+			seed()
+			cats, ctrls, conts := snapshot()
+			data, err := os.ReadFile(filepath.Join("..", "..", "pkg", "oscal", "testdata", "minimal_catalog.json"))
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = parseMapped(newSvc(), docID, data, "x", "")
+
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			Expect(err).To(MatchError(And(
+				ContainSubstring("applies only to converted structured sources"),
+				ContainSubstring("Nothing was stored"),
+			)))
 			expectUnchanged(cats, ctrls, conts)
 		})
 	})
