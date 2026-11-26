@@ -1,0 +1,22 @@
+internal/catalog/ingestion_adapter_bdd_test.go
+  s_412731fd637f69::t_f80246cea9efe0 498-499
+  s_412731fd637f69::t_edc4aa8c4b57ef 177,770-776
+internal/catalog/ingestion_adapter.go
+  s_412731fd637f69::t_edc4aa8c4b57ef 28-32,428-434
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "91e010759e3ce1ac73b653c271440c6623c8cb97",
+  "prompts": {},
+  "sessions": {
+    "s_412731fd637f69": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "baae5499-ef68-45d1-92de-9de7e802664e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
