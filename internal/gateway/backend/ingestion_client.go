@@ -235,7 +235,8 @@ func (c *IngestionClient) convert(ctx context.Context, span trace.Span, msg *pb.
 				advice = "the file may be damaged or in a format the service does not accept, or it is a JSON, CSV or XLSX " +
 					"structured source, which must be imported with --mapping <id> (API field ingestion_mapping), the ID of a " +
 					"mapping registered on the ingestion server; ask an operator for the registered IDs " +
-					"(crosscodex-ingestion README \"Structured sources\")"
+					"(crosscodex-ingestion README \"Structured sources\"), or no controls were found in a document, which " +
+					"needs a document mapping (planned: crosscodex-ingestion#38 phase 3; none exist yet)"
 				if mapping := msg.GetMapping(); mapping != "" {
 					advice = fmt.Sprintf("the file may not fit mapping %q (its format or layout), be malformed, or exceed the "+
 						"service's limits for structured sources; check the file, or import it with the mapping that fits it "+

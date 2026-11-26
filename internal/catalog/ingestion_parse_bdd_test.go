@@ -585,6 +585,191 @@ var _ = Describe("ParseCatalog with ingestion output", func() {
 			"validation failed", `invalid item ID "a/b"`),
 	)
 
+	Context("when the output is schema 1.4 and says how it was structured", func() {
+		const (
+			guessed1_4 = "eurlex-nis2-32022L2555-1.4.json"
+			mapped1_4  = "owasp-asvs-5.0.0-excerpt-1.4.json"
+		)
+		newSvc := func(cfg config.StructuringConfig, opts ...catalog.ServiceOption) *catalog.Service {
+			return newService(append([]catalog.ServiceOption{
+				catalog.WithStructurer(oscal.NewStructurer(nil, nil)), catalog.WithStructuring(cfg)}, opts...)...)
+		}
+		parseWith := func(svc *catalog.Service, data []byte, mapping string) (*crosscodexv1.ParseCatalogResponse, error) {
+			GinkgoHelper()
+			Expect(stg.Put(context.Background(), docID, bytes.NewReader(data))).To(Succeed())
+			resp, err := svc.ParseCatalog(context.Background(), connect.NewRequest(&crosscodexv1.ParseCatalogRequest{
+				TenantContext:    &crosscodexv1.TenantContext{TenantId: tenantID},
+				DocumentId:       docID,
+				IngestionMapping: mapping,
+			}))
+			if err != nil {
+				return nil, err
+			}
+			return resp.Msg, nil
+		}
+		// refusal is the message for the settings named, in the plan's order.
+		refusal := func(method, names string) string {
+			return fmt.Sprintf("cannot import document %q: ingestion already structured it (method %s), so these catalog.structuring settings no longer apply: %s. "+
+				"Keep crosscodex-ingestion below schema 1.4 until document mappings exist (crosscodex-ingestion#38 phase 3), "+
+				"or reset (or ask an operator to reset) those settings to their defaults to accept ingestion's structure. Nothing was stored", docID, method, names)
+		}
+
+		DescribeTable("refuses a guessed structure when a setting it makes moot is not at its default, and stores nothing",
+			func(change func(*config.StructuringConfig), names string) {
+				seed()
+				cats, ctrls, conts := snapshot()
+				data, _ := readIngestionFixture(guessed1_4)
+				cfg := defaultStructuring()
+				change(&cfg)
+				tp, err := telemetrytest.NewTestProvider()
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { Expect(tp.Shutdown(context.Background())).To(Succeed()) })
+
+				_, err = parseWith(newSvc(cfg, catalog.WithTracer(tp.TracerProvider().Tracer("catalog")),
+					catalog.WithMeter(tp.MeterProvider().Meter("test"))), data, "")
+
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeFailedPrecondition))
+				var cerr *connect.Error
+				Expect(errors.As(err, &cerr)).To(BeTrue())
+				Expect(cerr.Message()).To(Equal(refusal("heading", names)))
+				Expect(structuredOutcomes(tp)).To(Equal(map[outcome]int64{{"ingestion_heading", "refused"}: 1}))
+				span := telemetrytest.FindSpan(tp.GetSpans(), "catalog.ParseCatalog")
+				Expect(span).NotTo(BeNil())
+				tier, ok := telemetrytest.SpanAttribute(span, "structure.tier")
+				Expect(ok).To(BeTrue())
+				Expect(tier.AsString()).To(Equal("ingestion_heading"))
+				expectUnchanged(cats, ctrls, conts)
+			},
+			Entry("section_pattern", func(c *config.StructuringConfig) { c.SectionPattern = `^(\S+)\s+(.*)$` }, "section_pattern"),
+			Entry("decompose", func(c *config.StructuringConfig) { c.Decompose = !c.Decompose }, "decompose"),
+			Entry("min_decompose_words", func(c *config.StructuringConfig) { c.MinDecomposeWords++ }, "min_decompose_words"),
+			Entry("filter_by_keywords", func(c *config.StructuringConfig) { c.FilterByKeywords = !c.FilterByKeywords }, "filter_by_keywords"),
+			Entry("keywords", func(c *config.StructuringConfig) { c.Keywords = []string{"shall"} }, "keywords"),
+			Entry("max_heading_repeats alone", func(c *config.StructuringConfig) { c.MaxHeadingRepeats = 5 }, "max_heading_repeats"),
+			Entry("print_artifact_patterns", func(c *config.StructuringConfig) { c.PrintArtifactPatterns = []string{`^Page \d+$`} }, "print_artifact_patterns"),
+			Entry("two settings, listed in the documented order", func(c *config.StructuringConfig) {
+				c.PrintArtifactPatterns = []string{`^Page \d+$`}
+				c.Decompose = !c.Decompose
+				c.SectionPattern = `^(\S+)\s+(.*)$`
+			}, "section_pattern, decompose, print_artifact_patterns"),
+		)
+
+		DescribeTable("rejects source-declared controls that cannot form a tree, with advice that fits who structured them",
+			func(version, method string, wantAdvice, forbidAdvice string) {
+				seed()
+				cats, ctrls, conts := snapshot()
+				data := ingestionDoc(version,
+					withRole(map[string]any{"element_id": "e-1", "content": "One."}, "c1", "control", nil, "One.", nil),
+					withRole(map[string]any{"element_id": "e-2", "content": "Two."}, "c1", "control", nil, "Two.", nil))
+				if method != "" {
+					data = withStructureMethod(data, method)
+				}
+
+				_, err := parseWith(newSvc(defaultStructuring()), data, "")
+
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+				Expect(err).To(MatchError(ContainSubstring(`share the ID "c1"`)))
+				Expect(err).To(MatchError(ContainSubstring(wantAdvice)))
+				Expect(err).NotTo(MatchError(ContainSubstring(forbidAdvice)))
+				Expect(err).To(MatchError(ContainSubstring("Nothing was stored")))
+				expectUnchanged(cats, ctrls, conts)
+			},
+			Entry("a guessed heading structure", "1.4", "heading",
+				"report it as an ingestion service bug", "fix the mapping"),
+			Entry("a guessed table structure", "1.4", "table",
+				"crosscodex-ingestion#38 phase 3", "re-run the conversion"),
+			Entry("a guessed pattern structure", "1.4", "pattern",
+				"does not form a catalog tree", "fix the mapping"),
+			Entry("a 1.3 source-ID output keeps the mapping advice", "1.3", "",
+				"re-run the conversion or fix the mapping", "ingestion service bug"),
+		)
+
+		It("accepts a guessed structure under the default settings", func() {
+			data, _ := readIngestionFixture(guessed1_4)
+
+			_, err := parseWith(newSvc(defaultStructuring()), data, "")
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ms.controlRecords).NotTo(BeEmpty())
+		})
+
+		It("does not refuse non-default settings for a mapped source, whose method is mapping", func() {
+			data, _ := readIngestionFixture(mapped1_4)
+			cfg := defaultStructuring()
+			cfg.Decompose, cfg.FilterByKeywords, cfg.MaxHeadingRepeats = !cfg.Decompose, true, 5
+
+			resp, err := parseWith(newSvc(cfg), data, "owasp-asvs-5.0.0-json")
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.IngestionStructureMethod).To(Equal("mapping"))
+			Expect(ms.controlRecords).To(HaveLen(43))
+		})
+
+		It("does not refuse non-default settings for a pre-1.4 document, which still runs the cascade", func() {
+			data, _ := readIngestionFixture("eurlex-nis2-32022L2555.json")
+			cfg := defaultStructuring()
+			cfg.Decompose, cfg.MaxHeadingRepeats = !cfg.Decompose, 5
+
+			resp, err := parseWith(newSvc(cfg), data, "")
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.IngestionStructureMethod).To(BeEmpty())
+			Expect(ms.controlRecords).NotTo(BeEmpty())
+		})
+
+		DescribeTable("labels the structuring tier on the metric and the span",
+			func(data func() []byte, wantTier string) {
+				tp, err := telemetrytest.NewTestProvider()
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { Expect(tp.Shutdown(context.Background())).To(Succeed()) })
+
+				_, err = parseWith(newSvc(defaultStructuring(),
+					catalog.WithTracer(tp.TracerProvider().Tracer("catalog")),
+					catalog.WithMeter(tp.MeterProvider().Meter("test"))), data(), "")
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(structuredOutcomes(tp)).To(Equal(map[outcome]int64{{wantTier, "structured"}: 1}))
+				span := telemetrytest.FindSpan(tp.GetSpans(), "catalog.ParseCatalog")
+				Expect(span).NotTo(BeNil())
+				tier, ok := telemetrytest.SpanAttribute(span, "structure.tier")
+				Expect(ok).To(BeTrue())
+				Expect(tier.AsString()).To(Equal(wantTier))
+			},
+			Entry("a 1.4 output that carries a method", func() []byte {
+				data, _ := readIngestionFixture(guessed1_4)
+				return data
+			}, "ingestion_heading"),
+			Entry("a 1.3 output with roles keeps source-ids", func() []byte {
+				return ingestionDoc("1.3",
+					withRole(map[string]any{"element_id": "e-1", "content": "One."}, "c1", "control", nil, "One.", nil))
+			}, "source-ids"),
+		)
+
+		DescribeTable("reports the method in the response",
+			func(fixture, mapping, want string) {
+				data, _ := readIngestionFixture(fixture)
+
+				resp, err := parseWith(newSvc(defaultStructuring()), data, mapping)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(resp.IngestionStructureMethod).To(Equal(want))
+			},
+			Entry("a guessed 1.4 structure", guessed1_4, "", "heading"),
+			Entry("a mapped 1.4 structure", mapped1_4, "owasp-asvs-5.0.0-json", "mapping"),
+			Entry("a 1.3 output, which has no method", "owasp-asvs-5.0.0-excerpt.json", "owasp-asvs-5.0.0-json", ""),
+		)
+
+		It("leaves the method empty for OSCAL", func() {
+			data, err := os.ReadFile(filepath.Join("..", "..", "pkg", "oscal", "testdata", "minimal_catalog.json"))
+			Expect(err).NotTo(HaveOccurred())
+
+			resp, err := parseWith(newSvc(defaultStructuring()), data, "")
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.IngestionStructureMethod).To(BeEmpty())
+		})
+	})
+
 	It("returns an internal error, counts it and stores nothing when the structurer fails", func() {
 		seed()
 		cats, ctrls, conts := snapshot()

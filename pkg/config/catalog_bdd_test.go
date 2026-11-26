@@ -100,3 +100,18 @@ var _ = Describe("CatalogConfig.Structuring.PrintArtifactPatterns", func() {
 		Entry("an empty pattern", "", "matches empty text"),
 	)
 })
+
+var _ = Describe("DefaultStructuringConfig", func() {
+	It("returns the values a load with no configuration yields", func() {
+		GinkgoT().Setenv("XDG_CONFIG_HOME", GinkgoT().TempDir())
+		cfg, err := config.NewLoader().Load(context.Background(),
+			config.WithUserConfigContent([]byte{}), config.WithProjectDir(GinkgoT().TempDir()))
+		Expect(err).NotTo(HaveOccurred())
+
+		got, err := config.DefaultStructuringConfig()
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal(cfg.Catalog.Structuring))
+		Expect(got).NotTo(BeZero(), "a populated result, not the zero value")
+	})
+})

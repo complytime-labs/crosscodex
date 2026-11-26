@@ -187,6 +187,27 @@ var _ = Describe("catalog import attestation", func() {
 			And(Not(HaveKey("ingestion_mapping")), Not(HaveKey("ingestion_mapping_sha256")))),
 	)
 
+	DescribeTable("records how ingestion structured the document, and returns it, only when ingestion reported a method",
+		func(method string, want types.GomegaMatcher) {
+			cat := &mockCatalog{parseFn: func(context.Context, *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
+				return connect.NewResponse(&pb.ParseCatalogResponse{CatalogId: "cat-1", IngestionStructureMethod: method}), nil
+			}}
+
+			resp, err := service(forA, gateway.WithCatalogBackend(cat)).SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{
+				Source: &pb.SubmitDocumentRequest_Content{Content: content},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.Msg.GetIngestionStructureMethod()).To(Equal(method))
+
+			link, err := gen.Verify(context.Background(), store.Objects()[ingestKey])
+			Expect(err).NotTo(HaveOccurred())
+			Expect(link.ByProducts).To(want)
+		},
+		Entry("a guessed import records its method", "heading", HaveKeyWithValue("ingestion_structure_method", "heading")),
+		Entry("a mapped import records mapping", "mapping", HaveKeyWithValue("ingestion_structure_method", "mapping")),
+		Entry("OSCAL, which has no method, records no key", "", Not(HaveKey("ingestion_structure_method"))),
+	)
+
 	DescribeTable("fails the import, without leaking the cause, when the link cannot be stored",
 		func(run importDocument) {
 			store.PutFunc = func(context.Context, string, io.Reader) error {

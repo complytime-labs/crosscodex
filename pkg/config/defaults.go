@@ -305,3 +305,19 @@ func defaultNode() (*yaml.Node, error) {
 	}
 	return doc.Content[0], nil
 }
+
+// DefaultStructuringConfig returns the compiled defaults of catalog.structuring,
+// the values an operator who sets nothing gets. A caller that must know whether
+// a setting was changed (catalog import refuses settings that no longer apply
+// to schema 1.4 output) compares against it rather than re-typing the values.
+func DefaultStructuringConfig() (StructuringConfig, error) {
+	node, err := defaultNode()
+	if err != nil {
+		return StructuringConfig{}, err
+	}
+	var cfg Config
+	if err := node.Decode(&cfg); err != nil {
+		return StructuringConfig{}, fmt.Errorf("decoding compiled defaults: %w", err)
+	}
+	return cfg.Catalog.Structuring, nil
+}

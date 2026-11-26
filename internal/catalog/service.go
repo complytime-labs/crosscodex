@@ -550,14 +550,15 @@ func (s *Service) ParseCatalog(ctx context.Context, req *connect.Request[crossco
 	}
 
 	return connect.NewResponse(&crosscodexv1.ParseCatalogResponse{
-		CatalogId:              catalogID,
-		Status:                 crosscodexv1.JobStatus_JOB_STATUS_COMPLETED,
-		TextlessControls:       textless,
-		Version:                version,
-		VersionLabel:           versionLabel,
-		SupersededCatalogId:    supersededID,
-		ChangeReport:           changeReport,
-		IngestionMappingSha256: mappingSHA256,
+		CatalogId:                catalogID,
+		Status:                   crosscodexv1.JobStatus_JOB_STATUS_COMPLETED,
+		TextlessControls:         textless,
+		Version:                  version,
+		VersionLabel:             versionLabel,
+		SupersededCatalogId:      supersededID,
+		ChangeReport:             changeReport,
+		IngestionMappingSha256:   mappingSHA256,
+		IngestionStructureMethod: ingestionMeta.StructureMethod,
 	}), nil
 }
 

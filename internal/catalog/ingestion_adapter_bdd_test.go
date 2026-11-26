@@ -174,7 +174,7 @@ var _ = Describe("AdaptIngestionOutput", func() {
 	})
 
 	It("accepts a later minor of the supported major and reports the version", func() {
-		_, meta, err := catalog.AdaptIngestionOutput(ingestionDoc("1.9", heading("e-1", 1, nil, "Scope")))
+		_, meta, err := catalog.AdaptIngestionOutput(withStructureMethod(ingestionDoc("1.9", sensitiveControl("e-1", "SID-1")), "heading"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(meta.SchemaVersion).To(Equal("1.9"))
 	})
@@ -495,6 +495,8 @@ var _ = Describe("AdaptIngestionOutput with element roles", func() {
 			map[string]any{"element_id": "e-1", "type": "heading", "level": 1, "content": "V1", "id": "V1", "title": "Chapter"},
 			map[string]any{"element_id": "e-2", "content": "Verify.", "parent_id": "e-1", "id": "V1.1", "properties": map[string]string{"level": "1"}},
 		), "Test Catalog", "5.0.0")),
+		Entry("1.3 output with no roles", ingestionDoc("1.3",
+			heading("e-1", 1, nil, "Scope"), map[string]any{"element_id": "e-2", "content": "Body.", "parent_id": "e-1"})),
 		Entry("Docling PDF output", mustReadFile("testdata/ingestion/nist-sp800-171r3-excerpt.json")),
 		Entry("Docling HTML output", mustReadFile("testdata/ingestion/eurlex-nis2-32022L2555.json")),
 	)
@@ -605,6 +607,252 @@ var _ = Describe("AdaptIngestionOutput with real schema 1.3 output", func() {
 		Expect(parents).To(HaveKeyWithValue("AC-2", ""))
 		Expect(parents).To(HaveKeyWithValue("AC-2(1)", "AC-2"))
 		Expect(parents).To(HaveKeyWithValue("AC-3(2)", "AC-3"))
+	})
+})
+
+// withStructureMethod sets metadata.structure_method on a document built by
+// ingestionDoc (nil encodes null).
+func withStructureMethod(data []byte, method any) []byte {
+	var doc map[string]any
+	Expect(json.Unmarshal(data, &doc)).To(Succeed())
+	doc["metadata"].(map[string]any)["structure_method"] = method
+	out, err := json.Marshal(doc)
+	Expect(err).NotTo(HaveOccurred())
+	return out
+}
+
+// withMappingRecord adds metadata.source.mapping to a document built by
+// ingestionDoc.
+func withMappingRecord(data []byte) []byte {
+	var doc map[string]any
+	Expect(json.Unmarshal(data, &doc)).To(Succeed())
+	doc["metadata"].(map[string]any)["source"] = map[string]any{
+		"kind": "structured", "format": "json",
+		"mapping": map[string]any{"id": "m", "sha256": hashMappingSHA, "mapping_version": 1},
+	}
+	out, err := json.Marshal(doc)
+	Expect(err).NotTo(HaveOccurred())
+	return out
+}
+
+// sensitiveSection is an element that fails the rules only if its children or
+// parent are wrong; its text and ids are canaries for the no-quoting check.
+func sensitiveSection(elementID, id string, parent any) map[string]any {
+	return withRole(map[string]any{"element_id": elementID, "type": "heading", "level": 1, "content": "Sensitive lead-in:", "parent_id": parent},
+		id, "section", "Sensitive title", "Sensitive lead-in:", nil)
+}
+
+// childOf makes a control element with the given parent.
+func childOf(elementID, id, parent string) map[string]any {
+	return withRole(map[string]any{"element_id": elementID, "content": "Sensitive body.", "parent_id": parent},
+		id, "control", nil, "Sensitive body.", nil)
+}
+
+// structureFixtureElement is the id, role and parent of a schema-1.4 element,
+// decoded independently of the adapter.
+type structureFixtureElement struct {
+	ElementID string  `json:"element_id"`
+	ParentID  *string `json:"parent_id"`
+	ID        *string `json:"id"`
+	Role      string  `json:"role"`
+}
+
+var _ = Describe("AdaptIngestionOutput with schema 1.4 structure", func() {
+	validSection := func() []byte {
+		return withStructureMethod(ingestionDoc("1.4",
+			sensitiveSection("e-1", "SID-1", nil),
+			map[string]any{"element_id": "e-2", "content": "Sensitive lead-in:", "parent_id": "e-1"},
+			childOf("e-3", "SID-1.a", "e-1")), "heading")
+	}
+
+	It("maps a section to a ClassSection item that parents its children", func() {
+		doc, meta, err := catalog.AdaptIngestionOutput(validSection())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(doc).To(BeZero())
+		Expect(meta.SchemaVersion).To(Equal("1.4"))
+		Expect(meta.StructureMethod).To(Equal("heading"))
+		Expect(meta.SourceItems).To(Equal([]oscal.ControlItem{
+			{ID: "SID-1", Title: "Sensitive title", Text: "Sensitive lead-in:", Class: oscal.ClassSection},
+			{ID: "SID-1.a", Text: "Sensitive body.", ParentID: "SID-1", Class: oscal.ClassRequirement},
+		}))
+		Expect(meta.SourceItems[0].Props).NotTo(HaveKey("node-kind"))
+	})
+
+	It("puts a section under a group by GroupID and under a section by ParentID", func() {
+		data := withStructureMethod(withMappingRecord(ingestionDoc("1.4",
+			withRole(heading("e-1", 1, nil, "Group"), "G1", "group", "Group", nil, nil),
+			withRole(heading("e-2", 2, "e-1", "Outer"), "G1.s", "section", "Outer", nil, nil),
+			withRole(heading("e-3", 3, "e-2", "Inner"), "G1.s.t", "section", "Inner", nil, nil),
+			childOf("e-4", "G1.s.t.a", "e-3"))), "mapping")
+
+		_, meta, err := catalog.AdaptIngestionOutput(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(meta.StructureMethod).To(Equal("mapping"))
+		parents := map[string][2]string{}
+		for _, it := range meta.SourceItems {
+			parents[it.ID] = [2]string{it.GroupID, it.ParentID}
+		}
+		Expect(parents).To(Equal(map[string][2]string{
+			"G1": {"", ""}, "G1.s": {"G1", ""}, "G1.s.t": {"", "G1.s"}, "G1.s.t.a": {"", "G1.s.t"},
+		}))
+		_, err = oscal.BuildTree(meta.SourceItems)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("leaves StructureMethod empty for pre-1.4 output", func() {
+		data, _ := readIngestionFixture("owasp-asvs-5.0.0-excerpt.json")
+		_, meta, err := catalog.AdaptIngestionOutput(data)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(meta.StructureMethod).To(BeEmpty())
+	})
+
+	DescribeTable("rejects output breaking the structure_method or section rules",
+		func(data []byte, wantProblem string) {
+			before := append([]byte(nil), data...)
+			var (
+				doc  oscal.StructuredDoc
+				meta catalog.IngestionMeta
+				err  error
+			)
+			Expect(func() { doc, meta, err = catalog.AdaptIngestionOutput(data) }).NotTo(Panic())
+			Expect(err).To(MatchError(catalog.ErrInvalidIngestionOutput))
+			Expect(err).To(MatchError(ContainSubstring(wantProblem)))
+			Expect(err).To(MatchError(ContainSubstring("Re-run the conversion")))
+			Expect(err.Error()).NotTo(ContainSubstring("Sensitive"))
+			Expect(err.Error()).NotTo(ContainSubstring("SID-"))
+			Expect(doc).To(BeZero())
+			Expect(meta).To(BeZero())
+			Expect(data).To(Equal(before))
+		},
+		Entry("1.4 with no method",
+			ingestionDoc("1.4", sensitiveControl("e-1", "SID-1")),
+			"metadata.structure_method is missing"),
+		Entry("1.4 with a null method",
+			withStructureMethod(ingestionDoc("1.4", sensitiveControl("e-1", "SID-1")), nil),
+			"metadata.structure_method is missing"),
+		Entry("an unknown method",
+			withStructureMethod(ingestionDoc("1.4", sensitiveControl("e-1", "SID-1")), "Sensitive method"),
+			"metadata.structure_method is not one of mapping, heading, table, pattern"),
+		Entry("a method that is not a string",
+			withStructureMethod(ingestionDoc("1.4", sensitiveControl("e-1", "SID-1")), 7),
+			"metadata.structure_method is not valid JSON"),
+		Entry("a method at 1.3",
+			withStructureMethod(ingestionDoc("1.3", sensitiveControl("e-1", "SID-1")), "heading"),
+			"metadata.structure_method is not allowed below schema 1.4"),
+		Entry("a null method at 1.3",
+			withStructureMethod(ingestionDoc("1.3", sensitiveControl("e-1", "SID-1")), nil),
+			"metadata.structure_method is not allowed below schema 1.4"),
+		Entry("mapping without source.mapping",
+			withStructureMethod(ingestionDoc("1.4", sensitiveControl("e-1", "SID-1")), "mapping"),
+			"is mapping but metadata.source.mapping is absent"),
+		Entry("heading with source.mapping",
+			withStructureMethod(withMappingRecord(ingestionDoc("1.4", sensitiveControl("e-1", "SID-1"))), "heading"),
+			"metadata.source.mapping is present"),
+		Entry("a section with no children",
+			withStructureMethod(ingestionDoc("1.4", sensitiveControl("e-1", "SID-1"), sensitiveSection("e-2", "SID-2", nil)), "heading"),
+			"elements[1] is a section with no child"),
+		Entry("a section whose only child has no id",
+			withStructureMethod(ingestionDoc("1.4", sensitiveSection("e-1", "SID-1", nil),
+				map[string]any{"element_id": "e-2", "content": "Sensitive lead-in:", "parent_id": "e-1"}), "heading"),
+			"elements[0] is a section with no child"),
+		Entry("a section under a control",
+			withStructureMethod(ingestionDoc("1.4",
+				withRole(heading("e-1", 1, nil, "Sensitive heading"), "SID-1", "control", "Sensitive title", nil, nil),
+				sensitiveSection("e-2", "SID-2", "e-1"),
+				childOf("e-3", "SID-3", "e-2")), "heading"),
+			"elements[1] is a section whose parent elements[0] is a control"),
+		Entry("a group under a section",
+			withStructureMethod(withMappingRecord(ingestionDoc("1.4",
+				sensitiveSection("e-1", "SID-1", nil),
+				withRole(heading("e-2", 2, "e-1", "Sensitive heading"), "SID-2", "group", "Sensitive title", nil, nil),
+				childOf("e-3", "SID-3", "e-2"))), "mapping"),
+			"elements[1] is a group whose parent elements[0] is a section"),
+		Entry("1.4 output with no roles and method heading",
+			withStructureMethod(ingestionDoc("1.4", heading("e-1", 1, nil, "Sensitive heading"),
+				map[string]any{"element_id": "e-2", "content": "Sensitive body.", "parent_id": "e-1"}), "heading"),
+			"schema 1.4 output has no element with a role"),
+		Entry("1.4 output with no roles and method mapping",
+			withStructureMethod(withMappingRecord(ingestionDoc("1.4", heading("e-1", 1, nil, "Sensitive heading"))), "mapping"),
+			"schema 1.4 output has no element with a role"),
+		Entry("a section at 1.3",
+			ingestionDoc("1.3", sensitiveSection("e-1", "SID-1", nil), childOf("e-2", "SID-2", "e-1")),
+			"elements[0] has the role section, which schema 1.4 introduced"),
+	)
+
+	DescribeTable("adapts the real schema 1.4 fixtures",
+		func(fixture, wantTitleSubstring string, wantSections int) {
+			data, _ := readIngestionFixture(fixture)
+			var out struct {
+				Elements []structureFixtureElement `json:"elements"`
+			}
+			Expect(json.Unmarshal(data, &out)).To(Succeed())
+			idOf := map[string]string{}
+			roleOf := map[string]string{}
+			for _, e := range out.Elements {
+				if e.ID != nil {
+					idOf[e.ElementID], roleOf[e.ElementID] = *e.ID, e.Role
+				}
+			}
+			var wantIDs []string
+			wantParent := map[string]string{}
+			sections := 0
+			for _, e := range out.Elements {
+				if e.ID == nil {
+					continue
+				}
+				wantIDs = append(wantIDs, *e.ID)
+				if e.ParentID != nil {
+					wantParent[*e.ID] = idOf[*e.ParentID]
+					Expect(roleOf[*e.ParentID]).To(Equal("section"), "only sections have children in %s", fixture)
+				}
+				if e.Role == "section" {
+					sections++
+				}
+			}
+			Expect(sections).To(Equal(wantSections))
+
+			doc, meta, err := catalog.AdaptIngestionOutput(data)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(doc).To(BeZero())
+			Expect(meta.SchemaVersion).To(Equal("1.4"))
+			Expect(meta.StructureMethod).To(Equal("heading"))
+			Expect(meta.MappingID).To(BeEmpty())
+			Expect(meta.CatalogTitle).To(ContainSubstring(wantTitleSubstring))
+
+			var gotIDs []string
+			gotParent := map[string]string{}
+			gotSections := 0
+			for _, it := range meta.SourceItems {
+				gotIDs = append(gotIDs, it.ID)
+				Expect(it.GroupID).To(BeEmpty(), it.ID)
+				if it.ParentID != "" {
+					gotParent[it.ID] = it.ParentID
+				}
+				if it.Class == oscal.ClassSection {
+					gotSections++
+				} else {
+					Expect(it.Class).To(Equal(oscal.ClassRequirement), it.ID)
+				}
+			}
+			Expect(gotIDs).To(Equal(wantIDs))
+			Expect(gotParent).To(Equal(wantParent))
+			Expect(gotSections).To(Equal(wantSections))
+			_, err = oscal.BuildTree(meta.SourceItems)
+			Expect(err).NotTo(HaveOccurred())
+		},
+		Entry("SP 800-171r3 PDF: flat controls, no section", "nist-sp800-171r3-excerpt-1.4.json", "", 0),
+		Entry("NIS2 HTML: lead-in clauses are sections", "eurlex-nis2-32022L2555-1.4.json", "DIRECTIVE (EU) 2022/2555", 2),
+	)
+
+	It("hashes structure_method, so only the method changing changes the hash", func() {
+		hashFor := func(method string) string {
+			doc := ingestionDoc("1.4", sensitiveControl("e-1", "SID-1"))
+			_, meta, err := catalog.AdaptIngestionOutput(withStructureMethod(doc, method))
+			Expect(err).NotTo(HaveOccurred())
+			return meta.ContentHash
+		}
+		Expect(hashFor("heading")).To(Equal(hashFor("heading")))
+		Expect(hashFor("heading")).NotTo(Equal(hashFor("table")))
 	})
 })
 
