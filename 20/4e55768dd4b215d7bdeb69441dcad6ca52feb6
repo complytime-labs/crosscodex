@@ -1,0 +1,22 @@
+internal/gateway/backend/ingestion_client_bdd_test.go
+  s_412731fd637f69::t_1f816f807a18f0 399-428
+  s_412731fd637f69::t_8872059e2e0493 80-88
+internal/gateway/backend/ingestion_client.go
+  s_412731fd637f69::t_0484b4c33542a8 304-312,320
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "204e55768dd4b215d7bdeb69441dcad6ca52feb6",
+  "prompts": {},
+  "sessions": {
+    "s_412731fd637f69": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "baae5499-ef68-45d1-92de-9de7e802664e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
