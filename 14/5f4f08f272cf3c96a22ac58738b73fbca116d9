@@ -1,0 +1,25 @@
+README.md
+  s_412731fd637f69::t_0ad921af4a2ae6 19-29,452-453,470,1057
+docs/dev/telemetry.md
+  s_412731fd637f69::t_0ad921af4a2ae6 189
+docs/dev/service-runtime.md
+  s_412731fd637f69::t_5712724061f2ec 228,230-233,235
+docs/dev/attestation.md
+  s_412731fd637f69::t_0ad921af4a2ae6 326
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "145f4f08f272cf3c96a22ac58738b73fbca116d9",
+  "prompts": {},
+  "sessions": {
+    "s_412731fd637f69": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "baae5499-ef68-45d1-92de-9de7e802664e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
