@@ -1,0 +1,34 @@
+internal/catalog/ingestion_adapter.go
+  s_412731fd637f69::t_27fcd83724313d 628
+  s_412731fd637f69::t_fdcec1e8d721f6 104-108
+  s_412731fd637f69::t_bdd592b6da7c43 32-34,37-42,123-128,185-188,400,404-406,418-420,425,513-514,516,522,528,532-565,611,615,623,655-656,659-664,691-692,694-695,703,706-709,718,723-727,730-731
+  s_412731fd637f69::t_2cd324e23e32ed 732
+internal/catalog/catalog_fuzz_test.go
+  s_412731fd637f69::t_f41e642cce4b51 74-77
+  s_412731fd637f69::t_f77ad19061021a 131
+internal/catalog/testdata/ingestion/README.md
+  s_412731fd637f69::t_fe9cd04beadb5e 50-73
+internal/catalog/ingestion_adapter_bdd_test.go
+  s_412731fd637f69::t_9171ff339c288b 611-849
+  s_412731fd637f69::t_847d0e38c25315 177
+internal/catalog/testdata/ingestion/nist-sp800-171r3-excerpt-1.4.json
+  s_412731fd637f69::t_37aab35b80b44f 1-204
+internal/catalog/testdata/ingestion/eurlex-nis2-32022L2555-1.4.json
+  s_412731fd637f69::t_37aab35b80b44f 1-618
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "1a9ca989ab74ac33bb7bcc62d134d8aa4031e16d",
+  "prompts": {},
+  "sessions": {
+    "s_412731fd637f69": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "baae5499-ef68-45d1-92de-9de7e802664e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
