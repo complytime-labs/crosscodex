@@ -1,0 +1,21 @@
+internal/catalog/ingestion_parse_bdd_test.go
+  s_412731fd637f69::t_4a281de63ca02d 612,628-629,636-640
+internal/catalog/structuring.go
+  s_412731fd637f69::t_fbd927f007fc3e 102-103,114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "ec77e73e6efd7323f8d29090ea014691d5ad403d",
+  "prompts": {},
+  "sessions": {
+    "s_412731fd637f69": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "baae5499-ef68-45d1-92de-9de7e802664e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "LLM (riotbox) <llm@riotbox>"
+    }
+  }
+}
