@@ -16,6 +16,8 @@ CrossCodex is in early development. All foundational, domain, and service packag
 
 ## Upgrading
 
+Conversion failures the caller can fix get their own codes (#311). A conversion the ingestion service fails as invalid input (no or ill-fitting `--mapping`, damaged or unaccepted file) now returns `InvalidArgument`, and one over an ingestion limit (pages, extracted size, CPU or time) `ResourceExhausted`, each with advice and an error reference, where both were `Internal` ("internal gateway error"). An ingestion outage during conversion now returns `Unavailable`. Clients that retried every `Internal` should not retry `InvalidArgument`; other conversion failures stay `Internal`. Nothing else changes.
+
 Stable content identity for converted documents (crosscodex-ingestion#40). Additive proto, with a one-time re-import effect:
 
 - **Behaviour.** Re-converting the same source re-imports into the same catalog: the catalog ID and `content_hash` of a converted document no longer change with run timing or other conversion noise. OSCAL catalogs keep the SHA-256 of the imported bytes.
@@ -431,6 +433,7 @@ Conversion can take minutes for a long PDF. The import fails and no catalog is s
 
 - the document is larger than `ingestion.max_document_bytes` (50 MiB by default; `ResourceExhausted`, refused before upload to the service);
 - conversion takes longer than `ingestion.convert_timeout` (10 minutes by default);
+- the ingestion service refuses the document for exceeding one of its own limits: pages, extracted output size, CPU or conversion time (`ResourceExhausted`; split the document, or ask an operator to raise the limit; the error reference leads to the service's reason in the server log);
 - no heading, table or numbering rule in the converted text finds the controls (`FailedPrecondition` naming `catalog.structuring.section_pattern`: set it to a regular expression whose group 1 is the control identifier and group 2 its text, then import again).
 
 A failed import can still leave objects in the tenant's storage; see the orphaned-output limitation under [Document ingestion](#document-ingestion).
@@ -445,7 +448,7 @@ A structured source (JSON, CSV or xlsx such as OWASP ASVS, NIST CSF 2.0, SP 800-
 crosscodex catalog import --document asvs --mapping owasp-asvs-5.0.0-json asvs.json
 ```
 
-A mapping ID is 1-128 lowercase letters and digits separated by single `.` or `-`; a malformed one is refused before upload. With `--mapping` the server detects the format even of a file that looks like OSCAL JSON, and the ingestion service reads it through the mapping. A request the ingestion server refuses, for an unregistered ID or other request checks, is refused (`InvalidArgument`) with an error reference whose log entry gives the service's reason, such as the registered IDs; the import's attestation records the mapping ID and the mapping file's SHA-256 (`ingestion_mapping_sha256`), and an output naming a different mapping than requested is refused with `FAILED_PRECONDITION` and nothing is stored; a server without `ingestion.address` refuses any mapping (`FailedPrecondition`). Importing a JSON, CSV or XLSX structured source without `--mapping`, or with a mapping that does not fit the file, currently fails as "internal gateway error" with an error reference; check the mapping ID and the server log for that reference. The import yields:
+A mapping ID is 1-128 lowercase letters and digits separated by single `.` or `-`; a malformed one is refused before upload. With `--mapping` the server detects the format even of a file that looks like OSCAL JSON, and the ingestion service reads it through the mapping. A request the ingestion server refuses, for an unregistered ID or other request checks, is refused (`InvalidArgument`) with an error reference whose log entry gives the service's reason, such as the registered IDs; the import's attestation records the mapping ID and the mapping file's SHA-256 (`ingestion_mapping_sha256`), and an output naming a different mapping than requested is refused with `FAILED_PRECONDITION` and nothing is stored; a server without `ingestion.address` refuses any mapping (`FailedPrecondition`). Importing a JSON, CSV or XLSX structured source without `--mapping`, or with a mapping that does not fit the file, is refused (`InvalidArgument`) and nothing is stored. The ingestion service reports every input problem the same way, so the message lists the likely causes: without a mapping, a damaged or unaccepted file or a structured source that needs `--mapping <id>`; with one, a file that does not fit the mapping, is malformed or exceeds the limits for structured sources. Its error reference leads to the service's exact reason in the server log. The import yields:
 
 - one control per `role: control` element, under the source's ID, with its title, text and properties;
 - one group (container) per `role: group` element, with the hierarchy taken from `parent_id`;

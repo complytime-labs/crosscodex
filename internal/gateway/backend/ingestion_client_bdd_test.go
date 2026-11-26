@@ -77,6 +77,15 @@ func (f *fakeIngestionServer) recorded() (converts []*pb.ConvertDocumentRequest,
 	return append([]*pb.ConvertDocumentRequest(nil), f.converts...), append([]*pb.GetDocumentRequest(nil), f.gets...)
 }
 
+// pastDeadline reports deadline but never reports Err or Done, like a context
+// whose deadline has passed before its timer fired.
+type pastDeadline struct {
+	context.Context
+	deadline time.Time
+}
+
+func (c pastDeadline) Deadline() (time.Time, bool) { return c.deadline, true }
+
 // serveIngestion starts fake over gRPC on HTTP/2 with TLS, the protocol the
 // real service speaks, and returns a client for it.
 func serveIngestion(fake *fakeIngestionServer) (crosscodexv1connect.IngestionServiceClient, *httptest.Server) {
@@ -285,6 +294,71 @@ var _ = Describe("IngestionClient", func() {
 		Entry("UNSPECIFIED", pb.JobStatus_JOB_STATUS_UNSPECIFIED),
 	)
 
+	DescribeTable("withholds ingestion's text for a failure the caller cannot fix by changing the input",
+		func(status pb.JobStatus, ingErr *pb.Error, want connect.Code) {
+			fake.document = func(int) *pb.Document {
+				return &pb.Document{DocumentId: "doc-1", ConversionStatus: status, Error: ingErr}
+			}
+			rpc, _ := serveIngestion(fake)
+			_, err := newClient(rpc, local).ConvertDocument(tenantCtx(), contentReq([]byte("x")))
+			expectWithheldCode(err, want)
+			Expect(store.Objects()).To(BeEmpty())
+			Expect(outcomes()).To(Equal(map[string]int64{"failed": 1}))
+		},
+		Entry("FAILED with INTERNAL becomes Internal", pb.JobStatus_JOB_STATUS_FAILED,
+			&pb.Error{Code: pb.ErrorCode_ERROR_CODE_INTERNAL, Message: ingestionSecret}, connect.CodeInternal),
+		Entry("FAILED with UNAVAILABLE stays Unavailable, so clients may retry", pb.JobStatus_JOB_STATUS_FAILED,
+			&pb.Error{Code: pb.ErrorCode_ERROR_CODE_UNAVAILABLE, Message: ingestionSecret}, connect.CodeUnavailable),
+		Entry("FAILED with no error code becomes Internal", pb.JobStatus_JOB_STATUS_FAILED,
+			&pb.Error{Message: ingestionSecret}, connect.CodeInternal),
+		Entry("FAILED with no error becomes Internal", pb.JobStatus_JOB_STATUS_FAILED, nil, connect.CodeInternal),
+		Entry("CANCELLED with INVALID_ARGUMENT becomes Internal", pb.JobStatus_JOB_STATUS_CANCELLED,
+			&pb.Error{Code: pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, Message: ingestionSecret}, connect.CodeInternal),
+	)
+
+	DescribeTable("reports ingestion rejecting the input with a caller-actionable code and its own advice, logging ingestion's text",
+		func(ingCode pb.ErrorCode, mapping string, want connect.Code, problem, advice string) {
+			var logs bytes.Buffer
+			fake.document = func(int) *pb.Document {
+				return &pb.Document{DocumentId: "doc-1", ConversionStatus: pb.JobStatus_JOB_STATUS_FAILED,
+					Error: &pb.Error{Code: ingCode, Message: ingestionSecret}}
+			}
+			rpc, _ := serveIngestion(fake)
+			c, err := NewIngestionClient(rpc, store, local, cfg,
+				WithIngestionClientTelemetry(tp.TracerProvider().Tracer("test"), tp.MeterProvider().Meter("test")),
+				WithIngestionClientLogger(slog.New(slog.NewTextHandler(&logs, nil))))
+			Expect(err).NotTo(HaveOccurred())
+			req := contentReq([]byte("{}"))
+			req.Msg.Mapping = mapping
+
+			_, err = c.ConvertDocument(tenantCtx(), req)
+			Expect(connect.CodeOf(err)).To(Equal(want))
+			Expect(err).To(MatchError(ContainSubstring(`the ingestion service rejected document "doc-1" ` + problem)))
+			Expect(err).To(MatchError(ContainSubstring(advice)))
+			Expect(err).To(MatchError(MatchRegexp(`error reference [0-9a-f]{32}`)))
+			Expect(err.Error()).NotTo(ContainSubstring(ingestionSecret), "ingestion's text is not returned (CWE-209)")
+
+			ref := regexp.MustCompile(`error reference ([0-9a-f]{32})`).FindStringSubmatch(err.Error())[1]
+			Expect(logs.String()).To(ContainSubstring(ingestionSecret))
+			Expect(logs.String()).To(ContainSubstring("error_ref=" + ref))
+			Expect(logs.String()).To(ContainSubstring("tenant=" + callerTenant))
+			Expect(store.Objects()).To(BeEmpty())
+			Expect(outcomes()).To(Equal(map[string]int64{"rejected": 1}))
+		},
+		Entry("INVALID_ARGUMENT without a mapping: InvalidArgument, naming a damaged or unaccepted file or a missing --mapping",
+			pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, "", connect.CodeInvalidArgument, "as invalid input",
+			"the file may be damaged or in a format the service does not accept, or it is a JSON, CSV or XLSX structured source, which must be imported with --mapping <id>"),
+		Entry("INVALID_ARGUMENT with a mapping: InvalidArgument, naming a mapping misfit, malformed file or structured limit",
+			pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, "owasp-asvs-5.0.0-json", connect.CodeInvalidArgument, "as invalid input",
+			`the file may not fit mapping "owasp-asvs-5.0.0-json" (its format or layout), be malformed, or exceed the service's limits for structured sources`),
+		Entry("RESOURCE_EXHAUSTED without a mapping: ResourceExhausted, told to split, raise the limits or retry",
+			pb.ErrorCode_ERROR_CODE_RESOURCE_EXHAUSTED, "", connect.CodeResourceExhausted, "for exceeding a conversion limit",
+			"Split the document and import the parts, or ask an operator to raise the ingestion service's limits; if the service was busy, a later retry may succeed"),
+		Entry("RESOURCE_EXHAUSTED with a mapping: the same advice",
+			pb.ErrorCode_ERROR_CODE_RESOURCE_EXHAUSTED, "owasp-asvs-5.0.0-json", connect.CodeResourceExhausted, "for exceeding a conversion limit",
+			"Split the document and import the parts, or ask an operator to raise the ingestion service's limits; if the service was busy, a later retry may succeed"),
+	)
+
 	It("gives up after convert_timeout when ingestion never completes", func() {
 		cfg.ConvertTimeout = 100 * time.Millisecond
 		fake.document = func(int) *pb.Document {
@@ -321,6 +395,36 @@ var _ = Describe("IngestionClient", func() {
 		Expect(err.Error()).NotTo(ContainSubstring(ingestionSecret))
 		Expect(outcomes()).To(Equal(map[string]int64{"canceled": 1}))
 	})
+
+	// A context's Err is set by a timer that can fire after its deadline has
+	// passed. In that window connect sends a zero grpc-timeout, so the RPC
+	// fails with DeadlineExceeded while Err is still nil. pastDeadline is a
+	// context frozen in that window.
+	DescribeTable("classifies an RPC failure by the deadline, even before the context's timer has fired",
+		func(callerExpired, convExpired bool, wantOutcome string, wantCode connect.Code, wantText string) {
+			past, future := time.Now().Add(-time.Millisecond), time.Now().Add(time.Hour)
+			deadline := func(expired bool) time.Time {
+				if expired {
+					return past
+				}
+				return future
+			}
+			ctx := pastDeadline{Context: tenantCtx(), deadline: deadline(callerExpired)}
+			convCtx := pastDeadline{Context: tenantCtx(), deadline: deadline(convExpired)}
+			rpcErr := connect.NewError(connect.CodeDeadlineExceeded, context.DeadlineExceeded)
+
+			outcome, err := newClient(nil, local).rpcFailure(ctx, convCtx, "GetDocument", "doc-1", rpcErr)
+			Expect(outcome).To(Equal(wantOutcome))
+			Expect(connect.CodeOf(err)).To(Equal(wantCode))
+			Expect(err).To(MatchError(ContainSubstring(wantText)))
+		},
+		Entry("convert_timeout passed: a timeout", false, true, "timeout", connect.CodeDeadlineExceeded,
+			`document "doc-1" did not finish converting within ingestion.convert_timeout`),
+		Entry("the caller's deadline passed: the caller's request ended", true, true, "canceled", connect.CodeDeadlineExceeded,
+			"the request ended before ingestion finished"),
+		Entry("no deadline passed: an RPC error, withheld as Internal", false, false, "error", connect.CodeInternal,
+			`ingestion GetDocument for document "doc-1" failed`),
+	)
 
 	It("reports an unreachable ingestion service as Unavailable", func() {
 		rpc, srv := serveIngestion(fake)
