@@ -1,0 +1,41 @@
+docs/dev/service-runtime.md
+  s_412731fd637f69::t_528cb5b557f6ef 218
+README.md
+  s_412731fd637f69::t_528cb5b557f6ef 19-20,451
+  s_412731fd637f69::t_b1592ba7b574c6 436
+internal/gateway/backend/ingestion_client.go
+  s_412731fd637f69::t_31b905765bcb09 29
+  s_412731fd637f69::t_1e24f1013fd18c 221,225,256-259,261
+  s_412731fd637f69::t_633e49e2d798d4 30
+  s_412731fd637f69::t_112c84afa21e73 230-233,235-238,240-242,247-254
+  s_412731fd637f69::t_fff35679bc7559 43-49
+  s_412731fd637f69::t_ba79a30121d1af 222-224,226-229,234,239,243-246,255,260,262-265
+  s_412731fd637f69::t_0484b4c33542a8 304-312,320
+docs/dev/telemetry.md
+  s_412731fd637f69::t_528cb5b557f6ef 187
+internal/gateway/backend_errors_bdd_test.go
+  s_412731fd637f69::t_65b3bb45f9a696 30,34,44,406-429
+  s_412731fd637f69::t_853ffbd4cc3e5f 430
+internal/gateway/backend/ingestion_client_bdd_test.go
+  s_412731fd637f69::t_04776b485ff240 297,299-303,305-307,317-318,321-323,325-334,337-347,360-361
+  s_412731fd637f69::t_8c87b869d36fb4 298,304,308-316,348-359
+  s_412731fd637f69::t_c5fffb91b16193 319-320,324,335-336
+  s_412731fd637f69::t_1f816f807a18f0 399-428
+  s_412731fd637f69::t_8872059e2e0493 80-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "ffb3e7915e3e5471777428f26091b3f5dd302b72",
+  "prompts": {},
+  "sessions": {
+    "s_412731fd637f69": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "baae5499-ef68-45d1-92de-9de7e802664e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
