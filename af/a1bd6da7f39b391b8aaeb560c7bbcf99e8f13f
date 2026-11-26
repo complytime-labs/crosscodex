@@ -1,0 +1,38 @@
+docs/dev/service-runtime.md
+  s_412731fd637f69::t_528cb5b557f6ef 218
+README.md
+  s_412731fd637f69::t_528cb5b557f6ef 19-20,451
+  s_412731fd637f69::t_b1592ba7b574c6 436
+internal/gateway/backend/ingestion_client.go
+  s_412731fd637f69::t_31b905765bcb09 29
+  s_412731fd637f69::t_1e24f1013fd18c 221,225,256-259,261
+  s_412731fd637f69::t_633e49e2d798d4 30
+  s_412731fd637f69::t_112c84afa21e73 230-233,235-238,240-242,247-254
+  s_412731fd637f69::t_fff35679bc7559 43-49
+  s_412731fd637f69::t_ba79a30121d1af 222-224,226-229,234,239,243-246,255,260,262-265
+docs/dev/telemetry.md
+  s_412731fd637f69::t_528cb5b557f6ef 187
+internal/gateway/backend_errors_bdd_test.go
+  s_412731fd637f69::t_65b3bb45f9a696 30,34,44,406-429
+  s_412731fd637f69::t_853ffbd4cc3e5f 430
+internal/gateway/backend/ingestion_client_bdd_test.go
+  s_412731fd637f69::t_04776b485ff240 288,290-294,296-298,308-309,312-314,316-325,328-338,351-352
+  s_412731fd637f69::t_8c87b869d36fb4 289,295,299-307,339-350
+  s_412731fd637f69::t_c5fffb91b16193 310-311,315,326-327
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "afa1bd6da7f39b391b8aaeb560c7bbcf99e8f13f",
+  "prompts": {},
+  "sessions": {
+    "s_412731fd637f69": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "baae5499-ef68-45d1-92de-9de7e802664e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
