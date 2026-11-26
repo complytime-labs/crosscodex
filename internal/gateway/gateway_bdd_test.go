@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1676,4 +1677,122 @@ var _ = Describe("Document version arguments through the gateway", func() {
 		Entry("SubmitDocument, content in another document", importFn(submit), connect.CodeFailedPrecondition, `already a version of document "other-doc"`),
 		Entry("StreamDocument, content in another document", importFn(stream), connect.CodeFailedPrecondition, `already a version of document "other-doc"`),
 	)
+})
+
+var _ = Describe("Ingestion mapping through the gateway", func() {
+	type importFn func(svc *gateway.Service, mapping string) error
+	submit := func(svc *gateway.Service, mapping string) error {
+		_, err := svc.SubmitDocument(userCtx("user-a"), connect.NewRequest(&pb.SubmitDocumentRequest{
+			Source:           &pb.SubmitDocumentRequest_Content{Content: []byte(`{"chapters":[]}`)},
+			IngestionMapping: mapping,
+		}))
+		return err
+	}
+	stream := func(svc *gateway.Service, mapping string) error {
+		_, err := gateway.ExportHandleStreamedDocument(svc, userCtx("user-a"), time.Now(),
+			&pb.StreamDocumentMetadata{IngestionMapping: mapping}, []byte(`{"chapters":[]}`))
+		return err
+	}
+	// recording returns an ingestion backend that accepts every request and
+	// records the ones it receives.
+	recording := func(got *[]*pb.ConvertDocumentRequest) *mockIngestion {
+		return &mockIngestion{
+			convertFn: func(_ context.Context, req *connect.Request[pb.ConvertDocumentRequest]) (*connect.Response[pb.ConvertDocumentResponse], error) {
+				*got = append(*got, req.Msg)
+				return connect.NewResponse(&pb.ConvertDocumentResponse{DocumentId: "doc-1"}), nil
+			},
+		}
+	}
+
+	DescribeTable("forwards the mapping to the ingestion backend",
+		func(run importFn, mapping string) {
+			var got []*pb.ConvertDocumentRequest
+			svc := newTestService(gateway.WithIngestionBackend(recording(&got)))
+			Expect(run(svc, mapping)).To(Succeed())
+			Expect(got).To(HaveLen(1))
+			Expect(got[0].GetMapping()).To(Equal(mapping))
+			Expect(got[0].GetContent()).To(Equal([]byte(`{"chapters":[]}`)))
+		},
+		Entry("SubmitDocument", importFn(submit), "owasp-asvs-5.0.0-json"),
+		Entry("StreamDocument", importFn(stream), "owasp-asvs-5.0.0-json"),
+		Entry("SubmitDocument, a 128-character ID", importFn(submit), strings.Repeat("a", 128)),
+		Entry("StreamDocument, a one-character ID", importFn(stream), "0"),
+		Entry("SubmitDocument, no mapping for a document", importFn(submit), ""),
+		Entry("StreamDocument, no mapping for a document", importFn(stream), ""),
+	)
+
+	DescribeTable("refuses a malformed mapping ID before calling the ingestion backend",
+		func(run importFn, mapping, wantEcho string) {
+			var got []*pb.ConvertDocumentRequest
+			svc := newTestService(gateway.WithIngestionBackend(recording(&got)))
+			err := run(svc, mapping)
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			Expect(err).To(MatchError(ContainSubstring("invalid mapping " + wantEcho)))
+			Expect(err).To(MatchError(ContainSubstring("1-128 lowercase letters and digits, separated by single '.' or '-'")))
+			Expect(err).To(MatchError(ContainSubstring("the ID of a mapping registered on the ingestion server")))
+			Expect(err.Error()).NotTo(ContainSubstring("\n"), "the echo is escaped")
+			Expect(len(err.Error())).To(BeNumerically("<", 600), "the echo is bounded")
+			Expect(got).To(BeEmpty(), "the backend accepts any request, so an empty record proves none was sent")
+		},
+		Entry("SubmitDocument, uppercase", importFn(submit), "OWASP-ASVS", `"OWASP-ASVS"`),
+		Entry("StreamDocument, uppercase", importFn(stream), "OWASP-ASVS", `"OWASP-ASVS"`),
+		Entry("SubmitDocument, leading hyphen", importFn(submit), "-asvs", `"-asvs"`),
+		Entry("SubmitDocument, a trailing separator", importFn(submit), "asvs-", `"asvs-"`),
+		Entry("SubmitDocument, doubled separators", importFn(submit), "asvs..json", `"asvs..json"`),
+		Entry("SubmitDocument, a path", importFn(submit), "../etc/passwd", `"../etc/passwd"`),
+		Entry("StreamDocument, a newline", importFn(stream), "asvs\nx", `"asvs\nx"`),
+		Entry("SubmitDocument, 129 characters", importFn(submit), strings.Repeat("a", 129), `"`+strings.Repeat("a", 64)+`..." (129 bytes)`),
+		Entry("StreamDocument, 4096 characters", importFn(stream), strings.Repeat("x", 4096), `"`+strings.Repeat("x", 64)+`..." (4096 bytes)`),
+	)
+
+	DescribeTable("refuses a mapping combined with an explicit catalog format before calling the ingestion backend",
+		func(_ pb.CatalogFormat, run func(svc *gateway.Service) error, wantFormat string) {
+			var got []*pb.ConvertDocumentRequest
+			svc := newTestService(gateway.WithIngestionBackend(recording(&got)))
+			err := run(svc)
+			Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+			Expect(err).To(MatchError(ContainSubstring(`mapping "owasp-asvs-5.0.0-json" cannot be combined with catalog format ` + wantFormat)))
+			Expect(err).To(MatchError(ContainSubstring("Leave the catalog format unspecified")))
+			Expect(got).To(BeEmpty(), "the backend accepts any request, so an empty record proves none was sent")
+		},
+		Entry("SubmitDocument, OSCAL", pb.CatalogFormat_CATALOG_FORMAT_OSCAL, func(svc *gateway.Service) error {
+			_, err := svc.SubmitDocument(userCtx("user-a"), connect.NewRequest(&pb.SubmitDocumentRequest{
+				Source:           &pb.SubmitDocumentRequest_Content{Content: []byte(`{"chapters":[]}`)},
+				CatalogFormat:    pb.CatalogFormat_CATALOG_FORMAT_OSCAL,
+				IngestionMapping: "owasp-asvs-5.0.0-json",
+			}))
+			return err
+		}, "CATALOG_FORMAT_OSCAL"),
+		Entry("SubmitDocument, GEMARA", pb.CatalogFormat_CATALOG_FORMAT_GEMARA, func(svc *gateway.Service) error {
+			_, err := svc.SubmitDocument(userCtx("user-a"), connect.NewRequest(&pb.SubmitDocumentRequest{
+				Source:           &pb.SubmitDocumentRequest_Content{Content: []byte(`{"chapters":[]}`)},
+				CatalogFormat:    pb.CatalogFormat_CATALOG_FORMAT_GEMARA,
+				IngestionMapping: "owasp-asvs-5.0.0-json",
+			}))
+			return err
+		}, "CATALOG_FORMAT_GEMARA"),
+		Entry("StreamDocument, OSCAL", pb.CatalogFormat_CATALOG_FORMAT_OSCAL, func(svc *gateway.Service) error {
+			_, err := gateway.ExportHandleStreamedDocument(svc, userCtx("user-a"), time.Now(),
+				&pb.StreamDocumentMetadata{CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_OSCAL, IngestionMapping: "owasp-asvs-5.0.0-json"}, []byte(`{"chapters":[]}`))
+			return err
+		}, "CATALOG_FORMAT_OSCAL"),
+		Entry("StreamDocument, GEMARA", pb.CatalogFormat_CATALOG_FORMAT_GEMARA, func(svc *gateway.Service) error {
+			_, err := gateway.ExportHandleStreamedDocument(svc, userCtx("user-a"), time.Now(),
+				&pb.StreamDocumentMetadata{CatalogFormat: pb.CatalogFormat_CATALOG_FORMAT_GEMARA, IngestionMapping: "owasp-asvs-5.0.0-json"}, []byte(`{"chapters":[]}`))
+			return err
+		}, "CATALOG_FORMAT_GEMARA"),
+	)
+
+	It("returns the ingestion backend's refusal of a mapping with its actionable message", func() {
+		msg := `ingestion refused mapping "owasp-asvs-9-json": check the ID`
+		ing := &mockIngestion{
+			convertFn: func(context.Context, *connect.Request[pb.ConvertDocumentRequest]) (*connect.Response[pb.ConvertDocumentResponse], error) {
+				return nil, connect.NewError(connect.CodeInvalidArgument, errors.New(msg))
+			},
+		}
+		svc := newTestService(gateway.WithIngestionBackend(ing))
+		err := submit(svc, "owasp-asvs-9-json")
+		Expect(connect.CodeOf(err)).To(Equal(connect.CodeInvalidArgument))
+		Expect(err).To(MatchError(ContainSubstring(msg)))
+	})
 })

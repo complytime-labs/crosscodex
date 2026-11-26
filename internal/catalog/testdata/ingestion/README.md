@@ -1,9 +1,10 @@
 # Ingestion output fixtures
 
-Real crosscodex-ingestion structured output (schema 1.2), used by the
-`AdaptIngestionOutput` specs. Each file is the converter's output for a
-document excerpt that crosscodex-ingestion ships as its own test fixture; it
-was not edited or trimmed.
+Real crosscodex-ingestion structured output, used by the
+`AdaptIngestionOutput` specs. The two document fixtures (schema 1.2) are the
+converter's output for document excerpts that crosscodex-ingestion ships as
+its own test fixtures; they were not edited or trimmed. The ASVS and
+SP 800-53 files are trimmed schema 1.3 output.
 
 How they were made (2026-11-24): crosscodex-ingestion at commit
 `d2864009864bdd1d60e3f5678105001d5a90b76a` (package 0.1.0, Docling 2.148.0,
@@ -21,3 +22,28 @@ from `metadata.processing_time_ms`.
 
 The input excerpts' commit is `fe7fcb52548687165c6f82255ba800afc684b301`
 (last change to both files).
+
+## Schema 1.3 structured-source fixtures
+
+Real crosscodex-ingestion output for structured sources (element `role`s,
+`catalog_title`, `catalog_version`), trimmed to a connected subset.
+
+How they were made (2026-11-25): crosscodex-ingestion at commit `d68ecb0`
+(`uv run python -m crosscodex_ingestion.structured --mapping
+src/crosscodex_ingestion/mappings/<mapping>.yaml <file>`), run on a copy of the
+release file in an empty directory, after checking the release's SHA-256.
+Trim rule: keep every element whose root ancestor (following `parent_id` to
+the element with `parent_id: null`) has a listed `id`, in the original order,
+with `element_id`s as emitted, so every kept element keeps its ancestors and no
+group is left without children. Then set `metadata.element_count` to the
+number of kept elements and `metadata.source.node_count` to the number of kept
+elements with an `id`. Write with `json.dump(indent=2, ensure_ascii=False)`
+and a trailing newline. The trim is a ten-line script that is not kept in the
+repo; this paragraph is its specification.
+
+| File | Mapping | Release file SHA-256 | Kept root ids | Elements / nodes |
+| --- | --- | --- | --- | --- |
+| `owasp-asvs-5.0.0-excerpt.json` | `owasp-asvs-5.0.0-json` | `bcdbec214d70abcfad9284a31d4f9e5134305831d628aad3aa85d7e26626cb35` | `V1`, `V5` (chapters, all sections and requirements) | 54 / 54: 11 groups (2 chapters, 9 sections), 43 requirements, each with a `level` property |
+| `nist-sp800-53r5-excerpt.json` | `nist-sp800-53r5-catalog-xlsx` | `1777ed6f839bccd55516e6e703bfe75e3cf63efb2ec80bb9309ed960af2c9ea4` | `AC-1`, `AC-2`, `AC-3` (with all their enhancements) | 33 / 31: no groups, 31 controls; enhancements such as `AC-2(1)` sit under their base control |
+
+Release URLs and licences are in `docs/dev/test-sources.md`.

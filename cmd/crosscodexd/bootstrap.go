@@ -426,7 +426,8 @@ func buildIngestGateway(ctx context.Context, role string, cfg *config.Config, sh
 	catalogSvc := catalog.NewService(catalogOpts...)
 	ingestionTracer, ingestionMeter := telemetry.Instrumentation("internal/gateway/backend")
 	ingestion, err := backend.NewIngestion(ctx, cfg.Ingestion, cfg.TLS, cfg.Storage.Objects, storageProvider,
-		backend.WithIngestionClientTelemetry(ingestionTracer, ingestionMeter))
+		backend.WithIngestionClientTelemetry(ingestionTracer, ingestionMeter),
+		backend.WithIngestionClientLogger(slog.Default()))
 	if err != nil {
 		return nil, fmt.Errorf("%s role: %w", role, err)
 	}

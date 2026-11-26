@@ -50,12 +50,21 @@ Nine OSCAL catalogs fetched together at `2026-11-10T22:18:12Z` (`sweep/FETCHED_A
 
 ## Shipped ingestion output: `internal/catalog/testdata/ingestion/`
 
-Untrimmed crosscodex-ingestion output for two document excerpts that crosscodex-ingestion ships as its own fixtures; the converter version, inputs and their hashes are in [that directory's README](../../internal/catalog/testdata/ingestion/README.md).
+Untrimmed crosscodex-ingestion output (schema 1.2) for two document excerpts that crosscodex-ingestion ships as its own fixtures; the converter version, inputs and their hashes are in [that directory's README](../../internal/catalog/testdata/ingestion/README.md).
 
 | File | Canonical URL of the original | Version | Retrieved | SHA-256 of the fixture |
 | --- | --- | --- | --- | --- |
 | `nist-sp800-171r3-excerpt.json` | <https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-171r3.pdf> | NIST SP 800-171 Rev. 3 (May 2024), PDF pages 13-17; converted 2026-11-24 | 2026-11-19 | `8c46190030db1fd57c126a363bda03b3a01f7b69e8fa59bf21f660f14da00751` |
 | `eurlex-nis2-32022L2555.json` | <https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32022L2555> | Directive (EU) 2022/2555 (NIS2), English OJ HTML, CELEX `32022L2555`, excerpt; converted 2026-11-24 | 2026-11-18 | `8d42c92842e44c9ee76560c77fbd83a705fb88e420dadefe522c1db1bf3f0060` |
+
+### Structured-source excerpts (schema 1.3)
+
+Trimmed crosscodex-ingestion (`d68ecb0`) output for two release files; trim rule and counts are in the README above. The release files themselves are not shipped.
+
+| File | Canonical URL of the original | Version | Retrieved | Release SHA-256 | SHA-256 of the fixture | Licence |
+| --- | --- | --- | --- | --- | --- | --- |
+| `owasp-asvs-5.0.0-excerpt.json` | <https://github.com/OWASP/ASVS/releases/download/v5.0.0_release/OWASP_Application_Security_Verification_Standard_5.0.0_en.json> | ASVS 5.0.0, chapters V1 and V5 | 2026-11-25 (converted) | `bcdbec214d70abcfad9284a31d4f9e5134305831d628aad3aa85d7e26626cb35` | `b04c41c86467c72b67869b3df5414f4b011be3c85539cfe6edacafe403ab4654` | CC-BY-SA-4.0 |
+| `nist-sp800-53r5-excerpt.json` | <https://csrc.nist.gov/files/pubs/sp/800/53/r5/upd1/final/docs/sp800-53r5-control-catalog.xlsx> | SP 800-53 Rev. 5 (update 1) control catalog, AC-1 to AC-3 | 2026-11-25 (converted) | `1777ed6f839bccd55516e6e703bfe75e3cf63efb2ec80bb9309ed960af2c9ea4` | `73e22a48c4de0aacf411b4777c70eb08b458ec77379061ade8c0e83a200baa39` | US Government work, not subject to copyright in the US (17 U.S.C. 105) |
 
 ## Shipped ingestion input: `test/ingestion/testdata/`
 

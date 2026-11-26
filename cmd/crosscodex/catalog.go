@@ -17,6 +17,7 @@ import (
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
 	intanalyzer "github.com/complytime-labs/crosscodex/internal/analyzer"
 	"github.com/complytime-labs/crosscodex/internal/catalog"
+	"github.com/complytime-labs/crosscodex/internal/gateway"
 	"github.com/complytime-labs/crosscodex/pkg/catalogversion"
 	"github.com/complytime-labs/crosscodex/pkg/oscal"
 	"github.com/spf13/cobra"
@@ -52,10 +53,14 @@ Supported formats:
     configured (ingestion.address): crosscodex-ingestion converts them and
     the server splits the result into controls. Without it they are
     rejected as an unsupported catalog format.
+  - Structured JSON, CSV or XLSX sources, with --mapping naming a mapping
+    registered on the ingestion server (e.g. owasp-asvs-5.0.0-json):
+    crosscodex-ingestion reads the file through it, keeping the source's
+    own control IDs and groups. Needs ingestion configured, as above.
 
 A file that is OSCAL JSON is sent as OSCAL; any other file lets the server
-detect the format. With --raw the server detects the format of every file,
-OSCAL JSON included.
+detect the format. With --raw or --mapping the server detects the format of
+every file, OSCAL JSON included.
 
 With --document the catalog is stored as a version of that document. Import
 the next edition of the same document under the same slug and it becomes the
@@ -69,12 +74,16 @@ document cannot be moved to this one.`,
 			raw, _ := cmd.Flags().GetBool("raw")
 			documentSlug, _ := cmd.Flags().GetString("document")
 			versionLabel, _ := cmd.Flags().GetString("version-label")
+			mapping, _ := cmd.Flags().GetString("mapping")
 
 			// The server validates again; checking here fails before the upload.
 			if documentSlug != "" {
 				if err := catalog.ValidateDocumentSlug(documentSlug); err != nil {
 					return fmt.Errorf("--document: %w", err)
 				}
+			}
+			if err := gateway.ValidateIngestionMapping(mapping); err != nil {
+				return fmt.Errorf("--mapping: %w", err)
 			}
 			if versionLabel != "" {
 				if documentSlug == "" {
@@ -99,10 +108,11 @@ document cannot be moved to this one.`,
 			// OSCAL JSON (of any model, so the server can explain a
 			// non-catalog one) is sent as OSCAL; anything else, and every
 			// file under --raw, lets the server detect the format, which is
-			// what routes a PDF or other document to conversion.
+			// what routes a PDF or other document to conversion. A mapped
+			// file is ingestion's to read, whatever it looks like.
 			var content io.Reader = file
 			catalogFormat := pb.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED
-			if !raw {
+			if !raw && mapping == "" {
 				data, err := io.ReadAll(file)
 				if err != nil {
 					return fmt.Errorf("failed to read file: %w", err)
@@ -118,9 +128,10 @@ document cannot be moved to this one.`,
 			if err := stream.Send(&pb.StreamDocumentChunk{
 				Payload: &pb.StreamDocumentChunk_Metadata{
 					Metadata: &pb.StreamDocumentMetadata{
-						CatalogFormat: catalogFormat,
-						DocumentSlug:  documentSlug,
-						VersionLabel:  versionLabel,
+						CatalogFormat:    catalogFormat,
+						DocumentSlug:     documentSlug,
+						VersionLabel:     versionLabel,
+						IngestionMapping: mapping,
 					},
 				},
 			}); err != nil {
@@ -186,11 +197,13 @@ document cannot be moved to this one.`,
 			"crosscodex catalog import nist-800-53.json",
 			"crosscodex catalog import --raw nist-800-53.json",
 			"crosscodex catalog import --document nist-800-53 --version-label \"Rev 5\" nist-800-53.json",
+			"crosscodex catalog import --document asvs --mapping owasp-asvs-5.0.0-json asvs.json",
 		},
 	})
 
 	cmd.Flags().Bool("raw", false, "Let the server detect the format even of OSCAL JSON, instead of sending it as OSCAL")
 	cmd.Flags().String("document", "", "Store the catalog as a version of this document (slug: a-z, 0-9 and '-', e.g. nist-800-53); re-import under the same slug to supersede the current version")
+	cmd.Flags().String("mapping", "", "Read a structured JSON, CSV or XLSX source through this mapping, the ID of a mapping registered on the ingestion server (e.g. owasp-asvs-5.0.0-json)")
 	cmd.Flags().String("version-label", "", "Name this version, e.g. \"Rev 5\" (needs --document; default: the OSCAL metadata version, else import date and content hash)")
 
 	return cmd

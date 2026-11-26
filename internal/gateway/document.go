@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	"connectrpc.com/connect"
@@ -30,6 +31,7 @@ func (s *Service) SubmitDocument(ctx context.Context, req *connect.Request[pb.Su
 
 	convertReq := &pb.ConvertDocumentRequest{
 		Metadata: req.Msg.GetMetadata(),
+		Mapping:  req.Msg.GetIngestionMapping(),
 	}
 	switch src := req.Msg.Source.(type) {
 	case *pb.SubmitDocumentRequest_Content:
@@ -48,6 +50,33 @@ func (s *Service) SubmitDocument(ctx context.Context, req *connect.Request[pb.Su
 		versionLabel:  req.Msg.GetVersionLabel(),
 		rpcName:       "SubmitDocument",
 	})
+}
+
+// maxMappingIDLen and mappingIDPattern are crosscodex-ingestion's rule for a
+// mapping ID (its mapping-v1 schema), the ID of a mapping registered on the
+// ingestion server.
+const maxMappingIDLen = 128
+
+var mappingIDPattern = regexp.MustCompile(`^[a-z0-9]+([.-][a-z0-9]+)*$`)
+
+// maxMappingEcho bounds how much of a refused mapping ID an error quotes.
+const maxMappingEcho = 64
+
+// ValidateIngestionMapping checks that a non-empty mapping is well-formed
+// under crosscodex-ingestion's mapping-ID rule; the empty string, no mapping,
+// is valid. Whether the ID is registered is for the ingestion server to say.
+// The error quotes at most maxMappingEcho bytes of mapping, escaped.
+func ValidateIngestionMapping(mapping string) error {
+	if mapping == "" || (len(mapping) <= maxMappingIDLen && mappingIDPattern.MatchString(mapping)) {
+		return nil
+	}
+	quoted := fmt.Sprintf("%q", mapping)
+	if len(mapping) > maxMappingEcho {
+		quoted = fmt.Sprintf("%q (%d bytes)", mapping[:maxMappingEcho]+"...", len(mapping))
+	}
+	return fmt.Errorf("invalid mapping %s: a mapping ID is 1-128 lowercase letters and digits, separated by single '.' or '-'. "+
+		"Give the ID of a mapping registered on the ingestion server (for example owasp-asvs-5.0.0-json), "+
+		"or leave the mapping out to import OSCAL JSON or a document", quoted)
 }
 
 type processDocumentInput struct {
@@ -72,6 +101,20 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New(
 			"document is empty: the upload contained no content bytes, so there is nothing to import. "+
 				"Send the catalog file's contents (for example, an OSCAL JSON catalog) with the request"))
+	}
+	if err := ValidateIngestionMapping(input.convertReq.GetMapping()); err != nil {
+		s.recordMetrics(ctx, input.rpcName, start, connect.CodeInvalidArgument)
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	// ParseCatalog would reject the converted structured source as OSCAL or
+	// Gemara, after the conversion had stored a blob.
+	if mapping := input.convertReq.GetMapping(); mapping != "" && input.catalogFormat != pb.CatalogFormat_CATALOG_FORMAT_UNSPECIFIED {
+		s.recordMetrics(ctx, input.rpcName, start, connect.CodeInvalidArgument)
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+			"mapping %q cannot be combined with catalog format %s: a mapping converts a structured JSON, CSV or XLSX source, "+
+				"which is not an OSCAL or Gemara catalog. Leave the catalog format unspecified to import through the mapping, "+
+				"or leave the mapping out to import the file as %s",
+			mapping, input.catalogFormat, input.catalogFormat))
 	}
 
 	identity := identityFromContext(ctx)
@@ -128,6 +171,10 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 		byProducts["document_slug"] = input.documentSlug
 		byProducts["version_label"] = parseResp.Msg.GetVersionLabel()
 		byProducts["version"] = parseResp.Msg.GetVersion()
+	}
+	// The mapping decides what a structured source's controls are.
+	if mapping := input.convertReq.GetMapping(); mapping != "" {
+		byProducts["ingestion_mapping"] = mapping
 	}
 	if err := s.attestIngest(ctx, "gateway."+input.rpcName, docID, catalogID, input.convertReq.GetContent(), byProducts); err != nil {
 		// The cause can name storage buckets, hosts or key files (CWE-209):

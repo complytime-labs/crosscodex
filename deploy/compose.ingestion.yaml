@@ -30,9 +30,9 @@ services:
     # repository pinned to a commit; the tag repeats the commit so a rebuild
     # of another commit is a different image. Building it downloads the
     # Docling models (several GB) and takes a while the first time.
-    image: crosscodex-ingestion:d2864009864bdd1d60e3f5678105001d5a90b76a
+    image: crosscodex-ingestion:d68ecb0894eb13c4581a28755247eb80a4f248e6
     build:
-      context: https://github.com/complytime-labs/crosscodex-ingestion.git#d2864009864bdd1d60e3f5678105001d5a90b76a
+      context: https://github.com/complytime-labs/crosscodex-ingestion.git#d68ecb0894eb13c4581a28755247eb80a4f248e6
     restart: unless-stopped
     user: "65532:65532"
     group_add: ["10001"]

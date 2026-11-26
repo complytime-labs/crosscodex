@@ -15,6 +15,7 @@ import (
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/types"
 	"go.opentelemetry.io/otel/codes"
 
 	pb "github.com/complytime-labs/crosscodex/api/gen/go/crosscodex/v1"
@@ -156,6 +157,23 @@ var _ = Describe("catalog import attestation", func() {
 		Entry("an explicit label", "rev5"),
 		Entry("no explicit label (OSCAL or fallback label stored)", ""),
 		Entry("a requested label the catalog did not store", "other"),
+	)
+
+	DescribeTable("records the ingestion mapping in the ingest link only when the import named one",
+		func(mapping string, want types.GomegaMatcher) {
+			_, err := service(forA).SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{
+				Source:           &pb.SubmitDocumentRequest_Content{Content: content},
+				IngestionMapping: mapping,
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			link, err := gen.Verify(context.Background(), store.Objects()[ingestKey])
+			Expect(err).NotTo(HaveOccurred())
+			Expect(link.ByProducts).To(want)
+		},
+		Entry("a mapped import records its mapping ID", "owasp-asvs-5.0.0-json",
+			HaveKeyWithValue("ingestion_mapping", "owasp-asvs-5.0.0-json")),
+		Entry("an import without a mapping records no mapping key", "", Not(HaveKey("ingestion_mapping"))),
 	)
 
 	DescribeTable("fails the import, without leaking the cause, when the link cannot be stored",

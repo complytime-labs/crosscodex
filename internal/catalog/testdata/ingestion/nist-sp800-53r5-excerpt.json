@@ -1,0 +1,563 @@
+{
+  "schema_version": "1.3",
+  "elements": [
+    {
+      "element_id": "e-001",
+      "type": "paragraph",
+      "content": "a. Develop, document, and disseminate to [Assignment: organization-defined personnel or roles]:\n1. [Selection (one or more): Organization-level; Mission/business process-level; System-level] access control policy that:\n(a) Addresses purpose, scope, roles, responsibilities, management commitment, coordination among organizational entities, and compliance; and\n(b) Is consistent with applicable laws, executive orders, directives, regulations, policies, standards, and guidelines; and\n2. Procedures to facilitate the implementation of the access control policy and the associated access controls;\nb. Designate an [Assignment: organization-defined official] to manage the development, documentation, and dissemination of the access control policy and procedures; and\nc. Review and update the current access control:\n1. Policy [Assignment: organization-defined frequency] and following [Assignment: organization-defined events]; and\n2. Procedures [Assignment: organization-defined frequency] and following [Assignment: organization-defined events].",
+      "page": null,
+      "level": null,
+      "parent_id": null,
+      "style": {},
+      "id": "AC-1",
+      "role": "control",
+      "title": "Policy and Procedures",
+      "text": "a. Develop, document, and disseminate to [Assignment: organization-defined personnel or roles]:\n1. [Selection (one or more): Organization-level; Mission/business process-level; System-level] access control policy that:\n(a) Addresses purpose, scope, roles, responsibilities, management commitment, coordination among organizational entities, and compliance; and\n(b) Is consistent with applicable laws, executive orders, directives, regulations, policies, standards, and guidelines; and\n2. Procedures to facilitate the implementation of the access control policy and the associated access controls;\nb. Designate an [Assignment: organization-defined official] to manage the development, documentation, and dissemination of the access control policy and procedures; and\nc. Review and update the current access control:\n1. Policy [Assignment: organization-defined frequency] and following [Assignment: organization-defined events]; and\n2. Procedures [Assignment: organization-defined frequency] and following [Assignment: organization-defined events].",
+      "properties": {
+        "discussion": "Access control policy and procedures address the controls in the AC family that are implemented within systems and organizations. The risk management strategy is an important factor in establishing such policies and procedures. Policies and procedures contribute to security and privacy assurance. Therefore, it is important that security and privacy programs collaborate on the development of access control policy and procedures. Security and privacy program policies and procedures at the organization level are preferable, in general, and may obviate the need for mission- or system-specific policies and procedures. The policy can be included as part of the general security and privacy policy or be represented by multiple policies reflecting the complex nature of organizations. Procedures can be established for security and privacy programs, for mission or business processes, and for systems, if needed. Procedures describe how the policies or controls are implemented and can be directed at the individual or role that is the object of the procedure. Procedures can be documented in system security and privacy plans or in one or more separate documents. Events that may precipitate an update to access control policy and procedures include assessment or audit findings, security incidents or breaches, or changes in laws, executive orders, directives, regulations, policies, standards, and guidelines. Simply restating controls does not constitute an organizational policy or procedure.",
+        "related_controls": "IA-1, PM-9, PM-24, PS-8, SI-12 ."
+      }
+    },
+    {
+      "element_id": "e-002",
+      "type": "heading",
+      "content": "Account Management",
+      "page": null,
+      "level": 1,
+      "parent_id": null,
+      "style": {},
+      "id": "AC-2",
+      "role": "control",
+      "title": "Account Management",
+      "text": "a. Define and document the types of accounts allowed and specifically prohibited for use within the system;\nb. Assign account managers;\nc. Require [Assignment: organization-defined prerequisites and criteria] for group and role membership;\nd. Specify:\n1. Authorized users of the system;\n2. Group and role membership; and\n3. Access authorizations (i.e., privileges) and [Assignment: organization-defined attributes (as required)] for each account;\ne. Require approvals by [Assignment: organization-defined personnel or roles] for requests to create accounts;\nf. Create, enable, modify, disable, and remove accounts in accordance with [Assignment: organization-defined policy, procedures, prerequisites, and criteria];\ng. Monitor the use of accounts;\nh. Notify account managers and [Assignment: organization-defined personnel or roles] within:\n1. [Assignment: organization-defined time period] when accounts are no longer required;\n2. [Assignment: organization-defined time period] when users are terminated or transferred; and\n3. [Assignment: organization-defined time period] when system usage or need-to-know changes for an individual;\ni. Authorize access to the system based on:\n1. A valid access authorization;\n2. Intended system usage; and\n3. [Assignment: organization-defined attributes (as required)];\nj. Review accounts for compliance with account management requirements [Assignment: organization-defined frequency];\nk. Establish and implement a process for changing shared or group account authenticators (if deployed) when individuals are removed from the group; and\nl. Align account management processes with personnel termination and transfer processes.",
+      "properties": {
+        "discussion": "Examples of system account types include individual, shared, group, system, guest, anonymous, emergency, developer, temporary, and service. Identification of authorized system users and the specification of access privileges reflect the requirements in other controls in the security plan. Users requiring administrative privileges on system accounts receive additional scrutiny by organizational personnel responsible for approving such accounts and privileged access, including system owner, mission or business owner, senior agency information security officer, or senior agency official for privacy. Types of accounts that organizations may wish to prohibit due to increased risk include shared, group, emergency, anonymous, temporary, and guest accounts.\nWhere access involves personally identifiable information, security programs collaborate with the senior agency official for privacy to establish the specific conditions for group and role membership; specify authorized users, group and role membership, and access authorizations for each account; and create, adjust, or remove system accounts in accordance with organizational policies. Policies can include such information as account expiration dates or other factors that trigger the disabling of accounts. Organizations may choose to define access privileges or other attributes by account, type of account, or a combination of the two. Examples of other attributes required for authorizing access include restrictions on time of day, day of week, and point of origin. In defining other system account attributes, organizations consider system-related requirements and mission/business requirements. Failure to consider these factors could affect system availability.\nTemporary and emergency accounts are intended for short-term use. Organizations establish temporary accounts as part of normal account activation procedures when there is a need for short-term accounts without the demand for immediacy in account activation. Organizations establish emergency accounts in response to crisis situations and with the need for rapid account activation. Therefore, emergency account activation may bypass normal account authorization processes. Emergency and temporary accounts are not to be confused with infrequently used accounts, including local logon accounts used for special tasks or when network resources are unavailable (may also be known as accounts of last resort). Such accounts remain available and are not subject to automatic disabling or removal dates. Conditions for disabling or deactivating accounts include when shared/group, emergency, or temporary accounts are no longer required and when individuals are transferred or terminated. Changing shared/group authenticators when members leave the group is intended to ensure that former group members do not retain access to the shared or group account. Some types of system accounts may require specialized training.",
+        "related_controls": "AC-3, AC-5, AC-6, AC-17, AC-18, AC-20, AC-24, AU-2, AU-12, CM-5, IA-2, IA-4, IA-5, IA-8, MA-3, MA-5, PE-2, PL-4, PS-2, PS-4, PS-5, PS-7, PT-2, PT-3, SC-7, SC-12, SC-13, SC-37."
+      }
+    },
+    {
+      "element_id": "e-003",
+      "type": "paragraph",
+      "content": "a. Define and document the types of accounts allowed and specifically prohibited for use within the system;\nb. Assign account managers;\nc. Require [Assignment: organization-defined prerequisites and criteria] for group and role membership;\nd. Specify:\n1. Authorized users of the system;\n2. Group and role membership; and\n3. Access authorizations (i.e., privileges) and [Assignment: organization-defined attributes (as required)] for each account;\ne. Require approvals by [Assignment: organization-defined personnel or roles] for requests to create accounts;\nf. Create, enable, modify, disable, and remove accounts in accordance with [Assignment: organization-defined policy, procedures, prerequisites, and criteria];\ng. Monitor the use of accounts;\nh. Notify account managers and [Assignment: organization-defined personnel or roles] within:\n1. [Assignment: organization-defined time period] when accounts are no longer required;\n2. [Assignment: organization-defined time period] when users are terminated or transferred; and\n3. [Assignment: organization-defined time period] when system usage or need-to-know changes for an individual;\ni. Authorize access to the system based on:\n1. A valid access authorization;\n2. Intended system usage; and\n3. [Assignment: organization-defined attributes (as required)];\nj. Review accounts for compliance with account management requirements [Assignment: organization-defined frequency];\nk. Establish and implement a process for changing shared or group account authenticators (if deployed) when individuals are removed from the group; and\nl. Align account management processes with personnel termination and transfer processes.",
+      "page": null,
+      "level": null,
+      "parent_id": "e-002",
+      "style": {},
+      "id": null
+    },
+    {
+      "element_id": "e-004",
+      "type": "paragraph",
+      "content": "Support the management of system accounts using [Assignment: organization-defined automated mechanisms].",
+      "page": null,
+      "level": null,
+      "parent_id": "e-002",
+      "style": {},
+      "id": "AC-2(1)",
+      "role": "control",
+      "title": "Account Management | Automated System Account Management",
+      "text": "Support the management of system accounts using [Assignment: organization-defined automated mechanisms].",
+      "properties": {
+        "discussion": "Automated system account management includes using automated mechanisms to create, enable, modify, disable, and remove accounts; notify account managers when an account is created, enabled, modified, disabled, or removed, or when users are terminated or transferred; monitor system account usage; and report atypical system account usage. Automated mechanisms can include internal system functions and email, telephonic, and text messaging notifications.",
+        "related_controls": "None."
+      }
+    },
+    {
+      "element_id": "e-005",
+      "type": "paragraph",
+      "content": "Automatically [Selection: remove; disable] temporary and emergency accounts after [Assignment: organization-defined time period for each type of account].",
+      "page": null,
+      "level": null,
+      "parent_id": "e-002",
+      "style": {},
+      "id": "AC-2(2)",
+      "role": "control",
+      "title": "Account Management | Automated Temporary and Emergency Account Management",
+      "text": "Automatically [Selection: remove; disable] temporary and emergency accounts after [Assignment: organization-defined time period for each type of account].",
+      "properties": {
+        "discussion": "Management of temporary and emergency accounts includes the removal or disabling of such accounts automatically after a predefined time period rather than at the convenience of the system administrator. Automatic removal or disabling of accounts provides a more consistent implementation.",
+        "related_controls": "None."
+      }
+    },
+    {
+      "element_id": "e-006",
+      "type": "paragraph",
+      "content": "Disable accounts within [Assignment: organization-defined time period] when the accounts: \n(a) Have expired;\n(b) Are no longer associated with a user or individual;\n(c) Are in violation of organizational policy; or\n(d) Have been inactive for [Assignment: organization-defined time period].",
+      "page": null,
+      "level": null,
+      "parent_id": "e-002",
+      "style": {},
+      "id": "AC-2(3)",
+      "role": "control",
+      "title": "Account Management | Disable Accounts",
+      "text": "Disable accounts within [Assignment: organization-defined time period] when the accounts: \n(a) Have expired;\n(b) Are no longer associated with a user or individual;\n(c) Are in violation of organizational policy; or\n(d) Have been inactive for [Assignment: organization-defined time period].",
+      "properties": {
+        "discussion": "Disabling expired, inactive, or otherwise anomalous accounts supports the concepts of least privilege and least functionality which reduce the attack surface of the system.",
+        "related_controls": "None."
+      }
+    },
+    {
+      "element_id": "e-007",
+      "type": "paragraph",
+      "content": "Automatically audit account creation, modification, enabling, disabling, and removal actions.",
+      "page": null,
+      "level": null,
+      "parent_id": "e-002",
+      "style": {},
+      "id": "AC-2(4)",
+      "role": "control",
+      "title": "Account Management | Automated Audit Actions",
+      "text": "Automatically audit account creation, modification, enabling, disabling, and removal actions.",
+      "properties": {
+        "discussion": "Account management audit records are defined in accordance with AU-2 and reviewed, analyzed, and reported in accordance with AU-6.",
+        "related_controls": "AU-2, AU-6."
+      }
+    },
+    {
+      "element_id": "e-008",
+      "type": "paragraph",
+      "content": "Require that users log out when [Assignment: organization-defined time period of expected inactivity or description of when to log out].",
+      "page": null,
+      "level": null,
+      "parent_id": "e-002",
+      "style": {},
+      "id": "AC-2(5)",
+      "role": "control",
+      "title": "Account Management | Inactivity Logout",
+      "text": "Require that users log out when [Assignment: organization-defined time period of expected inactivity or description of when to log out].",
+      "properties": {
+        "discussion": "Inactivity logout is behavior- or policy-based and requires users to take physical action to log out when they are expecting inactivity longer than the defined period. Automatic enforcement of inactivity logout is addressed by AC-11.",
+        "related_controls": "AC-11."
+      }
+    },
+    {
+      "element_id": "e-009",
+      "type": "paragraph",
+      "content": "Implement [Assignment: organization-defined dynamic privilege management capabilities].",
+      "page": null,
+      "level": null,
+      "parent_id": "e-002",
+      "style": {},
+      "id": "AC-2(6)",
+      "role": "control",
+      "title": "Account Management | Dynamic Privilege Management",
+      "text": "Implement [Assignment: organization-defined dynamic privilege management capabilities].",
+      "properties": {
+        "discussion": "In contrast to access control approaches that employ static accounts and predefined user privileges, dynamic access control approaches rely on runtime access control decisions facilitated by dynamic privilege management, such as attribute-based access control. While user identities remain relatively constant over time, user privileges typically change more frequently based on ongoing mission or business requirements and the operational needs of organizations. An example of dynamic privilege management is the immediate revocation of privileges from users as opposed to requiring that users terminate and restart their sessions to reflect changes in privileges. Dynamic privilege management can also include mechanisms that change user privileges based on dynamic rules as opposed to editing specific user profiles. Examples include automatic adjustments of user privileges if they are operating out of their normal work times, if their job function or assignment changes, or if systems are under duress or in emergency situations. Dynamic privilege management includes the effects of privilege changes, for example, when there are changes to encryption keys used for communications.",
+        "related_controls": "AC-16."
+      }
+    },
+    {
+      "element_id": "e-010",
+      "type": "paragraph",
+      "content": "(a) Establish and administer privileged user accounts in accordance with [Selection: a role-based access scheme; an attribute-based access scheme];\n(b) Monitor privileged role or attribute assignments;\n(c) Monitor changes to roles or attributes; and\n(d) Revoke access when privileged role or attribute assignments are no longer appropriate.",
+      "page": null,
+      "level": null,
+      "parent_id": "e-002",
+      "style": {},
+      "id": "AC-2(7)",
+      "role": "control",
+      "title": "Account Management | Privileged User Accounts",
+      "text": "(a) Establish and administer privileged user accounts in accordance with [Selection: a role-based access scheme; an attribute-based access scheme];\n(b) Monitor privileged role or attribute assignments;\n(c) Monitor changes to roles or attributes; and\n(d) Revoke access when privileged role or attribute assignments are no longer appropriate.",
+      "properties": {
+        "discussion": "Privileged roles are organization-defined roles assigned to individuals that allow those individuals to perform certain security-relevant functions that ordinary users are not authorized to perform. Privileged roles include key management, account management, database administration, system and network administration, and web administration. A role-based access scheme organizes permitted system access and privileges into roles. In contrast, an attribute-based access scheme specifies allowed system access and privileges based on attributes.",
+        "related_controls": "None."
+      }
+    },
+    {
+      "element_id": "e-011",
+      "type": "paragraph",
+      "content": "Create, activate, manage, and deactivate [Assignment: organization-defined system accounts] dynamically.",
+      "page": null,
+      "level": null,
+      "parent_id": "e-002",
+      "style": {},
+      "id": "AC-2(8)",
+      "role": "control",
+      "title": "Account Management | Dynamic Account Management",
+      "text": "Create, activate, manage, and deactivate [Assignment: organization-defined system accounts] dynamically.",
+      "properties": {
+        "discussion": "Approaches for dynamically creating, activating, managing, and deactivating system accounts rely on automatically provisioning the accounts at runtime for entities that were previously unknown. Organizations plan for the dynamic management, creation, activation, and deactivation of system accounts by establishing trust relationships, business rules, and mechanisms with appropriate authorities to validate related authorizations and privileges.",
+        "related_controls": "AC-16."
+      }
+    },
+    {
+      "element_id": "e-012",
+      "type": "paragraph",
+      "content": "Only permit the use of shared and group accounts that meet [Assignment: organization-defined conditions for establishing shared and group accounts].",
+      "page": null,
+      "level": null,
+      "parent_id": "e-002",
+      "style": {},
+      "id": "AC-2(9)",
+      "role": "control",
+      "title": "Account Management | Restrictions on Use of Shared and Group Accounts",
+      "text": "Only permit the use of shared and group accounts that meet [Assignment: organization-defined conditions for establishing shared and group accounts].",
+      "properties": {
+        "discussion": "Before permitting the use of shared or group accounts, organizations consider the increased risk due to the lack of accountability with such accounts.",
+        "related_controls": "None."
+      }
+    },
+    {
+      "element_id": "e-013",
+      "type": "paragraph",
+      "content": "Enforce [Assignment: organization-defined circumstances and/or usage conditions] for  [Assignment: organization-defined system accounts].",
+      "page": null,
+      "level": null,
+      "parent_id": "e-002",
+      "style": {},
+      "id": "AC-2(11)",
+      "role": "control",
+      "title": "Account Management | Usage Conditions",
+      "text": "Enforce [Assignment: organization-defined circumstances and/or usage conditions] for  [Assignment: organization-defined system accounts].",
+      "properties": {
+        "discussion": "Specifying and enforcing usage conditions helps to enforce the principle of least privilege, increase user accountability, and enable effective account monitoring. Account monitoring includes alerts generated if the account is used in violation of organizational parameters. Organizations can describe specific conditions or circumstances under which system accounts can be used, such as by restricting usage to certain days of the week, time of day, or specific durations of time.",
+        "related_controls": "None."
+      }
+    },
+    {
+      "element_id": "e-014",
+      "type": "paragraph",
+      "content": "(a) Monitor system accounts for [Assignment: organization-defined atypical usage]; and\n(b) Report atypical usage of system accounts to [Assignment: organization-defined personnel or roles].",
+      "page": null,
+      "level": null,
+      "parent_id": "e-002",
+      "style": {},
+      "id": "AC-2(12)",
+      "role": "control",
+      "title": "Account Management | Account Monitoring for Atypical Usage",
+      "text": "(a) Monitor system accounts for [Assignment: organization-defined atypical usage]; and\n(b) Report atypical usage of system accounts to [Assignment: organization-defined personnel or roles].",
+      "properties": {
+        "discussion": "Atypical usage includes accessing systems at certain times of the day or from locations that are not consistent with the normal usage patterns of individuals. Monitoring for atypical usage may reveal rogue behavior by individuals or an attack in progress. Account monitoring may inadvertently create privacy risks since data collected to identify atypical usage may reveal previously unknown information about the behavior of individuals. Organizations assess and document privacy risks from monitoring accounts for atypical usage in their privacy impact assessment and make determinations that are in alignment with their privacy program plan.",
+        "related_controls": "AU-6, AU-7, CA-7, IR-8, SI-4."
+      }
+    },
+    {
+      "element_id": "e-015",
+      "type": "paragraph",
+      "content": "Disable accounts of individuals within [Assignment: organization-defined time period] of discovery of [Assignment: organization-defined significant risks].",
+      "page": null,
+      "level": null,
+      "parent_id": "e-002",
+      "style": {},
+      "id": "AC-2(13)",
+      "role": "control",
+      "title": "Account Management | Disable Accounts for High-risk Individuals",
+      "text": "Disable accounts of individuals within [Assignment: organization-defined time period] of discovery of [Assignment: organization-defined significant risks].",
+      "properties": {
+        "discussion": "Users who pose a significant security and/or privacy risk include individuals for whom reliable evidence indicates either the intention to use authorized access to systems to cause harm or through whom adversaries will cause harm. Such harm includes adverse impacts to organizational operations, organizational assets, individuals, other organizations, or the Nation. Close coordination among system administrators, legal staff, human resource managers, and authorizing officials is essential when disabling system accounts for high-risk individuals.",
+        "related_controls": "AU-6, SI-4."
+      }
+    },
+    {
+      "element_id": "e-016",
+      "type": "paragraph",
+      "content": "[Withdrawn: Incorporated into AC-2k.]",
+      "page": null,
+      "level": null,
+      "parent_id": "e-002",
+      "style": {},
+      "id": "AC-2(10)",
+      "role": "control",
+      "title": "Account Management | Shared and Group Account Credential Change",
+      "text": "[Withdrawn: Incorporated into AC-2k.]",
+      "properties": {}
+    },
+    {
+      "element_id": "e-018",
+      "type": "heading",
+      "content": "Access Enforcement",
+      "page": null,
+      "level": 1,
+      "parent_id": null,
+      "style": {},
+      "id": "AC-3",
+      "role": "control",
+      "title": "Access Enforcement",
+      "text": "Enforce approved authorizations for logical access to information and system resources in accordance with applicable access control policies.",
+      "properties": {
+        "discussion": "Access control policies control access between active entities or subjects (i.e., users or processes acting on behalf of users) and passive entities or objects (i.e., devices, files, records, domains) in organizational systems. In addition to enforcing authorized access at the system level and recognizing that systems can host many applications and services in support of mission and business functions, access enforcement mechanisms can also be employed at the application and service level to provide increased information security and privacy. In contrast to logical access controls that are implemented within the system, physical access controls are addressed by the controls in the Physical and Environmental Protection (PE) family.",
+        "related_controls": "AC-2, AC-4, AC-5, AC-6, AC-16, AC-17, AC-18, AC-19, AC-20, AC-21, AC-22, AC-24, AC-25, AT-2, AT-3, AU-9, CA-9, CM-5, CM-11, IA-2, IA-5, IA-6, IA-7, IA-11, MA-3, MA-4, MA-5, MP-4, PM-2, PS-3, PT-2, PT-3, SA-17, SC-2, SC-3, SC-4, SC-12, SC-13, SC-28, SC-31, SC-34, SI-4, SI-8."
+      }
+    },
+    {
+      "element_id": "e-019",
+      "type": "paragraph",
+      "content": "Enforce approved authorizations for logical access to information and system resources in accordance with applicable access control policies.",
+      "page": null,
+      "level": null,
+      "parent_id": "e-018",
+      "style": {},
+      "id": null
+    },
+    {
+      "element_id": "e-020",
+      "type": "paragraph",
+      "content": "Enforce dual authorization for [Assignment: organization-defined privileged commands and/or other organization-defined actions].",
+      "page": null,
+      "level": null,
+      "parent_id": "e-018",
+      "style": {},
+      "id": "AC-3(2)",
+      "role": "control",
+      "title": "Access Enforcement | Dual Authorization",
+      "text": "Enforce dual authorization for [Assignment: organization-defined privileged commands and/or other organization-defined actions].",
+      "properties": {
+        "discussion": "Dual authorization, also known as two-person control, reduces risk related to insider threats. Dual authorization mechanisms require the approval of two authorized individuals to execute. To reduce the risk of collusion, organizations consider rotating dual authorization duties. Organizations consider the risk associated with implementing dual authorization mechanisms when immediate responses are necessary to ensure public and environmental safety.",
+        "related_controls": "CP-9, MP-6."
+      }
+    },
+    {
+      "element_id": "e-021",
+      "type": "paragraph",
+      "content": "Enforce [Assignment: organization-defined mandatory access control policy] over the set of covered subjects and objects specified in the policy, and where the policy:\n(a) Is uniformly enforced across the covered subjects and objects within the system; \n(b) Specifies that a subject that has been granted access to information is constrained from doing any of the following;\n(1) Passing the information to unauthorized subjects or objects;\n(2) Granting its privileges to other subjects; \n(3) Changing one or more security attributes (specified by the policy) on subjects, objects, the system, or system components;\n(4) Choosing the security attributes and attribute values (specified by the policy) to be associated with newly created or modified objects; and\n(5) Changing the rules governing access control; and\n(c) Specifies that [Assignment: organization-defined subjects] may explicitly be granted [Assignment: organization-defined privileges] such that they are not limited by any defined subset (or all) of the above constraints.",
+      "page": null,
+      "level": null,
+      "parent_id": "e-018",
+      "style": {},
+      "id": "AC-3(3)",
+      "role": "control",
+      "title": "Access Enforcement | Mandatory Access Control",
+      "text": "Enforce [Assignment: organization-defined mandatory access control policy] over the set of covered subjects and objects specified in the policy, and where the policy:\n(a) Is uniformly enforced across the covered subjects and objects within the system; \n(b) Specifies that a subject that has been granted access to information is constrained from doing any of the following;\n(1) Passing the information to unauthorized subjects or objects;\n(2) Granting its privileges to other subjects; \n(3) Changing one or more security attributes (specified by the policy) on subjects, objects, the system, or system components;\n(4) Choosing the security attributes and attribute values (specified by the policy) to be associated with newly created or modified objects; and\n(5) Changing the rules governing access control; and\n(c) Specifies that [Assignment: organization-defined subjects] may explicitly be granted [Assignment: organization-defined privileges] such that they are not limited by any defined subset (or all) of the above constraints.",
+      "properties": {
+        "discussion": "Mandatory access control is a type of nondiscretionary access control. Mandatory access control policies constrain what actions subjects can take with information obtained from objects for which they have already been granted access. This prevents the subjects from passing the information to unauthorized subjects and objects. Mandatory access control policies constrain actions that subjects can take with respect to the propagation of access control privileges; that is, a subject with a privilege cannot pass that privilege to other subjects. The policy is uniformly enforced over all subjects and objects to which the system has control. Otherwise, the access control policy can be circumvented. This enforcement is provided by an implementation that meets the reference monitor concept as described in AC-25. The policy is bounded by the system (i.e., once the information is passed outside of the control of the system, additional means may be required to ensure that the constraints on the information remain in effect).\nThe trusted subjects described above are granted privileges consistent with the concept of least privilege (see AC-6). Trusted subjects are only given the minimum privileges necessary for satisfying organizational mission/business needs relative to the above policy. The control is most applicable when there is a mandate that establishes a policy regarding access to controlled unclassified information or classified information and some users of the system are not authorized access to all such information resident in the system. Mandatory access control can operate in conjunction with discretionary access control as described in AC-3(4). A subject constrained in its operation by mandatory access control policies can still operate under the less rigorous constraints of AC-3(4), but mandatory access control policies take precedence over the less rigorous constraints of AC-3(4). For example, while a mandatory access control policy imposes a constraint that prevents a subject from passing information to another subject operating at a different impact or classification level, AC-3(4) permits the subject to pass the information to any other subject with the same impact or classification level as the subject. Examples of mandatory access control policies include the Bell-LaPadula policy to protect confidentiality of information and the Biba policy to protect the integrity of information.",
+        "related_controls": "SC-7."
+      }
+    },
+    {
+      "element_id": "e-022",
+      "type": "paragraph",
+      "content": "Enforce [Assignment: organization-defined discretionary access control policy] over the set of covered subjects and objects specified in the policy, and where the policy specifies that a subject that has been granted access to information can do one or more of the following:\n(a) Pass the information to any other subjects or objects;\n(b) Grant its privileges to other subjects; \n(c) Change security attributes on subjects, objects, the system, or the system’s components;\n(d) Choose the security attributes to be associated with newly created or revised objects; or\n(e) Change the rules governing access control.",
+      "page": null,
+      "level": null,
+      "parent_id": "e-018",
+      "style": {},
+      "id": "AC-3(4)",
+      "role": "control",
+      "title": "Access Enforcement | Discretionary Access Control",
+      "text": "Enforce [Assignment: organization-defined discretionary access control policy] over the set of covered subjects and objects specified in the policy, and where the policy specifies that a subject that has been granted access to information can do one or more of the following:\n(a) Pass the information to any other subjects or objects;\n(b) Grant its privileges to other subjects; \n(c) Change security attributes on subjects, objects, the system, or the system’s components;\n(d) Choose the security attributes to be associated with newly created or revised objects; or\n(e) Change the rules governing access control.",
+      "properties": {
+        "discussion": "When discretionary access control policies are implemented, subjects are not constrained with regard to what actions they can take with information for which they have already been granted access. Thus, subjects that have been granted access to information are not prevented from passing the information to other subjects or objects (i.e., subjects have the discretion to pass). Discretionary access control can operate in conjunction with mandatory access control as described in AC-3(3) and AC-3(15). A subject that is constrained in its operation by mandatory access control policies can still operate under the less rigorous constraints of discretionary access control. Therefore, while AC-3(3) imposes constraints that prevent a subject from passing information to another subject operating at a different impact or classification level, AC-3(4) permits the subject to pass the information to any subject at the same impact or classification level. The policy is bounded by the system. Once the information is passed outside of system control, additional means may be required to ensure that the constraints remain in effect. While traditional definitions of discretionary access control require identity-based access control, that limitation is not required for this particular use of discretionary access control.",
+        "related_controls": "None."
+      }
+    },
+    {
+      "element_id": "e-023",
+      "type": "paragraph",
+      "content": "Prevent access to [Assignment: organization-defined security-relevant information] except during secure, non-operable system states.",
+      "page": null,
+      "level": null,
+      "parent_id": "e-018",
+      "style": {},
+      "id": "AC-3(5)",
+      "role": "control",
+      "title": "Access Enforcement | Security-relevant Information",
+      "text": "Prevent access to [Assignment: organization-defined security-relevant information] except during secure, non-operable system states.",
+      "properties": {
+        "discussion": "Security-relevant information is information within systems that can potentially impact the operation of security functions or the provision of security services in a manner that could result in failure to enforce system security and privacy policies or maintain the separation of code and data. Security-relevant information includes access control lists, filtering rules for routers or firewalls, configuration parameters for security services, and cryptographic key management information. Secure, non-operable system states include the times in which systems are not performing mission or business-related processing, such as when the system is offline for maintenance, boot-up, troubleshooting, or shut down.",
+        "related_controls": "CM-6, SC-39."
+      }
+    },
+    {
+      "element_id": "e-024",
+      "type": "paragraph",
+      "content": "Enforce a role-based access control policy over defined subjects and objects and control access based upon [Assignment: organization-defined roles and users authorized to assume such roles].",
+      "page": null,
+      "level": null,
+      "parent_id": "e-018",
+      "style": {},
+      "id": "AC-3(7)",
+      "role": "control",
+      "title": "Access Enforcement | Role-based Access Control",
+      "text": "Enforce a role-based access control policy over defined subjects and objects and control access based upon [Assignment: organization-defined roles and users authorized to assume such roles].",
+      "properties": {
+        "discussion": "Role-based access control (RBAC) is an access control policy that enforces access to objects and system functions based on the defined role (i.e., job function) of the subject. Organizations can create specific roles based on job functions and the authorizations (i.e., privileges) to perform needed operations on the systems associated with the organization-defined roles. When users are assigned to specific roles, they inherit the authorizations or privileges defined for those roles. RBAC simplifies privilege administration for organizations because privileges are not assigned directly to every user (which can be a large number of individuals) but are instead acquired through role assignments. RBAC can also increase privacy and security risk if individuals assigned to a role are given access to information beyond what they need to support organizational missions or business functions. RBAC can be implemented as a mandatory or discretionary form of access control. For organizations implementing RBAC with mandatory access controls, the requirements in AC-3(3) define the scope of the subjects and objects covered by the policy.",
+        "related_controls": "None."
+      }
+    },
+    {
+      "element_id": "e-025",
+      "type": "paragraph",
+      "content": "Enforce the revocation of access authorizations resulting from changes to the security attributes of subjects and objects based on [Assignment: organization-defined rules governing the timing of revocations of access authorizations].",
+      "page": null,
+      "level": null,
+      "parent_id": "e-018",
+      "style": {},
+      "id": "AC-3(8)",
+      "role": "control",
+      "title": "Access Enforcement | Revocation of Access Authorizations",
+      "text": "Enforce the revocation of access authorizations resulting from changes to the security attributes of subjects and objects based on [Assignment: organization-defined rules governing the timing of revocations of access authorizations].",
+      "properties": {
+        "discussion": "Revocation of access rules may differ based on the types of access revoked. For example, if a subject (i.e., user or process acting on behalf of a user) is removed from a group, access may not be revoked until the next time the object is opened or the next time the subject attempts to access the object. Revocation based on changes to security labels may take effect immediately. Organizations provide alternative approaches on how to make revocations immediate if systems cannot provide such capability and immediate revocation is necessary.",
+        "related_controls": "None."
+      }
+    },
+    {
+      "element_id": "e-026",
+      "type": "paragraph",
+      "content": "Release information outside of the system only if:\n(a) The receiving [Assignment: organization-defined system or system component] provides [Assignment: organization-defined controls]; and\n(b) [Assignment: organization-defined controls] are used to validate the appropriateness of the information designated for release.",
+      "page": null,
+      "level": null,
+      "parent_id": "e-018",
+      "style": {},
+      "id": "AC-3(9)",
+      "role": "control",
+      "title": "Access Enforcement | Controlled Release",
+      "text": "Release information outside of the system only if:\n(a) The receiving [Assignment: organization-defined system or system component] provides [Assignment: organization-defined controls]; and\n(b) [Assignment: organization-defined controls] are used to validate the appropriateness of the information designated for release.",
+      "properties": {
+        "discussion": "Organizations can only directly protect information when it resides within the system. Additional controls may be needed to ensure that organizational information is adequately protected once it is transmitted outside of the system. In situations where the system is unable to determine the adequacy of the protections provided by external entities, as a mitigation measure, organizations procedurally determine whether the external systems are providing adequate controls. The means used to determine the adequacy of controls provided by external systems include conducting periodic assessments (inspections/tests), establishing agreements between the organization and its counterpart organizations, or some other process. The means used by external entities to protect the information received need not be the same as those used by the organization, but the means employed are sufficient to provide consistent adjudication of the security and privacy policy to protect the information and individuals’ privacy.\nControlled release of information requires systems to implement technical or procedural means to validate the information prior to releasing it to external systems. For example, if the system passes information to a system controlled by another organization, technical means are employed to validate that the security and privacy attributes associated with the exported information are appropriate for the receiving system. Alternatively, if the system passes information to a printer in organization-controlled space, procedural means can be employed to ensure that only authorized individuals gain access to the printer.",
+        "related_controls": "CA-3, PT-7, PT-8, SA-9, SC-16."
+      }
+    },
+    {
+      "element_id": "e-027",
+      "type": "paragraph",
+      "content": "Employ an audited override of automated access control mechanisms under [Assignment: organization-defined conditions] by [Assignment: organization-defined roles].",
+      "page": null,
+      "level": null,
+      "parent_id": "e-018",
+      "style": {},
+      "id": "AC-3(10)",
+      "role": "control",
+      "title": "Access Enforcement | Audited Override of Access Control Mechanisms",
+      "text": "Employ an audited override of automated access control mechanisms under [Assignment: organization-defined conditions] by [Assignment: organization-defined roles].",
+      "properties": {
+        "discussion": "In certain situations, such as when there is a threat to human life or an event that threatens the organization’s ability to carry out critical missions or business functions, an override capability for access control mechanisms may be needed. Override conditions are defined by organizations and used only in those limited circumstances. Audit events are defined in AU-2. Audit records are generated in AU-12.",
+        "related_controls": "AU-2, AU-6, AU-10, AU-12, AU-14."
+      }
+    },
+    {
+      "element_id": "e-028",
+      "type": "paragraph",
+      "content": "Restrict access to data repositories containing [Assignment: organization-defined information types].",
+      "page": null,
+      "level": null,
+      "parent_id": "e-018",
+      "style": {},
+      "id": "AC-3(11)",
+      "role": "control",
+      "title": "Access Enforcement | Restrict Access to Specific Information Types",
+      "text": "Restrict access to data repositories containing [Assignment: organization-defined information types].",
+      "properties": {
+        "discussion": "Restricting access to specific information is intended to provide flexibility regarding access control of specific information types within a system. For example, role-based access could be employed to allow access to only a specific type of personally identifiable information within a database rather than allowing access to the database in its entirety. Other examples include restricting access to cryptographic keys, authentication information, and selected system information.",
+        "related_controls": "CM-8, CM-12, CM-13, PM-5."
+      }
+    },
+    {
+      "element_id": "e-029",
+      "type": "paragraph",
+      "content": "(a) Require applications to assert, as part of the installation process, the access needed to the following system applications and functions: [Assignment: organization-defined system applications and functions];\n(b) Provide an enforcement mechanism to prevent unauthorized access; and\n(c) Approve access changes after initial installation of the application.",
+      "page": null,
+      "level": null,
+      "parent_id": "e-018",
+      "style": {},
+      "id": "AC-3(12)",
+      "role": "control",
+      "title": "Access Enforcement | Assert and Enforce Application Access",
+      "text": "(a) Require applications to assert, as part of the installation process, the access needed to the following system applications and functions: [Assignment: organization-defined system applications and functions];\n(b) Provide an enforcement mechanism to prevent unauthorized access; and\n(c) Approve access changes after initial installation of the application.",
+      "properties": {
+        "discussion": "Asserting and enforcing application access is intended to address applications that need to access existing system applications and functions, including user contacts, global positioning systems, cameras, keyboards, microphones, networks, phones, or other files.",
+        "related_controls": "CM-7."
+      }
+    },
+    {
+      "element_id": "e-030",
+      "type": "paragraph",
+      "content": "Enforce attribute-based access control policy over defined subjects and objects and control access based upon [Assignment: organization-defined attributes to assume access permissions].",
+      "page": null,
+      "level": null,
+      "parent_id": "e-018",
+      "style": {},
+      "id": "AC-3(13)",
+      "role": "control",
+      "title": "Access Enforcement | Attribute-based Access Control",
+      "text": "Enforce attribute-based access control policy over defined subjects and objects and control access based upon [Assignment: organization-defined attributes to assume access permissions].",
+      "properties": {
+        "discussion": "Attribute-based access control is an access control policy that restricts system access to authorized users based on specified organizational attributes (e.g., job function, identity), action attributes (e.g., read, write, delete), environmental attributes (e.g., time of day, location), and resource attributes (e.g., classification of a document). Organizations can create rules based on attributes and the authorizations (i.e., privileges) to perform needed operations on the systems associated with organization-defined attributes and rules. When users are assigned to attributes defined in attribute-based access control policies or rules, they can be provisioned to a system with the appropriate privileges or dynamically granted access to a protected resource. Attribute-based access control can be implemented as either a mandatory or discretionary form of access control. When implemented with mandatory access controls, the requirements in AC-3(3) define the scope of the subjects and objects covered by the policy.",
+        "related_controls": "None."
+      }
+    },
+    {
+      "element_id": "e-031",
+      "type": "paragraph",
+      "content": "Provide [Assignment: organization-defined mechanisms] to enable individuals to have access to the following elements of their personally identifiable information: [Assignment: organization-defined elements].",
+      "page": null,
+      "level": null,
+      "parent_id": "e-018",
+      "style": {},
+      "id": "AC-3(14)",
+      "role": "control",
+      "title": "Access Enforcement | Individual Access",
+      "text": "Provide [Assignment: organization-defined mechanisms] to enable individuals to have access to the following elements of their personally identifiable information: [Assignment: organization-defined elements].",
+      "properties": {
+        "discussion": "Individual access affords individuals the ability to review personally identifiable information about them held within organizational records, regardless of format. Access helps individuals to develop an understanding about how their personally identifiable information is being processed. It can also help individuals ensure that their data is accurate. Access mechanisms can include request forms and application interfaces. For federal agencies, PRIVACT processes can be located in systems of record notices and on agency websites. Access to certain types of records may not be appropriate (e.g., for federal agencies, law enforcement records within a system of records may be exempt from disclosure under the PRIVACT) or may require certain levels of authentication assurance. Organizational personnel consult with the senior agency official for privacy and legal counsel to determine appropriate mechanisms and access rights or limitations.",
+        "related_controls": "IA-8, PM-22, PM-20, PM-21, PT-6."
+      }
+    },
+    {
+      "element_id": "e-032",
+      "type": "paragraph",
+      "content": "(a) Enforce [Assignment: organization-defined mandatory access control policy] over the set of covered subjects and objects specified in the policy; and\n(b) Enforce [Assignment: organization-defined discretionary access control policy] over the set of covered subjects and objects specified in the policy.",
+      "page": null,
+      "level": null,
+      "parent_id": "e-018",
+      "style": {},
+      "id": "AC-3(15)",
+      "role": "control",
+      "title": "Access Enforcement | Discretionary and Mandatory Access Control",
+      "text": "(a) Enforce [Assignment: organization-defined mandatory access control policy] over the set of covered subjects and objects specified in the policy; and\n(b) Enforce [Assignment: organization-defined discretionary access control policy] over the set of covered subjects and objects specified in the policy.",
+      "properties": {
+        "discussion": "Simultaneously implementing a mandatory access control policy and a discretionary access control policy can provide additional protection against the unauthorized execution of code by users or processes acting on behalf of users. This helps prevent a single compromised user or process from compromising the entire system.",
+        "related_controls": "SC-2, SC-3, AC-4."
+      }
+    },
+    {
+      "element_id": "e-033",
+      "type": "paragraph",
+      "content": "[Withdrawn: Incorporated into AC-6.]",
+      "page": null,
+      "level": null,
+      "parent_id": "e-018",
+      "style": {},
+      "id": "AC-3(1)",
+      "role": "control",
+      "title": "Access Enforcement | Restricted Access to Privileged Functions",
+      "text": "[Withdrawn: Incorporated into AC-6.]",
+      "properties": {}
+    },
+    {
+      "element_id": "e-034",
+      "type": "paragraph",
+      "content": "[Withdrawn: Incorporated into MP-4 and SC-28.]",
+      "page": null,
+      "level": null,
+      "parent_id": "e-018",
+      "style": {},
+      "id": "AC-3(6)",
+      "role": "control",
+      "title": "Access Enforcement | Protection of User and System Information",
+      "text": "[Withdrawn: Incorporated into MP-4 and SC-28.]",
+      "properties": {}
+    }
+  ],
+  "metadata": {
+    "element_count": 33,
+    "detected_format": "xlsx",
+    "page_count": null,
+    "title": "NIST SP 800-53 Revision 5 control catalog",
+    "dropped": [],
+    "source": {
+      "kind": "structured",
+      "format": "xlsx",
+      "mapping": {
+        "id": "nist-sp800-53r5-catalog-xlsx",
+        "sha256": "c1defcb2980bac69f61c2fa1ce1a208b573e5d1c83ea5433432517a51668bec9",
+        "mapping_version": 1
+      },
+      "catalog_version": "Revision 5",
+      "node_count": 31,
+      "unmapped_fields": []
+    },
+    "processing_time_ms": 256.2
+  }
+}
