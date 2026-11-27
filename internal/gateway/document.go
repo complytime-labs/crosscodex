@@ -184,6 +184,11 @@ func (s *Service) processDocument(ctx context.Context, start time.Time, input pr
 	if structureMethod != "" {
 		byProducts["ingestion_structure_method"] = structureMethod
 	}
+	// Which HTML profile shaped the structure; empty when none was applied.
+	if profile := parseResp.Msg.GetIngestionHtmlProfile(); profile != "" {
+		byProducts["ingestion_html_profile"] = profile
+		byProducts["ingestion_html_profile_sha256"] = parseResp.Msg.GetIngestionHtmlProfileSha256()
+	}
 	if err := s.attestIngest(ctx, "gateway."+input.rpcName, docID, catalogID, input.convertReq.GetContent(), byProducts); err != nil {
 		// The cause can name storage buckets, hosts or key files (CWE-209):
 		// it is logged here, once, and the caller gets a reference to it.

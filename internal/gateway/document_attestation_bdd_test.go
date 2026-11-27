@@ -208,6 +208,30 @@ var _ = Describe("catalog import attestation", func() {
 		Entry("OSCAL, which has no method, records no key", "", Not(HaveKey("ingestion_structure_method"))),
 	)
 
+	DescribeTable("records the HTML profile and its sha256 only when ingestion applied one",
+		func(profile, sha string, want types.GomegaMatcher) {
+			cat := &mockCatalog{parseFn: func(context.Context, *connect.Request[pb.ParseCatalogRequest]) (*connect.Response[pb.ParseCatalogResponse], error) {
+				return connect.NewResponse(&pb.ParseCatalogResponse{
+					CatalogId: "cat-1", IngestionHtmlProfile: profile, IngestionHtmlProfileSha256: sha,
+				}), nil
+			}}
+
+			_, err := service(forA, gateway.WithCatalogBackend(cat)).SubmitDocument(ctx, connect.NewRequest(&pb.SubmitDocumentRequest{
+				Source: &pb.SubmitDocumentRequest_Content{Content: content},
+			}))
+			Expect(err).NotTo(HaveOccurred())
+
+			link, err := gen.Verify(context.Background(), store.Objects()[ingestKey])
+			Expect(err).NotTo(HaveOccurred())
+			Expect(link.ByProducts).To(want)
+		},
+		Entry("an HTML conversion records the profile id and file hash", "eurlex", strings.Repeat("cd", 32),
+			And(HaveKeyWithValue("ingestion_html_profile", "eurlex"),
+				HaveKeyWithValue("ingestion_html_profile_sha256", strings.Repeat("cd", 32)))),
+		Entry("a source with no profile (OSCAL, PDF) records neither key", "", "",
+			And(Not(HaveKey("ingestion_html_profile")), Not(HaveKey("ingestion_html_profile_sha256")))),
+	)
+
 	DescribeTable("fails the import, without leaking the cause, when the link cannot be stored",
 		func(run importDocument) {
 			store.PutFunc = func(context.Context, string, io.Reader) error {

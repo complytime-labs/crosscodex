@@ -58,7 +58,10 @@ structure node, and both outputs have `structure_method` `heading`.
 How they were made (2026-11-26): crosscodex-ingestion branch
 `feat/38-document-structure` at commit `470bf52f3221d2d552b85d03709414c6c12c0bcc`
 (package 0.1.0, Docling 2.148.0, models from that repo's `.test-output/docling-models`).
-From that worktree, with `DOCLING_ARTIFACTS_PATH` set to the models directory,
+That branch was squash-merged, so the commit is no longer on ingestion `main`.
+Re-converting the same inputs with merged `main` at `f2699e1` (the same call and
+models) gives byte-identical `elements`; only `metadata.processing_time_ms`
+differs, and the content hash ignores it. Use `f2699e1` to reproduce them. From the checkout, with `DOCLING_ARTIFACTS_PATH` set to the models directory,
 a short `uv run python` script called `converter.convert_document(path, fmt,
 IngestionSettings(), load_html_profiles(""), load_registry(""))` (the call
 `worker.py` makes), dropped `conversion_warnings`, ran

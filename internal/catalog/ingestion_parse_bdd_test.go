@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"connectrpc.com/connect"
 	. "github.com/onsi/ginkgo/v2"
@@ -758,6 +759,87 @@ var _ = Describe("ParseCatalog with ingestion output", func() {
 			Entry("a mapped 1.4 structure", mapped1_4, "owasp-asvs-5.0.0-json", "mapping"),
 			Entry("a 1.3 output, which has no method", "owasp-asvs-5.0.0-excerpt.json", "owasp-asvs-5.0.0-json", ""),
 		)
+
+		DescribeTable("reports the HTML profile the conversion applied, and only that",
+			func(fixture string, wantProfile bool) {
+				data, _ := readIngestionFixture(fixture)
+
+				resp, err := parseWith(newSvc(defaultStructuring()), data, "")
+
+				Expect(err).NotTo(HaveOccurred())
+				if wantProfile {
+					// The expected pair is read from the fixture itself.
+					var fixtureMeta struct {
+						Metadata struct {
+							HTMLProfile struct {
+								ID     string `json:"id"`
+								SHA256 string `json:"sha256"`
+							} `json:"html_profile"`
+						} `json:"metadata"`
+					}
+					Expect(json.Unmarshal(data, &fixtureMeta)).To(Succeed())
+					Expect(fixtureMeta.Metadata.HTMLProfile.ID).NotTo(BeEmpty())
+					Expect(resp.IngestionHtmlProfile).To(Equal(fixtureMeta.Metadata.HTMLProfile.ID))
+					Expect(resp.IngestionHtmlProfileSha256).To(Equal(fixtureMeta.Metadata.HTMLProfile.SHA256))
+				} else {
+					Expect(resp.IngestionHtmlProfile).To(BeEmpty())
+					Expect(resp.IngestionHtmlProfileSha256).To(BeEmpty())
+				}
+			},
+			Entry("a 1.4 HTML conversion", guessed1_4, true),
+			Entry("a 1.2 HTML conversion", "eurlex-nis2-32022L2555.json", true),
+			Entry("a PDF conversion, which applies no profile", "nist-sp800-171r3-excerpt-1.4.json", false),
+		)
+
+		DescribeTable("refuses an HTML profile id outside ingestion's rule, withholding the cause, and stores nothing",
+			func(fixture, badID string) {
+				seed()
+				cats, ctrls, conts := snapshot()
+				data, _ := readIngestionFixture(fixture)
+				quoted, err := json.Marshal(badID)
+				Expect(err).NotTo(HaveOccurred())
+				data = bytes.Replace(data, []byte(`"id": "eur-lex-oj"`), append([]byte(`"id": `), quoted...), 1)
+
+				_, err = parseWith(newSvc(defaultStructuring()), data, "")
+
+				// ParseCatalog withholds the cause (CWE-209) and logs it; the
+				// adapter spec asserts the actionable message itself.
+				Expect(connect.CodeOf(err)).To(Equal(connect.CodeInternal))
+				Expect(err).To(MatchError(ContainSubstring("the server logged the cause")))
+				Expect(err).NotTo(MatchError(ContainSubstring("html_profile")))
+				Expect(err.Error()).NotTo(ContainSubstring(badID))
+				expectUnchanged(cats, ctrls, conts)
+			},
+			Entry("an uppercase id at schema 1.4", guessed1_4, "EUR-LEX"),
+			Entry("an id with a space at schema 1.4", guessed1_4, "eur lex"),
+			Entry("an id with a control character at schema 1.4", guessed1_4, "eur\u0007lex"),
+			Entry("a leading hyphen at schema 1.4", guessed1_4, "-eur-lex"),
+			Entry("129 bytes at schema 1.4", guessed1_4, strings.Repeat("a", 129)),
+			Entry("an uppercase id below schema 1.4", "eurlex-nis2-32022L2555.json", "EUR-LEX"),
+			Entry("129 bytes below schema 1.4", "eurlex-nis2-32022L2555.json", strings.Repeat("a", 129)),
+		)
+
+		It("accepts an HTML profile id of exactly 128 bytes", func() {
+			data, _ := readIngestionFixture(guessed1_4)
+			id := strings.Repeat("a", 128)
+			data = bytes.Replace(data, []byte(`"id": "eur-lex-oj"`), []byte(`"id": "`+id+`"`), 1)
+
+			resp, err := parseWith(newSvc(defaultStructuring()), data, "")
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.IngestionHtmlProfile).To(Equal(id))
+		})
+
+		It("leaves the HTML profile empty for OSCAL", func() {
+			data, err := os.ReadFile(filepath.Join("..", "..", "pkg", "oscal", "testdata", "minimal_catalog.json"))
+			Expect(err).NotTo(HaveOccurred())
+
+			resp, err := parseWith(newSvc(defaultStructuring()), data, "")
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.IngestionHtmlProfile).To(BeEmpty())
+			Expect(resp.IngestionHtmlProfileSha256).To(BeEmpty())
+		})
 
 		It("leaves the method empty for OSCAL", func() {
 			data, err := os.ReadFile(filepath.Join("..", "..", "pkg", "oscal", "testdata", "minimal_catalog.json"))

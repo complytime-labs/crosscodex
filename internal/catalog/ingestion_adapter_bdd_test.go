@@ -948,6 +948,18 @@ var _ = Describe("content hash", func() {
 		Expect(contentHashOf(withProfile(hashMappingSHA)(hashBase))).NotTo(Equal(contentHashOf(withProfile(hashOtherSHA)(hashBase))))
 	})
 
+	It("reports the html_profile in the metadata, and none when absent", func() {
+		_, with, err := catalog.AdaptIngestionOutput([]byte(withProfile(hashMappingSHA)(hashBase)))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(with.HTMLProfileID).To(Equal("p"))
+		Expect(with.HTMLProfileSHA256).To(Equal(hashMappingSHA))
+
+		_, without, err := catalog.AdaptIngestionOutput([]byte(hashBase))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(without.HTMLProfileID).To(BeEmpty())
+		Expect(without.HTMLProfileSHA256).To(BeEmpty())
+	})
+
 	It("tells an absent element title from a null one", func() {
 		absent := `{"schema_version":"1.3","elements":[{"element_id":"e-1","type":"paragraph","content":"x"}]}`
 		null := `{"schema_version":"1.3","elements":[{"element_id":"e-1","type":"paragraph","content":"x","title":null}]}`
@@ -1033,6 +1045,40 @@ var _ = Describe("content hash", func() {
 		Entry("an html_profile without id", hashSwap(`"processing_time_ms":9.4}`, `"processing_time_ms":9.4,"html_profile":{"sha256":"`+hashMappingSHA+`"}}`), "metadata.html_profile.id"),
 		Entry("a malformed html_profile sha256", hashSwap(`"processing_time_ms":9.4}`, `"processing_time_ms":9.4,"html_profile":`+profile("abc")+`}`), "metadata.html_profile.sha256"),
 	)
+
+	DescribeTable("refuses an html_profile id outside ingestion's profile-id rule, without echoing it",
+		func(id string, schema string) {
+			quoted, err := json.Marshal(id)
+			Expect(err).NotTo(HaveOccurred())
+			doc := strings.Replace(hashBase, `"schema_version":"1.3"`, `"schema_version":"`+schema+`"`, 1)
+			doc = hashSwap(`"processing_time_ms":9.4}`,
+				`"processing_time_ms":9.4,"html_profile":{"id":`+string(quoted)+`,"sha256":"`+hashMappingSHA+`"}}`)(doc)
+
+			_, _, err = catalog.AdaptIngestionOutput([]byte(doc))
+
+			Expect(err).To(MatchError(catalog.ErrInvalidIngestionOutput))
+			Expect(err).To(MatchError(ContainSubstring("metadata.html_profile.id")))
+			Expect(err).To(MatchError(ContainSubstring("Re-run the conversion")))
+			Expect(err.Error()).NotTo(ContainSubstring(id))
+		},
+		Entry("an uppercase id", "EUR-LEX", "1.3"),
+		Entry("an id with a space", "eur lex", "1.3"),
+		Entry("an id with a control character", "eur\u0007lex", "1.3"),
+		Entry("a leading hyphen", "-eur-lex", "1.3"),
+		Entry("129 bytes", strings.Repeat("a", 129), "1.3"),
+		Entry("an uppercase id at schema 1.2", "EUR-LEX", "1.2"),
+	)
+
+	It("accepts an html_profile id of exactly 128 bytes", func() {
+		id := strings.Repeat("a", 128)
+		doc := hashSwap(`"processing_time_ms":9.4}`,
+			`"processing_time_ms":9.4,"html_profile":{"id":"`+id+`","sha256":"`+hashMappingSHA+`"}}`)(hashBase)
+
+		_, meta, err := catalog.AdaptIngestionOutput([]byte(doc))
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(meta.HTMLProfileID).To(Equal(id))
+	})
 
 	DescribeTable("pins the v1 hash of each fixture",
 		func(fixture, want string) {

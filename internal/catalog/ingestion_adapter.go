@@ -68,6 +68,12 @@ var (
 	markdownSeparatorCell = regexp.MustCompile(`^:?-+:?$`)
 	// ingestionPropertyName is the schema's rule for element property names.
 	ingestionPropertyName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	// htmlProfileIDPattern, with maxHTMLProfileIDLen, is crosscodex-ingestion's
+	// rule for an HTML profile id (schemas/html-profile-v1.schema.json). The id
+	// reaches the signed ingest attestation, so it is bounded here; a mapping
+	// id needs no such check because it is anchored to the gateway-validated
+	// request.
+	htmlProfileIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 	// ingestionSHA256 is the form of a mapping or profile digest.
 	ingestionSHA256 = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
@@ -75,6 +81,9 @@ var (
 // ingestionContentPrefix versions the content hash. The hash covers the
 // fields ingestionOutput decodes, so adding a field changes every hash:
 // bump the prefix to v2 and add a README Upgrading note.
+// maxHTMLProfileIDLen is the length half of htmlProfileIDPattern's rule.
+const maxHTMLProfileIDLen = 128
+
 const ingestionContentPrefix = "crosscodex.ingestion-content.v1\n"
 
 // IngestionMeta describes the ingestion output a StructuredDoc came from.
@@ -110,6 +119,10 @@ type IngestionMeta struct {
 	// pattern. "mapping" is a reviewed mapping; the others are ingestion's
 	// guess. "" for pre-1.4 output.
 	StructureMethod string
+	// HTMLProfileID and HTMLProfileSHA256 are metadata.html_profile's id and
+	// sha256; "" when the conversion applied no HTML profile.
+	HTMLProfileID     string
+	HTMLProfileSHA256 string
 }
 
 // ingestionOutput and ingestionElement hold the schema v1 fields the adapter
@@ -283,6 +296,11 @@ func decodeIngestionHTMLProfile(raw json.RawMessage) (*ingestionHTMLProfile, err
 	if err := checkIngestionRef(path, p.ID, p.SHA256); err != nil {
 		return nil, err
 	}
+	if len(p.ID) > maxHTMLProfileIDLen || !htmlProfileIDPattern.MatchString(p.ID) {
+		return nil, ingestionRefRule(path+".id", fmt.Sprintf(
+			"is not a valid profile id (lowercase letters, digits and hyphens, starting with a letter or digit, at most %d bytes)",
+			maxHTMLProfileIDLen))
+	}
 	return &p, nil
 }
 
@@ -424,6 +442,9 @@ func AdaptIngestionOutput(data []byte) (oscal.StructuredDoc, IngestionMeta, erro
 	}
 	if out.Mapping != nil {
 		identity.MappingID, identity.MappingSHA256 = out.Mapping.ID, out.Mapping.SHA256
+	}
+	if out.HTMLProfile != nil {
+		identity.HTMLProfileID, identity.HTMLProfileSHA256 = out.HTMLProfile.ID, out.HTMLProfile.SHA256
 	}
 	hasRoles := slices.ContainsFunc(out.Elements, func(e ingestionElement) bool { return e.HasRole })
 	if !hasRoles && minor >= structureMethodMinor {

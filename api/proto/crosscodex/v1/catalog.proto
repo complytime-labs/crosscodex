@@ -114,6 +114,13 @@ message ParseCatalogResponse {
   // catalog.structuring setting that only tuned the pre-1.4 structuring
   // cascade is not at its default; the error names each such setting.
   string ingestion_structure_method = 9;
+  // The ID of the HTML profile crosscodex-ingestion applied, as recorded in its
+  // converted output (metadata.html_profile). Empty when the conversion applied
+  // no profile: OSCAL, Gemara, and any non-HTML source.
+  string ingestion_html_profile = 10;
+  // The SHA-256 (64 lowercase hex characters) of that HTML profile's file. Set
+  // exactly when ingestion_html_profile is.
+  string ingestion_html_profile_sha256 = 11;
 }
 
 // ChangeReport lists control identifiers that differ between a version and the
