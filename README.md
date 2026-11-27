@@ -16,6 +16,8 @@ CrossCodex is in early development. All foundational, domain, and service packag
 
 ## Upgrading
 
+HTML profile in the ingest attestation (#314). Additive proto, no migration, no config change. `ParseCatalogResponse` gains `ingestion_html_profile` (10) and `ingestion_html_profile_sha256` (11), empty unless ingestion applied an HTML profile; the gateway's client-facing messages and the CLI are unchanged. The import's signed ingest attestation gains the byproducts `ingestion_html_profile` and `ingestion_html_profile_sha256` when a profile was applied, and neither otherwise, so an auditor can tell which profile file shaped an HTML conversion.
+
 Ingestion output schema 1.4: how a document was structured (crosscodex-ingestion#38 phase 1). Additive proto, no migration, no config change. The bundled compose pin (`deploy/compose.ingestion.yaml`) is not bumped yet; this release can read 1.4 output for when you upgrade ingestion. Output below 1.4 imports as before.
 
 - **Behaviour.** A 1.4 converter structures the document itself and labels the result in `metadata.structure_method`: `mapping` (read from a structured source through a mapping, so the IDs and groups are the publisher's) or `heading`, `table`, `pattern` (a guess from the document's layout). Such output imports through the same path as a structured source (one control per `control` element, one group per `group` element); the new element role `section` imports as a `compliance-section` control, a lead-in that introduces its children. Document mappings do not exist yet (crosscodex-ingestion#38 phase 3), so a document converted today has a guessed structure, not its own IDs.
